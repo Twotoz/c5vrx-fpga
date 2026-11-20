@@ -17,8 +17,8 @@ and drives an 800x480 RGB LCD.
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
 - Three buttons on C5 A (Select, Up, Down) open the FPGA's on-screen menu.
 
-> Status: C5 firmware builds and passes its host tests; FPGA design and host
-> simulation. Nothing has run on a board yet.
+> Status: C5 firmware and FPGA bitstream build; models, RTL and the video path
+> are verified in simulation. Nothing has run on a board yet.
 
 ## Why IQ fusion
 
@@ -109,6 +109,30 @@ New:
   edges next to the antenna: switch it off for a noise comparison).
 
 USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
+
+## FPGA
+
+`fpga/` builds the Tang Nano 20K bitstream (`fpga/build.sh`, open-source Gowin
+flow: Yosys, nextpnr-himbaechel, Apicula).
+
+- IQ path on C5 A's 40 MHz clock: capture of the three C5s, alignment of B and
+  C to A, marker detection (a C5 sending a marker is left out for those
+  samples), pre-detection MRC and the click-suppressed 50 ns discriminator
+  (`rtl/mrc3_core.v`, bit-exact with `model/mrc3_model.py`).
+- Video: sync slicer with H/V flywheel, PAL/NTSC detection, automatic black
+  and white levels, 800-pixel lines into a line buffer. Monochrome for now.
+- LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
+  video line shown twice (480 lines, genlocked, no frame buffer), OSD with
+  the menu and per-C5 status, channel scan, and the link to the C5s on pin 51.
+- Fit: 62 % LUT4, 7 BSRAM, 45 MULT9 + 4 MULT18; 55.7 MHz on the 40 MHz IQ
+  clock, 97 MHz on the LCD clock. nextpnr reports 16 hold paths of at most
+  0.12 ns on BSRAM addresses (built with `--timing-allow-fail`): check on the board.
+
+Simulation: `sim/run_tb3.py` (combiner, bit-exact), `sim/run_marker_tb.py`
+(markers), `sim/run_video_tb.py` (test picture through the whole chain to the
+LCD; needs a C5VRX checkout next to this repo for `research/sim.py`).
+
+![Simulated LCD output](docs/fpga_video_sim.png)
 
 ## Open questions for the first prototype
 

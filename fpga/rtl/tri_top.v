@@ -1,0 +1,106 @@
+// Triversity: FPGA top level, Sipeed Tang Nano 20K (GW2AR-LV18QN88C8/I7).
+// Three XIAO ESP32-C5 with firmware/ send the top three bits of their I and Q
+// plus their 40 MHz PARLIO RX clock (D0..D6, README wiring table); the FPGA
+// aligns them, combines them before demodulation (mrc3_core.v), demodulates,
+// and shows the picture on the 800x480 RGB LCD with an OSD menu.
+// Clock domains: the IQ/video path on C5 A's clock (clk_a, 40 MHz), the LCD,
+// menu and link on a PLL clock from the 27 MHz crystal (33.75 MHz), so the
+// menu and screen keep running without C5 A.
+// Buttons: S1 (pin 88) reset, S2 (pin 87) SELECT; the menu buttons on C5 A
+// arrive as markers. Adapted from the Tripleversity work in C5VRX
+// (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
+`default_nettype none
+module tri_top (
+    input  wire       xtal,          // 27 MHz
+    input  wire       s1_n,          // reset
+    input  wire       s2_n,          // SELECT
+    input  wire       a_clk, b_clk, c_clk,
+    input  wire [6:1] a_d, b_d, c_d, // XIAO pads D1..D6
+    output wire       link_tx,       // to D10 of all three C5s (inverted UART)
+    output wire       lcd_clk, lcd_de, lcd_hs, lcd_vs, lcd_bl,
+    output wire [4:0] lcd_r,
+    output wire [5:0] lcd_g,
+    output wire [4:0] lcd_b
+);
+    // pads -> raw word {I sign, I2, I1, Q sign, Q2, Q1} = {D3, D4, D5, D1, D2, D6}
+    function [5:0] word; input [6:1] d; word = {d[3], d[4], d[5], d[1], d[2], d[6]}; endfunction
+    function [7:0] nib; input [5:0] r; nib = {r[5:3], 1'b0, r[2:0], 1'b0}; endfunction   // align_b's nibbles
+    // ---- LCD clock: 27 MHz * 5 / 4 = 33.75 MHz (VCO 540 MHz) ----
+    wire clk_lcd, pll_lock;
+    rPLL #(.FCLKIN("27"), .IDIV_SEL(3), .FBDIV_SEL(4), .ODIV_SEL(16), .DEVICE("GW2AR-18C")) u_pll (
+        .CLKIN(xtal), .CLKFB(1'b0), .RESET(1'b0), .RESET_P(1'b0), .FBDSEL(6'd0), .IDSEL(6'd0), .ODSEL(6'd0),
+        .PSDA(4'd0), .DUTYDA(4'd0), .FDLY(4'd0), .CLKOUT(clk_lcd), .LOCK(pll_lock), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3());
+    // ---- capture on each C5's own clock ----
+    reg [5:0] cap_a, cap_b, cap_c, ra;
+    always @(posedge a_clk) cap_a <= word(a_d);
+    always @(posedge b_clk) cap_b <= word(b_d);
+    always @(posedge c_clk) cap_c <= word(c_d);
+    always @(posedge a_clk) ra <= cap_a;
+    // ---- resets ----
+    reg [1:0] bs = 2'b00; reg [11:0] por = 12'd0;
+    wire rst = ~por[11];
+    always @(posedge a_clk) begin
+        bs <= {bs[0], s1_n};
+        if (!bs[1]) por <= 12'd0; else if (!por[11]) por <= por + 12'd1;
+    end
+    reg [1:0] bl2 = 2'b00; reg [15:0] porl = 16'd0;
+    wire rst_l = ~porl[15];
+    always @(posedge clk_lcd) begin
+        bl2 <= {bl2[0], s1_n & pll_lock};
+        if (!bl2[1]) porl <= 16'd0; else if (!porl[15]) porl <= porl + 16'd1;
+    end
+    // ---- alignment of B and C to A ----
+    wire [7:0] a_al1, a_al2, b_al, c_al;
+    wire       en_b, en_c, b_alive, c_alive;
+    align_b u_alb (.clk_b(b_clk), .raw_b_in(nib(cap_b)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
+                   .raw_a_d(a_al1), .raw_b(b_al), .en_b(en_b), .b_alive(b_alive), .lag());
+    align_b u_alc (.clk_b(c_clk), .raw_b_in(nib(cap_c)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
+                   .raw_a_d(a_al2), .raw_b(c_al), .en_b(en_c), .b_alive(c_alive), .lag());
+    // ---- markers: detect, decode, delay the IQ past them ----
+    wire [5:0]  a_m, b_m, c_m;
+    wire        va, vb, vc, ev_a, ev_b, ev_c;
+    wire [15:0] pl_a, pl_b, pl_c;
+    marker_rx u_mka (.clk(a_clk), .rst(rst), .raw({a_al1[7:5], a_al1[3:1]}), .raw_d(a_m), .valid_d(va), .ev(ev_a), .payload(pl_a), .count());
+    marker_rx u_mkb (.clk(a_clk), .rst(rst), .raw({b_al[7:5], b_al[3:1]}),   .raw_d(b_m), .valid_d(vb), .ev(ev_b), .payload(pl_b), .count());
+    marker_rx u_mkc (.clk(a_clk), .rst(rst), .raw({c_al[7:5], c_al[3:1]}),   .raw_d(c_m), .valid_d(vc), .ev(ev_c), .payload(pl_c), .count());
+    reg        mk_tog = 1'b0; reg [1:0] mk_src = 2'd3; reg [15:0] mk_pl = 16'd0;
+    always @(posedge a_clk) if (ev_a | ev_b | ev_c) begin
+        mk_tog <= ~mk_tog;
+        mk_src <= ev_a ? 2'd0 : ev_b ? 2'd1 : 2'd2;
+        mk_pl  <= ev_a ? pl_a : ev_b ? pl_b : pl_c;
+    end
+    // ---- combine and demodulate ----
+    wire       dvr_l;
+    reg  [1:0] dvr_s;
+    always @(posedge a_clk) dvr_s <= {dvr_s[0], dvr_l};
+    wire [5:0] code;
+    mrc3_core u_core (.clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
+                      .en_b(en_b & b_alive), .en_c(en_c & c_alive & ~dvr_s[1]), .va(va), .vb(vb), .vc(vc), .code(code));
+    // ---- video timing and line capture ----
+    wire        wr_en, line_tog, field_tog, pal, locked;
+    wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q;
+    vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
+                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q));
+    wire [10:0] lb_raddr; wire [7:0] lb_rdata;
+    linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
+    // ---- OSD char RAM (menu writes, lcd_out reads) ----
+    reg  [7:0] osd [0:2047];
+    wire       osd_we; wire [10:0] osd_waddr, osd_raddr; wire [7:0] osd_wdata; reg [7:0] osd_rdata;
+    always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
+    // ---- menu and link ----
+    wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
+    menu u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
+                 .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q),
+                 .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
+                 .dvr(dvr_l), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(lcd_bl));
+    link_tx u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
+                    .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
+    // ---- LCD ----
+    lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
+                   .locked_a(locked), .pal_a(pal), .lb_addr(lb_raddr), .lb_data(lb_rdata),
+                   .osd_addr(osd_raddr), .osd_char(osd_rdata),
+                   .lcd_de(lcd_de), .lcd_hs(lcd_hs), .lcd_vs(lcd_vs), .lcd_r(lcd_r), .lcd_g(lcd_g), .lcd_b(lcd_b));
+    assign lcd_clk = clk_lcd;
+endmodule
+`default_nettype wire
