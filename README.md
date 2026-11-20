@@ -12,6 +12,8 @@ and drives an 800x480 RGB LCD.
 - **DVR mode**: two C5s combined, the third branch is released for recording.
 - Gain, DC and AFC stay local on each C5; the FPGA only tells them which
   channel to use (one shared UART wire).
+- All three C5s run the same firmware; the wiring decides which is A, B or C.
+- Three buttons on C5 A (Select, Up, Down) open the FPGA's on-screen menu.
 
 > Status: design and host simulation. No firmware, no board yet.
 
@@ -51,6 +53,17 @@ goggle or range result.
 | D6 | Q bit 1 | 79 | 20 | 17 |
 | D9 | channel link (UART RX) | 51 | 51 | 51 |
 | D7, D8 | Q0, I0 (internal only) | - | - | - |
+
+Buttons, C5 A only (each to GND, internal pull-up; back pads, under the XIAO):
+
+| back pad | GPIO | button |
+|---|---|---|
+| BOOT | 28 | Select (same as the XIAO's own B button) |
+| MTDI | 3 | Up |
+| MTCK | 4 | Down |
+
+C5 A forwards a press in-band in its IQ stream; the FPGA drops C5 A from the
+combination for those few microseconds (B and C cover it) and handles the menu.
 
 Numbers are Tang Nano 20K pins; the 40-pin LCD keeps its own pins.
 
