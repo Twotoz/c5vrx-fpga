@@ -51,17 +51,18 @@ goggle or range result.
 | D4 | I bit 2 | 55 | 18 | 15 |
 | D5 | I bit 1 | 86 | 19 | 16 |
 | D6 | Q bit 1 | 79 | 20 | 17 |
-| D9 | channel link (UART RX) | 51 | 51 | 51 |
-| D7, D8 | Q0, I0 (internal only) | - | - | - |
+| D10 | channel link (UART RX) | 51 | 51 | 51 |
+| MTDO, MTCK (back) | Q0, I0, internal only, not connected | - | - | - |
 
-Buttons, C5 A only (each to GND, internal pull-up; back pads, under the XIAO):
+Buttons, C5 A only, on its free side pads (each to GND, internal pull-up):
 
-| back pad | GPIO | button |
+| pad | GPIO | button |
 |---|---|---|
-| BOOT | 28 | Select (same as the XIAO's own B button) |
-| MTDI | 3 | Up |
-| MTCK | 4 | Down |
+| D9 | 9 | Up |
+| D8 | 8 | Select |
+| D7 | 12 | Down |
 
+The XIAO's own B (BOOT) button still flashes as usual and can act as Select.
 C5 A forwards a press in-band in its IQ stream; the FPGA drops C5 A from the
 combination for those few microseconds (B and C cover it) and handles the menu.
 
