@@ -1,4 +1,6 @@
-# C5VRX-FPGA: Tripleversity
+<p align="center"><img src="docs/logo.png" alt="C5VRX Triversity" width="600"></p>
+
+# C5VRX Triversity
 
 Three XIAO ESP32-C5 receivers, one Sipeed Tang Nano 20K, true IQ fusion.
 
@@ -8,7 +10,7 @@ The FPGA aligns the three streams, combines them **before** FM demodulation
 (maximal-ratio combining with a phase tracker per branch), demodulates once
 and drives an 800x480 RGB LCD.
 
-- **Tripleversity**: three C5s combined.
+- **Triversity**: three C5s combined.
 - **DVR mode**: two C5s combined, the third branch is released for recording.
 - Gain, DC and AFC stay local on each C5; the FPGA only tells them which
   channel to use (one shared UART wire).
@@ -40,7 +42,7 @@ goggle or range result.
 
 ## Wiring
 
-![Tripleversity wiring: Tang Nano 20K with three XIAO ESP32-C5](docs/wiring.png)
+![Triversity wiring: Tang Nano 20K with three XIAO ESP32-C5](docs/wiring.png)
 
 | XIAO pad | signal | C5 A | C5 B | C5 C |
 |---|---|---|---|---|
@@ -84,7 +86,7 @@ Numbers are Tang Nano 20K pins; the 40-pin LCD keeps its own pins.
 
 ## Credits
 
-This project adapts the Tripleversity combiner, its models and the receiver
+This project adapts the Triversity combiner (called Tripleversity there), its models and the receiver
 research from [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the
 C5VRX contributors (`hardware_experiments/tang9k_dual` and
 `hardware_experiments/tripleversity` on the `claude/tang-9k-c5-5bit-iq-hmes6d`
