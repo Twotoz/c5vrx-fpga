@@ -1,0 +1,38 @@
+name: Triversity C5 firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests (FPGA link protocol and the C5VRX receiver logic)
+        working-directory: firmware/test
+        run: ./run_tests.sh
+
+  build:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: bash
+        working-directory: firmware
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -DC5VRX5_COMMIT="${GITHUB_SHA}" set-target esp32c5 build
+          mkdir -p ../out
+          cp build/triversity_c5.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin \
+             build/flasher_args.json ../out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triversity-c5-firmware
+          path: out/

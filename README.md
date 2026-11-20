@@ -17,7 +17,8 @@ and drives an 800x480 RGB LCD.
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
 - Three buttons on C5 A (Select, Up, Down) open the FPGA's on-screen menu.
 
-> Status: design and host simulation. No firmware, no board yet.
+> Status: C5 firmware builds and passes its host tests; FPGA design and host
+> simulation. Nothing has run on a board yet.
 
 ## Why IQ fusion
 
@@ -77,6 +78,34 @@ Numbers are Tang Nano 20K pins; the 40-pin LCD keeps its own pins.
 - 33-47 ohm series resistor on every IQ line, close to the XIAO.
 - Avoid GPIO11 (D6) for timing-critical bits; only Q bit 1 uses it.
 
+## C5 firmware
+
+`firmware/` is a stripped C5VRX-5 receiver for this job: the same image runs on
+all three C5s (ESP-IDF v6.0.2, `idf.py set-target esp32c5 build`; CI builds it
+and runs the host tests in `firmware/test/run_tests.sh`).
+
+Kept from C5VRX, unchanged in behaviour: RF front end and PHY baseline (11p
+helper, digital filter mode 12), Direct Gain with LEVEL AGC, LEVEL TOP and
+STRONG LANE, C/N-AUTO noise maps, DC tables, base map and live DC servo, LOW
+DC, sampling-phase alignment at boot, manual filter/DC calibration (F, B),
+AFC with PAL/NTSC detection, VTX profiles, flight log and field diagnostics.
+
+Removed: the BitScrambler decoders and their tables, PARLIO TX and the DAC,
+output level and AUTO OUTPUT, the on-screen menu, splash and BOOT-button UI,
+the channel scanner and the bench labs. The FPGA demodulates, draws the menu
+and scans.
+
+New:
+
+- PARLIO RX clock exported on D0; IQ pads as in the wiring table.
+- FPGA link on D10 (`firmware/main/fpga_link.h`): channel, gain model, AFC and
+  calibration requests from the FPGA's menu.
+- In-band markers on the IQ pads: button presses and once a second the gain
+  row, C/N, flags (AFC lock, video, busy, DC fault, lane, PAL), channel and
+  signal strength, for the FPGA's OSD.
+
+USB console: `T` status, `h` keys, `` ` `` reboot to download.
+
 ## Open questions for the first prototype
 
 1. IQ pad timing at the FPGA (the modem bus runs at ~80 MS/s, sampled at 40).
@@ -90,9 +119,13 @@ This project adapts the Triversity combiner (called Tripleversity there), its mo
 research from [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the
 C5VRX contributors (`hardware_experiments/tang9k_dual` and
 `hardware_experiments/tripleversity` on the `claude/tang-9k-c5-5bit-iq-hmes6d`
-branch, and the D32-R2 decoder). Visit the
+branch, and the D32-R2 decoder). The C5 firmware in `firmware/` is adapted from
+C5VRX-5 `main/`, `CMakeLists.txt`, `sdkconfig.defaults` and `partitions.csv`
+at commit `f3d172f` (C5VRX main `8b60fef` plus that branch), and its host tests
+from C5VRX `test/`; the changes are listed under "C5 firmware" above and in
+each changed file's header. Visit the
 [official C5VRX website](https://twotoz.github.io/C5VRX/) for the original
-project and its Discord invite. C5VRX is GPL-3.0-only; this derivative is not
+project and its Discord invite. C5VRX is GPL-3.0-only, and so is `firmware/` (`firmware/LICENSE`); this derivative is not
 an official C5VRX release.
 
 Board photos: Sipeed (Tang Nano 20K) and Seeed Studio (XIAO ESP32-C5).
