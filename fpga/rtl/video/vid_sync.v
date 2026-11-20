@@ -5,12 +5,21 @@
 //  - H flywheel: a line counter that a qualified sync edge (low >= 2 us)
 //    pulls in a +-1 us window, snaps to after losing lock, and free-runs
 //    without one; V: a broad pulse (low >= 17.5 us) starts a field, line
-//    count flywheel otherwise; PAL when a field holds more than 290 lines
+//    count flywheel otherwise; PAL when 291..329 lines lie between two
+//    broad pulses (counted apart from the flywheel, which wraps an NTSC
+//    count before a PAL field ends)
 //  - auto levels: gray = (y - porch) * 102 / (porch - tip), white at
 //    +100 IRE for a sync of -40 IRE, whatever the VTX deviation
 //  - each active line (NTSC 240, PAL 288 with one in six dropped: 240) as
 //    800 gray pixels into line buffer half orow[0]; at the next line start
 //    the LCD domain gets a toggle with the line's row (lcd_out.v shows it twice)
+//  - aspect signalling for the menu's Aspect Auto: CGMS-A (IEC 61880, NTSC
+//    lines 20/283: start bits 1 0, 14 data bits with bit 1 = 16:9, CRC-6
+//    X^6 + X + 1 preset to ones; only after an NTSC-length field) and WSS (EN 300 294,
+//    PAL line 23: run-in, start code, group 1 = 1110 for 16:9 full format);
+//    wide after two fields that say 16:9, back after two that say 4:3 or
+//    64 fields without a code. Checked against a model of both waveforms
+//    (sim/run_aspect_tb.py); not yet seen from a real FPV camera.
 `default_nettype none
 module vid_sync (
     input  wire        clk,
@@ -24,7 +33,8 @@ module vid_sync (
     output reg         field_tog,
     output reg         pal,
     output reg         locked,
-    output reg  [15:0] sync_q         // in-window sync edges in the last 100 ms
+    output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
+    output reg         wide           // the camera signals 16:9 (CGMS-A / WSS)
 );
     // ---- luma -------------------------------------------------------------
     reg [5:0] c [0:7];
@@ -54,7 +64,7 @@ module vid_sync (
     reg [11:0] low_len, hc_cross;
     reg        qual_pend;
     // ---- field ----------------------------------------------------------------------
-    reg [9:0]  vline, vguard, field_lines;
+    reg [9:0]  vline, vguard, field_lines, bpl;
     wire [9:0] VSTART = pal ? 10'd20 : 10'd18;
     wire [9:0] VROWS  = pal ? 10'd288 : 10'd240;
     wire [9:0] VMAX   = pal ? 10'd313 : 10'd263;
@@ -87,7 +97,7 @@ module vid_sync (
             hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
             linemin <= 9'h1ff; minprev <= 9'd100;
-            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; pal <= 1'b0; locked <= 1'b0;
+            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
@@ -110,7 +120,8 @@ module vid_sync (
             end
             if (low && low_len == 12'd700 && vguard == 10'd0) begin    // broad pulse: vertical sync
                 field_lines <= vline;
-                pal <= vline > 10'd290;
+                pal <= bpl > 10'd290 && bpl < 10'd330;
+                bpl <= 10'd0;
                 vline <= 10'd0; vguard <= 10'd200;
                 field_tog <= ~field_tog;
                 aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0;
@@ -136,6 +147,7 @@ module vid_sync (
                 minprev <= linemin; linemin <= 9'h1ff;
                 locked <= lock >= 4'd8;
                 if (vguard != 10'd0) vguard <= vguard - 10'd1;
+                if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
                 if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; end
                 else vline <= vline + 10'd1;
                 // the line that starts now: active?
@@ -174,6 +186,72 @@ module vid_sync (
             // ---- sync quality: in-window edges per 100 ms ----
             if (qtim == 23'd3999999) begin qtim <= 23'd0; sync_q <= qcnt; qcnt <= 16'd0; end
             else qtim <= qtim + 23'd1;
+        end
+    end
+    // ---- aspect signalling ----------------------------------------------------------
+    wire [8:0]  athr = porch + (porch - tip);            // ~ +40 IRE
+    wire        ahi  = y > athr;
+    reg  [76:0] wsr;                                     // WSS elements, 200 ns each
+    reg  [6:0]  we_n;                                    // next WSS element
+    reg  [21:0] cgs;                                     // CGMS: start 1, start 0, 14 data bits, 6 CRC bits
+    reg  [4:0]  cg_n; reg [11:0] cg_at; reg [3:0] cg_fr; // next bit, its sample clock, x 0.1 clock
+    function [5:0] crc6; input [13:0] d; integer k; reg [5:0] c; reg fb;
+        begin c = 6'h3f; for (k = 0; k < 14; k = k + 1) begin fb = d[13 - k] ^ c[5]; c = {c[4:0], 1'b0} ^ (fb ? 6'b000011 : 6'b0); end crc6 = c; end
+    endfunction
+    reg         cg_pre;                                  // blank before the code
+    reg         f_code, f_wide;                          // a code this field, and what it said
+    reg  [1:0]  wcnt;
+    reg  [5:0]  nocode;
+    reg         ftp;
+    wire [11:0] we_at = 12'd444 + {we_n, 3'd0};          // centre of WSS element we_n
+    wire        cg_line = !pal && field_lines >= 10'd255 && field_lines <= 10'd270 && vline >= 10'd10 && vline <= 10'd18;
+    wire        ws_line = pal && vline >= 10'd18 && vline <= 10'd26;
+    // biphase group 1: bit k = elements 53 + 6k .. +5, 1 = 111000, 0 = 000111
+    function bp; input [76:0] r; input [1:0] k; reg [6:0] b;
+        begin b = 7'd53 + {k, 2'b0} + {k, 1'b0}; bp = r[b + 7'd1] & ~r[b + 7'd4]; end
+    endfunction
+    function bpok; input [76:0] r; input [1:0] k; reg [6:0] b;
+        begin b = 7'd53 + {k, 2'b0} + {k, 1'b0}; bpok = r[b + 7'd1] ^ r[b + 7'd4]; end
+    endfunction
+    wire [3:0] g1 = {bp(wsr, 2'd0), bp(wsr, 2'd1), bp(wsr, 2'd2), bp(wsr, 2'd3)};       // b0..b3
+    wire       ws_ok = wsr[8:0] == 9'b100011111                    // run-in 1 1111 0001 (element 0 = bit 0)
+                       && wsr[52:29] == 24'b111110000011110001111000   // start code 0001 1110 0011 1100 0001 1111
+                       && bpok(wsr, 2'd0) && bpok(wsr, 2'd1) && bpok(wsr, 2'd2) && bpok(wsr, 2'd3)
+                       && ^g1;                                          // odd parity
+    always @(posedge clk) begin
+        if (rst) begin wide <= 1'b0; wcnt <= 2'd0; nocode <= 6'd0; f_code <= 1'b0; ftp <= 1'b0; we_n <= 7'd0; end
+        else begin
+            ftp <= field_tog;
+            if (ftp != field_tog) begin                    // a field ended: what did it say?
+                f_code <= 1'b0;
+                if (f_code) begin
+                    nocode <= 6'd0;
+                    if (f_wide) begin if (wcnt != 2'd3) wcnt <= wcnt + 2'd1; end
+                    else if (wcnt != 2'd0) wcnt <= wcnt - 2'd1;
+                end else if (nocode == 6'd63) wcnt <= 2'd0;
+                else nocode <= nocode + 6'd1;
+            end
+            wide <= wcnt >= 2'd2;
+            // CGMS-A: 22 bits of 2.235 us (89.4 clocks) from 11.2 us after the sync edge
+            if (hc == 12'd0) begin cg_pre <= 1'b1; we_n <= 7'd0; cg_n <= 5'd0; cg_at <= 12'd493; cg_fr <= 4'd0; end
+            if (cg_line) begin
+                if (hc == 12'd420 && ahi) cg_pre <= 1'b0;
+                if (cg_n != 5'd22 && hc == cg_at) begin
+                    cgs[cg_n] <= ahi; cg_n <= cg_n + 5'd1;
+                    cg_at <= cg_at + (cg_fr >= 4'd6 ? 12'd90 : 12'd89);
+                    cg_fr <= cg_fr >= 4'd6 ? cg_fr - 4'd6 : cg_fr + 4'd4;
+                end
+                if (hc == 12'd2500 && cg_pre && cgs[0] && !cgs[1] &&
+                    crc6({cgs[2], cgs[3], cgs[4], cgs[5], cgs[6], cgs[7], cgs[8], cgs[9], cgs[10], cgs[11], cgs[12], cgs[13], cgs[14], cgs[15]})
+                        == {cgs[16], cgs[17], cgs[18], cgs[19], cgs[20], cgs[21]})
+                    begin f_code <= 1'b1; f_wide <= cgs[2]; end
+            end
+            // WSS: 77 elements from 11.0 us
+            if (ws_line && we_n != 7'd77 && hc == we_at) begin wsr[we_n] <= ahi; we_n <= we_n + 7'd1; end
+            if (ws_line && we_n == 7'd77 && hc == 12'd1100) begin
+                we_n <= 7'd78;
+                if (ws_ok) begin f_code <= 1'b1; f_wide <= g1 == 4'b1110; end
+            end
         end
     end
 endmodule

@@ -18,11 +18,14 @@ import gen_osd as G  # noqa: E402
 
 BASE = dict(open=True, page=1, cursor=0, edit=False, toast=False, channel=8, locked=True, pal=False, scanning=False,
             scan_ch=0, dvr=True, dvr_state=2, rec_s=83, age=[0, 0, 4095], sig=[78, 55, 0], cn=[1184, 1121, 0],
-            gain=[54, 61, 0], flags=[1, 1, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2)
+            gain=[54, 61, 0], flags=[1, 1, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2,
+            aspect=3, wide=False, logo=True)
 SHOTS = [('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
-         ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)), ('live', dict(open=False)),
-         ('live_channel', dict(open=False, channel=9, toast=True)), ('no_signal', dict(open=False, channel=9, toast=True, locked=False))]
-DOCS = ['menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'live']
+         ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
+         ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)), ('live', dict(open=False, aspect=2)),
+         ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
+         ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]
+DOCS = ['menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
 
 
 def picture():
@@ -46,7 +49,8 @@ def main():
     ok = True
     for (name, d), fr in zip(SHOTS, frames):
         st = dict(BASE, **d)
-        video = [[pic[y // 2][x] if st['locked'] else 0 for x in range(800)] for y in range(480)]
+        hm = G.hmaps()[G.hmode(st)]
+        video = [[pic[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]
         want = np.asarray(G.render(g, G.fill(ps, st), video)).astype(int)
         want565 = (want[..., 0] >> 3) << 11 | (want[..., 1] >> 2) << 5 | want[..., 2] >> 3
         got = fr.reshape(480, 800) if fr.size == 480 * 800 else None

@@ -9,6 +9,8 @@
 //   pixel = (bg * (3 - a) + fg * a) / 3     (a = coverage 0..3, x 171 >> 9)
 // bg: video, panel (video / 4 + a blue-grey), accent, dark; fg: the palette or
 // the panel. gen_osd.render() is the reference, pixel for pixel.
+// Aspect: hmode picks the column map (hmap.vh, gen_osd.hmaps()): full width,
+// 4:3 in the middle 640 columns (black bars), or Stretch.
 `default_nettype none
 module lcd_out (
     input  wire        clk,
@@ -18,6 +20,7 @@ module lcd_out (
     input  wire        field_tog_a,
     input  wire        locked_a,
     input  wire        pal_a,
+    input  wire [1:0]  hmode,          // 0 full width, 1 4:3, 2 Stretch (menu, this domain)
     output reg  [10:0] lb_addr,        // line buffer read
     input  wire [7:0]  lb_data,
     output reg  [10:0] osd_addr,       // cell RAM read
@@ -97,6 +100,12 @@ module lcd_out (
     reg [11:0] cell3;
     reg [23:0] glyph;
     reg [9:0]  sr, sg, sb;
+    // column map, read one pixel ahead: hq is the map of x
+    reg [10:0] hmap [0:4095];
+`include "hmap.vh"
+    reg [10:0] hq;
+    reg        hv1, hv2;
+    wire [9:0] xn = x + 10'd1;
     // palette
     function [23:0] pal8; input [2:0] i;
         case (i)
@@ -111,7 +120,9 @@ module lcd_out (
         mul171s9 = {1'b0, p[17:9]};
     end endfunction
     always @(posedge clk) begin
-        lb_addr  <= {row[1], x};                 // vid_sync writes half orow[0]; row = {orow, half}
+        hq <= hmap[{hmode, xn}];
+        lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
+        hv1 <= hq[10]; hv2 <= hv1;
         osd_addr <= rbase + {4'd0, cx};
         de_d <= {de_d[3:0], de0};
         hs_d <= {hs_d[3:0], hc < 11'd10};
@@ -120,7 +131,7 @@ module lcd_out (
         g1 <= ing; g2 <= g1; g3 <= g2;
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
-        cell3 <= osd_cell; v3 <= locked ? lb_data : 8'd0;
+        cell3 <= osd_cell; v3 <= (locked && hv2) ? lb_data : 8'd0;
         glyph <= font[{osd_cell[6:0], ry2}];
         // n+3: blend sums
         begin : blend

@@ -35,6 +35,9 @@ jobs:
         run: python fpga/sim/run_dvr_tb.py 12 && python fpga/sim/run_dvr_tb.py 12 400
       - name: OSD, pixel for pixel
         run: python fpga/sim/run_osd_tb.py
+      - name: Aspect signalling (CGMS-A, WSS)
+        run: python fpga/sim/run_aspect_tb.py
+        env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: Video path end to end
         run: python fpga/sim/run_video_tb.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }

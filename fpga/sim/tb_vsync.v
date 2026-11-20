@@ -16,6 +16,7 @@ module tb_vsync;
         f = $fopen("vs.txt", "w");
         #100 rst = 0;
         for (k = 0; k < n; k = k + 1) begin @(posedge clk); code <= mem[k]; end
+        $display("wide %0d pal %0d locked %0d", u_vs.wide, u_vs.pal, u_vs.locked);
         $fclose(f); $finish;
     end
     always @(posedge clk) begin

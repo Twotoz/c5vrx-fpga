@@ -3,6 +3,7 @@
 // LCD pixel with DE is written to lcd.txt as "frame row col r g b".
 `timescale 1ns/1ps
 module tb_video;
+    wire [1:0] hm;
     reg clk_a = 0, clk_l = 0, rst = 1;
     always #12.5 clk_a = ~clk_a;
     always #14.815 clk_l = ~clk_l;          // 33.75 MHz
@@ -18,11 +19,11 @@ module tb_video;
     always @(posedge clk_l) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire bl;
     menu #(.CLK_HZ(33750000)) u_menu (.clk(clk_l), .rst(rst), .mk_tog_a(1'b0), .mk_src_a(2'd3), .mk_pl_a(16'd0), .s2_n(1'b1),
-        .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(2'd0), .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-        .dvr(), .mode(), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm(bl));
+        .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(2'd0), .wide_a(1'b0), .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
+        .dvr(), .mode(), .hmode(hm), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm(bl));
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
     lcd_out u_lcd (.clk(clk_l), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-        .locked_a(locked), .pal_a(pal), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
+        .locked_a(locked), .pal_a(pal), .hmode(hm), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
         .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r), .lcd_g(g), .lcd_b(b));
     integer n, k, f, frame = 0, row = 0, col = 0; reg de_p = 0;
     initial begin

@@ -5,6 +5,7 @@
 // run_osd_tb.py compares it with fpga/gen/gen_osd.py's render().
 `timescale 1ns/1ps
 module tb_osd;
+    wire [1:0] hm;
     reg clk = 0, rst = 1;
     always #14.815 clk = ~clk;                 // 33.75 MHz
     // ---- video source (as vid_sync + linebuf would deliver it) ----
@@ -43,12 +44,12 @@ module tb_osd;
     always @(posedge clk) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire dvr; wire [1:0] mode;
     menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
-        .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state),
+        .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state), .wide_a(1'b0),
         .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-        .dvr(dvr), .mode(mode), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
+        .dvr(dvr), .mode(mode), .hmode(hm), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
     lcd_out u_lcd (.clk(clk), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-        .locked_a(locked), .pal_a(pal), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
+        .locked_a(locked), .pal_a(pal), .hmode(hm), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
         .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r), .lcd_g(g), .lcd_b(b));
     // ---- frame capture ----
     integer f, nshot = 0, row, col; reg cap = 0, de_p = 0, vs_p = 1, armed = 0;
@@ -87,10 +88,12 @@ module tb_osd;
         u_menu.scanning = 1'b0;
         press(5'b00100); press(5'b00100); press(5'b00010); shot;     // 4 receivers
         press(5'b00010); press(5'b00100); press(5'b00010);           // Back, Settings
-        press(5'b00100); press(5'b00100); shot;                      // 5 settings, Brightness
-        press(5'b10010); shot;                                       // 6 closed: live view
-        press(5'b00001); shot;                                       // 7 next channel (pill lit)
-        locked = 0; repeat (20000) @(posedge clk); shot;             // 8 no signal
+        press(5'b00100); press(5'b00100); shot;                      // 5 settings, Aspect
+        press(5'b00010); press(5'b00100); shot;                      // 6 editing Aspect: Stretch
+        press(5'b00010);                                             // done
+        press(5'b10010); shot;                                       // 7 closed: live view
+        press(5'b00001); shot;                                       // 8 next channel (pill lit)
+        locked = 0; repeat (20000) @(posedge clk); shot;             // 9 no signal
         $display("shots %0d", nshot);
         $finish;
     end

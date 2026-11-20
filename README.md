@@ -37,6 +37,10 @@ demodulates once and shows the picture with an on-screen menu.
 - DVR to the Tang's TF card.
 
 > [!NOTE]
+> **Triversity is an official C5VRX version**, made by Twotoz and the C5VRX
+> contributors as part of the C5VRX project.
+
+> [!NOTE]
 > **Status:** C5 firmware and FPGA bitstream build; models, RTL, the video
 > path and the OSD are verified in simulation. Nothing has run on a board yet.
 
@@ -65,7 +69,7 @@ receiver's own.
 | | |
 |---|---|
 | ![Editing the channel](docs/osd_menu_edit.png) | ![Editing the mode](docs/osd_menu_mode.png) |
-| ![Receivers](docs/osd_receivers.png) | ![Settings](docs/osd_settings.png) |
+| ![Receivers](docs/osd_receivers.png) | ![Aspect: Stretch](docs/osd_settings_aspect.png) |
 
 | | live view | menu | editing a value |
 |---|---|---|---|
@@ -80,8 +84,17 @@ receiver's own.
 - **Scan**: every channel 0.5 s, picks the one with the best sync.
 - **Record**: DVR on / off; No card, Ready, the recording time, Card err.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
-- **Settings**: gain model (Level, Keel, RSSI), AFC, brightness, calibrate
-  (filter and DC on every C5).
+- **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
+  brightness, calibrate (filter and DC on every C5).
+- **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
+  (full width, for 16:9 cameras), Stretch (a 4:3 picture over the full width:
+  true geometry in the middle, the edges stretched), Auto (16:9 when the camera
+  says so with CGMS-A on NTSC or WSS on PAL, else 4:3; detection checked in
+  simulation, not yet with a real FPV camera).
+- **Logo**: the small C5VRX logo in the live view, on or off.
+
+The OSD is made for the 5" 800x480 screen: 12 x 24 pixel characters, a
+monospace font that stays sharp at that size, no thin lines.
 
 ## Why IQ fusion
 
@@ -211,13 +224,14 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
   video line shown twice (480 lines, genlocked, no frame buffer). OSD: 66 x 20
   cells of 12 x 24 pixels, anti-aliased glyphs, panels that dim the video.
-- DVR (`rtl/io/dvr.v`): every second field, 400x240 in 16 grey levels, to
+- DVR (`rtl/io/dvr.v`): 400x240 in 16 grey levels at 30 fps (NTSC) or 25 fps
+  (PAL): every second field, every second pixel of the line. To
   `TRIDVR.BIN` on the TF card (SPI mode, FAT32, written as a ring: the oldest
   part is overwritten). About 87 MB a minute; a slow card drops whole frames,
   never half ones.
-- Fit: 76 % LUT4, 34 of 46 BSRAM (16 for the DVR buffer, 6 glyphs, 6 page
-  templates), 45 MULT9 + 4 MULT18; 58.6 MHz on the 40 MHz IQ clock, 84 MHz on
-  the 33.75 MHz LCD clock, no hold violations.
+- Fit: 79 % LUT4, 37 of 46 BSRAM (16 for the DVR buffer, 6 glyphs, 6 page
+  templates, 3 aspect maps), 45 MULT9 + 4 MULT18; 59 MHz on the 40 MHz IQ
+  clock, 78 MHz on the 33.75 MHz LCD clock, no hold violations.
 
 DVR on the PC:
 
@@ -227,13 +241,17 @@ python tools/dvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4
 ```
 
 The LCD and HDMI cannot run at the same time on the Tang Nano 20K: the HDMI
-pairs (pins 33-40) are the LCD's green and red pins. HDMI would be a separate
-bitstream at 720x480p (NTSC) / 720x576p (PAL): exactly twice the analog line
-rate, so the same genlocked line doubling without a frame buffer.
+pairs (pins 33-40) are the LCD's green and red pins. The DVR uses its own
+pins (the TF slot), so LCD + DVR and HDMI + DVR both fit. HDMI would be a
+separate bitstream at 720x480p (NTSC) / 720x576p (PAL): exactly twice the
+analog line rate, so the same genlocked line doubling without a frame buffer. The pins' IO standard is
+fixed in a bitstream (LVCMOS for the LCD, LVDS for HDMI), so switching between
+them in the menu means loading the other bitstream.
 
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
 `run_link_tx_tb.py`, `run_dvr_tb.py` (SD card model with a FAT32 image, fast
 and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`),
+`run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).
 

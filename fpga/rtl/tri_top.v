@@ -83,9 +83,9 @@ module tri_top (
                       .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .code(code));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
-    wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q;
+    wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
     vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
-                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q));
+                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
     dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_data),
@@ -98,17 +98,18 @@ module tri_top (
     wire        osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     // ---- menu and link ----
+    wire [1:0] hmode;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
     menu u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
-                 .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state),
+                 .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-                 .dvr(dvr_l), .mode(mode_l), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
+                 .dvr(dvr_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
                  .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(lcd_bl));
     link_tx u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-                   .locked_a(locked), .pal_a(pal), .lb_addr(lb_raddr), .lb_data(lb_rdata),
+                   .locked_a(locked), .pal_a(pal), .hmode(hmode), .lb_addr(lb_raddr), .lb_data(lb_rdata),
                    .osd_addr(osd_raddr), .osd_cell(osd_rdata),
                    .lcd_de(lcd_de), .lcd_hs(lcd_hs), .lcd_vs(lcd_vs), .lcd_r(lcd_r), .lcd_g(lcd_g), .lcd_b(lcd_b));
     assign lcd_clk = clk_lcd;
