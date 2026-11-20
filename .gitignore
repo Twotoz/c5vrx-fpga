@@ -1,5 +1,5 @@
-firmware/build/
-firmware/sdkconfig
-firmware/sdkconfig.old
+c5/build/
+c5/sdkconfig
+c5/sdkconfig.old
 __pycache__/
 fpga/build/

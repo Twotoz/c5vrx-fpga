@@ -1,6 +1,6 @@
 """Triversity: link_tx in simulation. Runs tb_link_tx.v (channel 21, gain
 model 2, calibration sequence 7, AFC not set), decodes the inverted 8N1 line
-at the RTL's bit time and checks the frames against firmware/main/fpga_link.h:
+at the RTL's bit time and checks the frames against c5/main/fpga_link.h:
 0xC5, tag, value, 0x79 ^ value ^ tag ^ 'C'.
 
     python fpga/sim/run_link_tx_tb.py
@@ -8,12 +8,14 @@ at the RTL's bit time and checks the frames against firmware/main/fpga_link.h:
 import subprocess, sys, tempfile
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import rtl as rtl_  # noqa: E402
 BIT = 292                      # 33.75 MHz / 115200
 
 
 def main():
     with tempfile.TemporaryDirectory() as t:
-        subprocess.run(['iverilog', '-o', f'{t}/tb', str(HERE / 'tb_link_tx.v'), str(HERE.parent / 'rtl' / 'link_tx.v')], check=True)
+        subprocess.run(['iverilog', '-o', f'{t}/tb', str(HERE / 'tb_link_tx.v'), *rtl_.src('link_tx.v')], check=True)
         subprocess.run(['vvp', '-n', f'{t}/tb'], cwd=t, check=True, capture_output=True)
         line = [1 - int(x) for x in Path(t, 'lt.txt').read_text().split()]   # undo the inversion: idle high
     data, k = [], 0

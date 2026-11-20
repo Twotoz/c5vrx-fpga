@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Triversity C5 firmware host tests: the FPGA link protocol plus the C5VRX
 # receiver tests (C5VRX by Twotoz and the C5VRX contributors, test/) for the
-# modules this firmware keeps. Run from firmware/test.
+# modules this firmware keeps. Run from c5/test.
 set -euo pipefail
 CC="cc -O2 -std=c11 -Wall -Wextra -Werror -I../main"
 M=../main

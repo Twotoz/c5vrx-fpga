@@ -1,7 +1,7 @@
 """Triversity: DVR end to end in simulation. A small FAT32 card image (MBR,
 partition, two FATs, TRIDVR.BIN contiguous, 300 sectors so the ring wraps
 off a frame boundary) -> sd_model; tb_dvr streams synthetic fields into
-rtl/dvr.v; the written file is decoded with tools/dvr_to_mp4.frames and every
+rtl/io/dvr.v; the written file is decoded with tools/dvr_to_mp4.frames and every
 frame is checked pixel for pixel.
 
     python fpga/sim/run_dvr_tb.py [fields] [busy bytes per block]
@@ -10,7 +10,9 @@ import struct, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / 'tools'))
+sys.path.insert(0, str(HERE))
+import rtl as rtl_  # noqa: E402
+sys.path.insert(0, str(HERE.parent.parent / 'tools'))
 import dvr_to_mp4 as D  # noqa: E402
 
 SECTORS, PART, RSVD, FATSZ, SPC, FILE_SECT = 3072, 64, 32, 8, 8, 300
@@ -51,12 +53,11 @@ def main():
     fields = int(sys.argv[1]) if len(sys.argv) > 1 else 12
     busy = int(sys.argv[2]) if len(sys.argv) > 2 else 40   # card busy bytes after each block (400: a slow card)
     img, file_off = image()
-    rtl = HERE.parent / 'rtl'
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'sd.hex').write_text('\n'.join(f'{b:02x}' for b in img) + '\n')
         subprocess.run(['iverilog', '-g2012', f'-Ptb_dvr.BUSY={busy}', '-o', str(t / 'tb'), str(HERE / 'tb_dvr.v'), str(HERE / 'sd_model.v'),
-                        str(rtl / 'dvr.v')], check=True)
+                        *rtl_.src('dvr.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={fields}'], cwd=t, capture_output=True, text=True)
         print(r.stdout[-3000:])
         words = [x for ln in (t / 'sd_out.hex').read_text().splitlines() for x in ln.split('//')[0].split()]

@@ -1,4 +1,4 @@
-// Triversity: in-band marker receiver for one C5 (firmware/main/fpga_link.h).
+// Triversity: in-band marker receiver for one C5 (c5/main/fpga_link.h).
 // A C5 replaces its six FPGA data pads for ~12 us with six words, each held
 // ~80 samples: 0x38, 0x07, then four payload words (0x20 | nibble,
 // 0x10 | nibble, ...) = type (4 bits) and value (12 bits). This module

@@ -1,5 +1,5 @@
 // Triversity: FPGA top level, Sipeed Tang Nano 20K (GW2AR-LV18QN88C8/I7).
-// Three XIAO ESP32-C5 with firmware/ send the top three bits of their I and Q
+// Three XIAO ESP32-C5 with c5/ send the top three bits of their I and Q
 // plus their 40 MHz PARLIO RX clock (D0..D6, README wiring table); the FPGA
 // aligns them, combines them before demodulation (mrc3_core.v), demodulates,
 // and shows the picture on the 800x480 RGB LCD with an OSD menu.
@@ -74,9 +74,13 @@ module tri_top (
     end
     // ---- combine and demodulate ----
     wire       dvr_l;
+    wire [1:0] mode_l;                     // 0 Single (A), 1 Diversity (A+B), 2 Triversity (menu)
+    reg  [3:0] mode_s;
+    always @(posedge a_clk) mode_s <= {mode_s[1:0], mode_l};
+    wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
     mrc3_core u_core (.clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
-                      .en_b(en_b & b_alive), .en_c(en_c & c_alive), .va(va), .vb(vb), .vc(vc), .code(code));
+                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .code(code));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q;
@@ -89,23 +93,23 @@ module tri_top (
                .state(dvr_state), .frames(), .dropped());
     wire [10:0] lb_raddr; wire [7:0] lb_rdata;
     linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
-    // ---- OSD char RAM (menu writes, lcd_out reads) ----
-    reg  [7:0] osd [0:2047];
-    wire       osd_we; wire [10:0] osd_waddr, osd_raddr; wire [7:0] osd_wdata; reg [7:0] osd_rdata;
+    // ---- OSD cell RAM {bg, fg, glyph} (menu writes, lcd_out reads) ----
+    reg  [11:0] osd [0:2047];
+    wire        osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     // ---- menu and link ----
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
     menu u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-                 .dvr(dvr_l), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
+                 .dvr(dvr_l), .mode(mode_l), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
                  .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(lcd_bl));
     link_tx u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
                    .locked_a(locked), .pal_a(pal), .lb_addr(lb_raddr), .lb_data(lb_rdata),
-                   .osd_addr(osd_raddr), .osd_char(osd_rdata),
+                   .osd_addr(osd_raddr), .osd_cell(osd_rdata),
                    .lcd_de(lcd_de), .lcd_hs(lcd_hs), .lcd_vs(lcd_vs), .lcd_r(lcd_r), .lcd_g(lcd_g), .lcd_b(lcd_b));
     assign lcd_clk = clk_lcd;
 endmodule

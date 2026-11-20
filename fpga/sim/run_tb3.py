@@ -15,7 +15,8 @@ import numpy as np
 from scipy import signal as sg
 
 HERE = Path(__file__).resolve().parent
-RTL = HERE.parent / 'rtl'
+sys.path.insert(0, str(HERE))
+import rtl as rtl_  # noqa: E402
 sys.path.insert(0, str(HERE.parent / 'model'))
 import eval3  # noqa: E402
 import mrc3_model  # noqa: E402
@@ -62,9 +63,8 @@ def run(raws, en, work, valid):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        subprocess.run(['iverilog', '-g2012', '-I', str(RTL), '-o', str(work / 'tb'),
-                        str(HERE / 'tb_mrc3_core.v'), str(RTL / 'mrc3_core.v'), str(RTL / 'cordic_angle.v'),
-                        str(RTL / 'cordic_iter.v'), str(RTL / 'mul_dsp.v')], check=True)
+        subprocess.run(['iverilog', '-g2012', *rtl_.inc(), '-o', str(work / 'tb'),
+                        str(HERE / 'tb_mrc3_core.v'), *rtl_.src('mrc3_core.v', 'cordic_angle.v', 'cordic_iter.v', 'mul_dsp.v')], check=True)
         ok = True
         cases = [(5, 3, 300, (1, 1, 1)), (6, 12, 0, (1, 1, 1)), (7, -2, 0, (1, 1, 1)),
                  (8, 6, 300, (1, 1, 0)), (9, 6, 300, (1, 0, 1)), (10, 4, 0, (1, 0, 0)), (11, None, 0, (1, 1, 1))]

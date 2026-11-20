@@ -1,4 +1,4 @@
-// Triversity: link to the C5s (firmware/main/fpga_link.h), one UART wire to
+// Triversity: link to the C5s (c5/main/fpga_link.h), one UART wire to
 // D10 of all three, 115200 8N1, sent inverted: the line idles low (pin 51 of
 // the Tang Nano 20K also enables its audio amplifier, which then stays off).
 // Frames 0xC5, tag, value, 0x79 ^ value ^ tag ^ 'C', repeated: 'C' channel,

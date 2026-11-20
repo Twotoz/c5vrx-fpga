@@ -1,0 +1,56 @@
+name: FPGA
+
+on:
+  push:
+    branches: [main]
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+  pull_request:
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+  workflow_dispatch:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4          # research/sim.py for the combiner and video models
+        with:
+          repository: Twotoz/C5VRX
+          path: C5VRX
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y iverilog fonts-jetbrains-mono
+          pip install numpy scipy numba pillow
+      - name: Combiner and discriminator, bit-exact with the model
+        run: python fpga/sim/run_tb3.py
+        env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+      - name: Markers
+        run: python fpga/sim/run_marker_tb.py
+      - name: Channel link
+        run: python fpga/sim/run_link_tx_tb.py
+      - name: DVR (fast and slow card)
+        run: python fpga/sim/run_dvr_tb.py 12 && python fpga/sim/run_dvr_tb.py 12 400
+      - name: OSD, pixel for pixel
+        run: python fpga/sim/run_osd_tb.py
+      - name: Video path end to end
+        run: python fpga/sim/run_video_tb.py
+        env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+
+  bitstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tools
+        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - name: Build
+        run: fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triversity-fpga-bitstream
+          path: fpga/build/triversity.fs

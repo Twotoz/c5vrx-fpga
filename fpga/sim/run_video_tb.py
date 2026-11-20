@@ -12,10 +12,11 @@ import numpy as np
 from scipy import signal as sg
 from PIL import Image
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import rtl as rtl_  # noqa: E402
 sys.path.insert(0, str(HERE.parent / 'model'))
 import eval_model as E   # noqa: E402  (C5VRX research/sim.py on the path)
 import eval3, mrc3_model  # noqa: E402
-RTL = HERE.parent / 'rtl'
 
 def picture(fields, seed=5):
     ire, region = E.sim.raster('NTSC', seed, fields)
@@ -45,8 +46,8 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         w = Path(tmp)
         (w / 'code.hex').write_text('\n'.join(f'{c:02x}' for c in codes) + '\n')
-        subprocess.run(['iverilog', '-g2012', '-I', str(RTL), '-o', str(w / 'tb'), str(HERE / 'tb_video.v'),
-                        *(str(RTL / f) for f in ('vid_sync.v', 'linebuf.v', 'lcd_out.v', 'menu.v'))], check=True)
+        subprocess.run(['iverilog', '-g2012', *rtl_.inc(), '-o', str(w / 'tb'), str(HERE / 'tb_video.v'),
+                        *rtl_.src('vid_sync.v', 'linebuf.v', 'lcd_out.v', 'menu.v')], check=True)
         subprocess.run(['vvp', '-n', str(w / 'tb'), f'+n={len(codes)}'], cwd=w, check=True, stdout=subprocess.DEVNULL)
         a = np.loadtxt(w / 'lcd.txt', dtype=np.int64)
     frames = np.unique(a[:, 0])

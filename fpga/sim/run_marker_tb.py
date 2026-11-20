@@ -1,5 +1,5 @@
 """Triversity: marker_rx.v against the C5 firmware's marker words
-(firmware/main/fpga_link.h): random IQ noise with markers whose words are
+(c5/main/fpga_link.h): random IQ noise with markers whose words are
 held 78..92 samples (the C5's esp_rom_delay_us jitter). Checks every payload,
 that no marker sample reaches the combiner as valid, and that IQ outside the
 marker windows (plus slack) stays valid. Exit 1 on failure."""
@@ -7,7 +7,8 @@ import subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np
 HERE = Path(__file__).resolve().parent
-RTL = HERE.parent / 'rtl'
+sys.path.insert(0, str(HERE))
+import rtl as rtl_  # noqa: E402
 
 def words(t, v):
     p = (t << 12) | v
@@ -31,7 +32,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         w = Path(tmp)
         (w / 'in.hex').write_text('\n'.join(f'{x:02x}' for x in raw) + '\n')
-        subprocess.run(['iverilog', '-g2012', '-o', str(w / 'tb'), str(HERE / 'tb_marker_rx.v'), str(RTL / 'marker_rx.v')], check=True)
+        subprocess.run(['iverilog', '-g2012', '-o', str(w / 'tb'), str(HERE / 'tb_marker_rx.v'), *rtl_.src('marker_rx.v')], check=True)
         subprocess.run(['vvp', '-n', str(w / 'tb'), f'+n={n}'], cwd=w, check=True, stdout=subprocess.DEVNULL)
         rows = [l.split() for l in (w / 'out.hex').read_text().split('\n') if l]
     rd = np.array([int(r[0], 16) for r in rows]); vd = np.array([int(r[1]) for r in rows])
