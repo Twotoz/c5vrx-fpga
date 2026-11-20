@@ -26,6 +26,13 @@
 /* The six FPGA data pads in FPGA word order, bit 5..0 = {I sign, I2, I1,
  * Q sign, Q2, Q1} (fpga/rtl/mrc3_core.v raw word). */
 #define RF_FPGA_PADS {7, 23, 24, 0, 25, 11}
+/* IQ LED: the Q sign bit copied by the GPIO matrix onto the XIAO user LED
+ * (GPIO27, a strapping pin, driven only after boot). Half lit = IQ flowing;
+ * fully on or off = IQ stopped. 80 MHz edges next to the antenna: console L
+ * turns it off for a noise comparison (not saved). */
+#define RF_IQ_LED_GPIO 27
+void rf_set_iq_led(bool on);
+bool rf_iq_led(void);
 
 esp_err_t rf_start(void);
 /* Stop the dump writer and Wi-Fi, request a USB download boot and restart,

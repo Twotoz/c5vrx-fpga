@@ -104,7 +104,11 @@ New:
   row, C/N, flags (AFC lock, video, busy, DC fault, lane, PAL), channel and
   signal strength, for the FPGA's OSD.
 
-USB console: `T` status, `h` keys, `` ` `` reboot to download.
+- IQ LED: the Q sign bit is also copied onto the XIAO's own user LED. Half lit =
+  IQ flowing; fully on or off = IQ stopped. Console `L` turns it off (80 MHz
+  edges next to the antenna: switch it off for a noise comparison).
+
+USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 
 ## Open questions for the first prototype
 

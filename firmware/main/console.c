@@ -36,7 +36,7 @@ void firmware_print(void)
     printf("FIRMWARE id=%s version=%s commit=%s elf_sha256=%s built=\"%s %s\" idf=%s cal_dump=1\n", firmware_id(), d->version,
            C5VRX5_COMMIT, elf[0] ? elf : "unknown", d->date, d->time, d->idf_ver);
     static const int iq[8] = RF_IQ_GPIO_NUMS;
-    printf("PADS iq_gpio=%d,%d,%d,%d,%d,%d,%d,%d (Q0..Q3 I0..I3) rx_clk_gpio=%d link_gpio=10 buttons=9,8,12\n",
+    printf("PADS iq_gpio=%d,%d,%d,%d,%d,%d,%d,%d (Q0..Q3 I0..I3) rx_clk_gpio=%d link_gpio=10 buttons=9,8,12 iq_led_gpio=27\n",
            iq[0], iq[1], iq[2], iq[3], iq[4], iq[5], iq[6], iq[7], RF_RX_CLK_GPIO);
 }
 
@@ -104,7 +104,7 @@ static void help(void)
            "  c next channel, b next band, a AFC on/off, d digital RX filter mode, f analog filter AUTO/NARROW/NORMAL/WIDE,\n"
            "  A live VTX profile switch on/off, Q bench gain-pair sweep,\n"
            "  F calibrate the current filter, B full RF optimisation (ground only),\n"
-           "  ! one bench RX sampling-phase slip, ` reboot to USB download (flashing).\n"
+           "  L IQ LED on/off (Q sign copy on the user LED), ! one bench RX sampling-phase slip, ` reboot to USB download (flashing).\n"
            "  The FPGA sets channel, gain model, AFC and calibration over the link (fpga_link.h).\n");
 }
 
@@ -150,6 +150,7 @@ static void console_task(void *arg)
             case 'D': diag_report(); break;
             case 'M': receiver_print_map(); break;
             case 'R': diag_toggle_stream(); break;
+            case 'L': rf_set_iq_led(!rf_iq_led()); printf("IQ_LED %s (GPIO27, Q sign copy; not saved)\n", rf_iq_led() ? "ON" : "OFF"); break;
             case '!': rx_clock_slip(1); printf("SLIP bench: one RX sampling-phase slip (T SPHASE shows the new excess)\n"); break;
             case 'Y': case 'W': case 'X': flightlog_console((char)c); break;
             case 'h': case '?': help(); break;

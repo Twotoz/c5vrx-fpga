@@ -85,6 +85,22 @@ static esp_err_t lock_rx_only(void)
     return ESP_OK;
 }
 
+/* IQ LED (rf.h): a copy of the Q sign bit on the XIAO user LED. Off = the pad
+ * is an input, so the LED is dark whichever way it is wired. */
+static volatile bool s_iq_led = true;
+static void iq_led_route(unsigned lane)
+{
+    if (s_iq_led) {
+        gpio_set_direction(RF_IQ_LED_GPIO, GPIO_MODE_OUTPUT);
+        esp_rom_gpio_connect_out_signal(RF_IQ_LED_GPIO, MODEM_DIAG0_IDX + s_lane_diag[lane][3], false, false);
+    } else {
+        esp_rom_gpio_connect_out_signal(RF_IQ_LED_GPIO, SIG_GPIO_OUT_IDX, false, false);
+        gpio_set_direction(RF_IQ_LED_GPIO, GPIO_MODE_INPUT);
+    }
+}
+void rf_set_iq_led(bool on) { s_iq_led = on; iq_led_route(s_lane); }
+bool rf_iq_led(void) { return s_iq_led; }
+
 static esp_err_t route_modem_iq(unsigned lane)
 {
     uint64_t mask = 0;
@@ -100,6 +116,8 @@ static esp_err_t route_modem_iq(unsigned lane)
     if (err != ESP_OK) return err;
     for (unsigned k = 0; k < 8; ++k)
         esp_rom_gpio_connect_out_signal(s_iq_pins[k], MODEM_DIAG0_IDX + s_lane_diag[lane][k], false, false);
+    gpio_reset_pin(RF_IQ_LED_GPIO);
+    iq_led_route(lane);
     __asm__ __volatile__("fence iorw, iorw" ::: "memory");
     s_lane = lane;
     return ESP_OK;
@@ -122,6 +140,7 @@ void rf_reroute_lane(unsigned lane)
     if (lane >= RF_LANES) return;
     for (unsigned k = 0; k < 8; ++k)
         esp_rom_gpio_connect_out_signal(s_iq_pins[k], MODEM_DIAG0_IDX + s_lane_diag[lane][k], false, false);
+    if (s_iq_led) esp_rom_gpio_connect_out_signal(RF_IQ_LED_GPIO, MODEM_DIAG0_IDX + s_lane_diag[lane][3], false, false);
     __asm__ __volatile__("fence iorw, iorw" ::: "memory");
     s_lane = lane;
 }
