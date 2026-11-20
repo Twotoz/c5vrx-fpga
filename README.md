@@ -11,7 +11,7 @@ The FPGA aligns the three streams, combines them **before** FM demodulation
 and drives an 800x480 RGB LCD.
 
 - **Triversity**: three C5s combined.
-- **DVR mode**: two C5s combined, the third branch is released for recording.
+- **DVR**: records the picture to the Tang's TF card; all three C5s stay combined.
 - Gain, DC and AFC stay local on each C5; the FPGA only tells them which
   channel to use (one shared UART wire).
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
@@ -33,8 +33,8 @@ channel model (NTSC, independent noise, Rayleigh fading per antenna):
 |---|---|---|---|
 | 3 C5s, picture lock 50 % | +3.2 dB | +3.8 dB | +3.6 dB |
 | 3 C5s, picture lock 90 % | +3.9 dB | +8.3 dB | +5.7 dB |
-| 2 C5s (DVR), lock 50 % | +1.6 dB | +2.5 dB | +2.5 dB |
-| 2 C5s (DVR), lock 90 % | +2.1 dB | +4.4 dB | +2.0 dB |
+| 2 C5s, lock 50 % | +1.6 dB | +2.5 dB | +2.5 dB |
+| 2 C5s, lock 90 % | +2.1 dB | +4.4 dB | +2.0 dB |
 
 Picture noise at equal C/N is 5-6 dB lower with three C5s. Requires the
 click-suppressed discriminator (D32-R2's 50 ns rule on the combined angle);
@@ -124,12 +124,26 @@ flow: Yosys, nextpnr-himbaechel, Apicula).
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
   video line shown twice (480 lines, genlocked, no frame buffer), OSD with
   the menu and per-C5 status, channel scan, and the link to the C5s on pin 51.
-- Fit: 62 % LUT4, 7 BSRAM, 45 MULT9 + 4 MULT18; 55.7 MHz on the 40 MHz IQ
-  clock, 97 MHz on the LCD clock. nextpnr reports 16 hold paths of at most
+- Fit: 71 % LUT4, 23 of 46 BSRAM (16 for the DVR buffer), 45 MULT9 + 4 MULT18;
+  56.9 MHz on the 40 MHz IQ clock, 98.6 MHz on the LCD clock. nextpnr reports 11 hold paths of at most
   0.12 ns on BSRAM addresses (built with `--timing-allow-fail`): check on the board.
 
+- DVR (`rtl/dvr.v`, menu DVR): every second field, 400x240 in 16 grey levels,
+  to `TRIDVR.BIN` on the TF card (SPI mode, FAT32, written as a ring: the
+  oldest part is overwritten). About 87 MB a minute; a slow card drops whole
+  frames, never half ones. Status on the OSD: NO SD, SD OK, REC, SD ERR.
+
+DVR on the PC:
+
+```
+python fpga/tools/make_dvr_file.py /media/TF          # once, on a freshly formatted FAT32 card
+python fpga/tools/dvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4
+```
+
 Simulation: `sim/run_tb3.py` (combiner, bit-exact), `sim/run_marker_tb.py`
-(markers), `sim/run_video_tb.py` (test picture through the whole chain to the
+(markers), `sim/run_link_tx_tb.py` (channel link), `sim/run_dvr_tb.py` (DVR
+against an SD card model with a FAT32 image, fast and slow card),
+`sim/run_video_tb.py` (test picture through the whole chain to the
 LCD; needs a C5VRX checkout next to this repo for `research/sim.py`).
 
 ![Simulated LCD output](docs/fpga_video_sim.png)

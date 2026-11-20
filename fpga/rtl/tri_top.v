@@ -7,7 +7,8 @@
 // menu and link on a PLL clock from the 27 MHz crystal (33.75 MHz), so the
 // menu and screen keep running without C5 A.
 // Buttons: S1 (pin 88) reset, S2 (pin 87) SELECT; the menu buttons on C5 A
-// arrive as markers. Adapted from the Tripleversity work in C5VRX
+// arrive as markers. Menu DVR records to the TF card (dvr.v).
+// Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
 `default_nettype none
 module tri_top (
@@ -20,7 +21,9 @@ module tri_top (
     output wire       lcd_clk, lcd_de, lcd_hs, lcd_vs, lcd_bl,
     output wire [4:0] lcd_r,
     output wire [5:0] lcd_g,
-    output wire [4:0] lcd_b
+    output wire [4:0] lcd_b,
+    output wire       sd_cs, sd_sck, sd_mosi,   // TF card, SPI mode (DVR)
+    input  wire       sd_miso
 );
     // pads -> raw word {I sign, I2, I1, Q sign, Q2, Q1} = {D3, D4, D5, D1, D2, D6}
     function [5:0] word; input [6:1] d; word = {d[3], d[4], d[5], d[1], d[2], d[6]}; endfunction
@@ -71,16 +74,19 @@ module tri_top (
     end
     // ---- combine and demodulate ----
     wire       dvr_l;
-    reg  [1:0] dvr_s;
-    always @(posedge a_clk) dvr_s <= {dvr_s[0], dvr_l};
     wire [5:0] code;
     mrc3_core u_core (.clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
-                      .en_b(en_b & b_alive), .en_c(en_c & c_alive & ~dvr_s[1]), .va(va), .vb(vb), .vc(vc), .code(code));
+                      .en_b(en_b & b_alive), .en_c(en_c & c_alive), .va(va), .vb(vb), .vc(vc), .code(code));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q;
     vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q));
+    // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
+    wire [1:0] dvr_state;
+    dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_data),
+               .field_tog(field_tog), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
+               .state(dvr_state), .frames(), .dropped());
     wire [10:0] lb_raddr; wire [7:0] lb_rdata;
     linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
     // ---- OSD char RAM (menu writes, lcd_out reads) ----
@@ -90,7 +96,7 @@ module tri_top (
     // ---- menu and link ----
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
     menu u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
-                 .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q),
+                 .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
                  .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(lcd_bl));

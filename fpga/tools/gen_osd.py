@@ -22,8 +22,8 @@ FREQS = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917, 5865, 5845, 5825, 5805,
 F = dict(CHNAME=(1, 2), FREQ=(2, 4), BARS_A=(3, 5), BARS_B=(4, 5), BARS_C=(5, 5), STD=(6, 4), MODE=(7, 3),
          CURSOR=(8, 1), GAINMODE=(9, 5), AFC=(10, 3), BRIGHT=(11, 1), GAIN_A=(12, 2), GAIN_B=(13, 2),
          GAIN_C=(14, 2), CN_A=(15, 3), CN_B=(16, 3), CN_C=(17, 3), FLAGS_A=(18, 3), FLAGS_B=(19, 3),
-         FLAGS_C=(20, 3), SCAN=(21, 9), NOVIDEO=(22, 8))
-ITEMS = ['CHANNEL', 'SCAN', 'MODE', 'GAIN', 'AFC', 'BRIGHT', 'CALIBRATE', 'EXIT']
+         FLAGS_C=(20, 3), SCAN=(21, 9), NOVIDEO=(22, 8), DVRST=(23, 6), DVRMENU=(24, 6))
+ITEMS = ['CHANNEL', 'SCAN', 'DVR', 'GAIN', 'AFC', 'BRIGHT', 'CALIBRATE', 'EXIT']
 ITEM_ROW0 = 3
 
 
@@ -43,7 +43,7 @@ def template():
     put(0, 0, ' ' * COLS)
     c = field(0, 1, 'CHNAME'); c = field(0, c + 1, 'FREQ')
     put(0, 10, 'A'); field(0, 11, 'BARS_A'); put(0, 17, 'B'); field(0, 18, 'BARS_B')
-    put(0, 24, 'C'); field(0, 25, 'BARS_C'); field(0, 32, 'STD'); field(0, 37, 'MODE')
+    put(0, 24, 'C'); field(0, 25, 'BARS_C'); field(0, 32, 'STD'); field(0, 37, 'DVRST')
     # menu rows (shown while the menu is open)
     put(2, 1, ' TRIVERSITY' + ' ' * 27)
     for k, name in enumerate(ITEMS):
@@ -52,7 +52,7 @@ def template():
         field(r, 2, 'CURSOR', k)
         put(r, 4, name)
     field(3, 15, 'CHNAME'); field(3, 18, 'FREQ'); put(3, 23, 'MHZ')
-    field(4, 15, 'SCAN'); field(5, 15, 'MODE'); field(6, 15, 'GAINMODE'); field(7, 15, 'AFC')
+    field(4, 15, 'SCAN'); field(5, 15, 'DVRMENU'); field(6, 15, 'GAINMODE'); field(7, 15, 'AFC')
     field(8, 15, 'BRIGHT'); put(9, 15, 'C5 FILTER + DC')
     put(12, 1, ' ' * 38)
     put(12, 2, 'C5  SIGNAL  GAIN  C/N  FLAGS')

@@ -33,7 +33,7 @@ module link_tx #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
                 bt <= 16'd0;
                 tx <= ~sh[0];            // inverted
                 sh <= {1'b1, sh[9:1]};
-                if (bitn == 4'd9) busy <= 1'b0; else bitn <= bitn + 4'd1;
+                if (bitn == 4'd10) busy <= 1'b0; else bitn <= bitn + 4'd1;   // start, 8 data, stop, one stop period
             end else bt <= bt + 16'd1;
         end else if (gap != 8'd0) begin
             if (bt == DIV - 1) begin bt <= 16'd0; gap <= gap - 8'd1; end else bt <= bt + 16'd1;

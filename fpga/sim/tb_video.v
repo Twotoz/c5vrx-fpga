@@ -18,7 +18,7 @@ module tb_video;
     always @(posedge clk_l) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire bl;
     menu #(.CLK_HZ(33750000)) u_menu (.clk(clk_l), .rst(rst), .mk_tog_a(1'b0), .mk_src_a(2'd3), .mk_pl_a(16'd0), .s2_n(1'b1),
-        .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
+        .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(2'd0), .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
         .dvr(), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm(bl));
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
     lcd_out u_lcd (.clk(clk_l), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),

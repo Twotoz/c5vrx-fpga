@@ -22,12 +22,13 @@ module menu #(parameter CLK_HZ = 33750000) (
     input  wire        locked_a,
     input  wire        pal_a,
     input  wire [15:0] sync_q_a,
+    input  wire [1:0]  dvr_state_a,     // dvr.v: 0 no card, 1 ready, 2 recording, 3 error
     // char RAM write
     output reg         osd_we,
     output reg  [10:0] osd_waddr,
     output reg  [7:0]  osd_wdata,
     // outputs
-    output reg         dvr,             // DVR mode: C5 C leaves the combination
+    output reg         dvr,             // DVR: record to the TF card
     output reg  [5:0]  channel,
     output reg         link_on,
     output reg         g_set, a_set,
@@ -41,8 +42,11 @@ module menu #(parameter CLK_HZ = 33750000) (
     reg [15:0] mscnt; reg ms;
     always @(posedge clk) begin ms <= 1'b0; if (mscnt == MS - 1) begin mscnt <= 16'd0; ms <= 1'b1; end else mscnt <= mscnt + 16'd1; end
     // ---- clock-domain crossing of the markers and the video status ----------------
-    reg [2:0] mt; reg [1:0] lk, pl; reg [15:0] sq1, sq2;
-    always @(posedge clk) begin mt <= {mt[1:0], mk_tog_a}; lk <= {lk[0], locked_a}; pl <= {pl[0], pal_a}; sq1 <= sync_q_a; sq2 <= sq1; end
+    reg [2:0] mt; reg [1:0] lk, pl; reg [15:0] sq1, sq2; reg [1:0] ds1, ds2;
+    always @(posedge clk) begin
+        mt <= {mt[1:0], mk_tog_a}; lk <= {lk[0], locked_a}; pl <= {pl[0], pal_a}; sq1 <= sync_q_a; sq2 <= sq1;
+        ds1 <= dvr_state_a; ds2 <= ds1;
+    end
     wire mk_ev = mt[2] ^ mt[1];        // payload/source stable for ~250 ms after a toggle
     wire locked = lk[1], pal = pl[1];
     // ---- C5 status ------------------------------------------------------------------
@@ -91,7 +95,7 @@ module menu #(parameter CLK_HZ = 33750000) (
         end
     end
     // ---- menu state ---------------------------------------------------------------------
-    localparam N_ITEMS = 4'd8, I_CHANNEL = 0, I_SCAN = 1, I_MODE = 2, I_GAIN = 3, I_AFC = 4, I_BRIGHT = 5, I_CAL = 6, I_EXIT = 7;
+    localparam N_ITEMS = 4'd8, I_CHANNEL = 0, I_SCAN = 1, I_DVR = 2, I_GAIN = 3, I_AFC = 4, I_BRIGHT = 5, I_CAL = 6, I_EXIT = 7;
     reg        open;
     reg [3:0]  cursor;
     reg [2:0]  bright;
@@ -133,7 +137,7 @@ module menu #(parameter CLK_HZ = 33750000) (
                 else if (b[1]) case (cursor)
                     I_CHANNEL: channel <= {channel[5:3], channel[2:0] + 3'd1};
                     I_SCAN:    begin scanning <= 1'b1; scan_ch <= 6'd0; channel <= 6'd0; orig_ch <= channel; best_q <= 16'd0; scan_ms <= 10'd0; end
-                    I_MODE:    dvr <= ~dvr;
+                    I_DVR:     dvr <= ~dvr;
                     I_GAIN:    begin gain_model <= gain_model == 2'd2 ? 2'd0 : gain_model + 2'd1; g_set <= 1'b1; end
                     I_AFC:     begin afc <= ~afc; a_set <= 1'b1; end
                     I_BRIGHT:  bright <= bright + 3'd1;
@@ -192,8 +196,9 @@ module menu #(parameter CLK_HZ = 33750000) (
         begin
             case (sel)
                 0: s = "LEVEL    "; 1: s = "KEEL     "; 2: s = "RSSI     "; 3: s = "ON       "; 4: s = "OFF      ";
-                5: s = "TRI      "; 6: s = "DVR      "; 7: s = "NTSC     "; 8: s = "PAL      "; 9: s = "----     ";
-                10: s = "NO VIDEO "; 11: s = "         "; default: s = "         ";
+                7: s = "NTSC     "; 8: s = "PAL      "; 9: s = "----     ";
+                10: s = "NO VIDEO "; 11: s = "         "; 12: s = "NO SD    "; 13: s = "SD OK    ";
+                14: s = "REC      "; 15: s = "SD ERR   "; default: s = "         ";
             endcase
             text = s[8*(8-i) +: 8];
         end
@@ -210,7 +215,6 @@ module menu #(parameter CLK_HZ = 33750000) (
             8'd4:  chv = bars(st_sig[1], fi[2:0], st_age[1]);
             8'd5:  chv = bars(st_sig[2], fi[2:0], st_age[2]);
             8'd6:  chv = text(!locked ? 6'd9 : pal ? 6'd8 : 6'd7, fi[2:0]);
-            8'd7:  chv = text(dvr ? 6'd6 : 6'd5, fi[2:0]);
             8'd8:  chv = cursor == fi[3:0] ? 8'd62 : 8'd32;
             8'd9:  chv = text({4'd0, gain_model}, fi[2:0]);
             8'd10: chv = text(afc ? 6'd3 : 6'd4, fi[2:0]);
@@ -227,6 +231,8 @@ module menu #(parameter CLK_HZ = 33750000) (
             8'd21: chv = !scanning ? 8'd32 : fi == 8'd0 ? 8'd83 : fi == 8'd1 ? 8'd67 : fi == 8'd2 ? 8'd65 : fi == 8'd3 ? 8'd78 :
                          fi == 8'd5 ? tens({2'd0, scan_ch}) : fi == 8'd6 ? ones({2'd0, scan_ch}) : 8'd32;
             8'd22: chv = locked ? 8'd0 : text(6'd10, fi[2:0]);
+            8'd24: chv = !dvr ? text(6'd4, fi[2:0]) : ds2 == 2'd2 ? (text(6'd14, fi[2:0]) | 8'h80) : text(6'd12 + {4'd0, ds2}, fi[2:0]);
+            8'd23: chv = !dvr ? 8'd32 : ds2 == 2'd2 ? (text(6'd14, fi[2:0]) | 8'h80) : text(6'd12 + {4'd0, ds2}, fi[2:0]);
             default: chv = 8'd32;
         endcase
     end

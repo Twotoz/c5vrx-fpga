@@ -1,0 +1,304 @@
+// Triversity: DVR to the Tang Nano 20K's TF card, SPI mode (D1/D2 of the slot
+// share pins with C5 data). Runs on C5 A's 40 MHz clock next to vid_sync.
+//  - frames: every second field, 400 x 240 pixels of 4-bit gray (every second
+//    pixel of vid_sync's 800), two pixels per byte, low nibble first.
+//    A frame is 95 sectors (48640 bytes): a 512-byte header ("TRIDVR01",
+//    frame number counting dropped frames too, 400, 240, PAL, 4 bits), 48000 pixel bytes, zero padding;
+//    its last two bytes hold the number of pixel bytes really stored (below
+//    48000 when the ring overflowed: the player repeats the last frame).
+//  - a 32 KB ring buffer (BSRAM) between the field and the card; a frame
+//    starts only while the ring is nearly empty (a field is ~16 ms of
+//    2.9 MB/s, the card drains ~2 MB/s), else it is dropped whole.
+//  - the card: SPI init (CMD0, CMD8, ACMD41, CMD58; SDSC and SDHC/SDXC), then
+//    the FAT32 lookup of TRIDVR.BIN in the first cluster of the root directory
+//    (MBR or superfloppy). The FPGA follows no FAT chain: the file must be
+//    contiguous (fpga/tools/make_dvr_file.py on a freshly formatted card).
+//    Recording writes the file as a ring with CMD25 multi-block writes; the
+//    player finds frames by their header, so a stop or wrap can sit anywhere.
+//  - rec: record (the menu's DVR mode, other clock domain).
+`default_nettype none
+module dvr (
+    input  wire        clk,            // 40 MHz
+    input  wire        rst,
+    input  wire        rec,
+    input  wire        px_we,          // vid_sync's pixel writes {orow[0], px[9:0]}
+    input  wire [10:0] px_addr,
+    input  wire [7:0]  px_data,
+    input  wire        field_tog,
+    input  wire        pal,
+    output reg         sd_cs,
+    output reg         sd_sck,
+    output reg         sd_mosi,
+    input  wire        sd_miso,
+    output reg  [1:0]  state,          // 0 no card / init, 1 ready, 2 recording, 3 error
+    output reg  [15:0] frames,         // frames captured
+    output reg  [15:0] dropped         // frames dropped (ring too full)
+);
+    localparam [16:0] FRAME_BYTES = 17'd48640;
+    localparam [16:0] PIX_END     = 17'd48512;   // header + 48000
+    // ---- ring buffer ----------------------------------------------------------------
+    reg  [7:0]  ring [0:32767];
+    reg  [15:0] wp, rp;                          // 15-bit address + lap bit
+    wire [15:0] used = wp - rp;
+    reg         rb_we; reg [7:0] rb_wd; reg [7:0] rb_rd;
+    always @(posedge clk) begin
+        if (rb_we) ring[wp[14:0]] <= rb_wd;
+        rb_rd <= ring[rp[14:0]];
+    end
+    // ---- capture ------------------------------------------------------------------------
+    reg [1:0]  rs; always @(posedge clk) rs <= {rs[0], rec};
+    reg [2:0]  ft; always @(posedge clk) ft <= {ft[1:0], field_tog};
+    wire       field_ev = ft[2] ^ ft[1];
+    reg        fpar, in_frame, pad;
+    reg [16:0] fb;                               // bytes of this frame in the ring
+    reg [15:0] npx;                              // pixel bytes stored
+    reg [9:0]  hdr_i;                            // header byte, 512 = done
+    reg [3:0]  lo_nib;
+    reg [15:0] seq;                              // frame number: every frame slot, also the dropped ones
+    function [7:0] hdr; input [8:0] i; input [15:0] s; input p;
+        case (i)
+            0: hdr = "T"; 1: hdr = "R"; 2: hdr = "I"; 3: hdr = "D"; 4: hdr = "V"; 5: hdr = "R"; 6: hdr = "0"; 7: hdr = "1";
+            8: hdr = s[7:0]; 9: hdr = s[15:8]; 10: hdr = 8'd144; 11: hdr = 8'd1; 12: hdr = 8'd240; 13: hdr = 8'd0;
+            14: hdr = {7'd0, p}; 15: hdr = 8'd4;
+            default: hdr = 8'd0;
+        endcase
+    endfunction
+    wire full = used[15];                        // 32768 bytes waiting
+    always @(posedge clk) begin
+        rb_we <= 1'b0;
+        if (rst) begin
+            fpar <= 1'b0; in_frame <= 1'b0; pad <= 1'b0; hdr_i <= 10'd512;
+            frames <= 16'd0; dropped <= 16'd0; seq <= 16'd0; wp <= 16'd0;
+        end else begin
+            if (rb_we) wp <= wp + 16'd1;
+            if (field_ev) begin
+                fpar <= ~fpar;
+                if (in_frame) pad <= 1'b1;                        // the frame's field is over
+                else if (!fpar && rs[1] && state == 2'd2) begin
+                    seq <= seq + 16'd1;
+                    if (used <= 16'd2048) begin                   // nearly empty: a whole field fits
+                        in_frame <= 1'b1; fb <= 17'd0; npx <= 16'd0; hdr_i <= 10'd0; frames <= frames + 16'd1;
+                    end else dropped <= dropped + 16'd1;
+                end
+            end
+            if (in_frame && !full && !rb_we) begin               // one byte every second clock at most
+                if (hdr_i != 10'd512) begin
+                    rb_we <= 1'b1; rb_wd <= hdr(hdr_i[8:0], seq, pal); hdr_i <= hdr_i + 10'd1; fb <= fb + 17'd1;
+                end else if (pad) begin                           // padding, the stored count at the end
+                    if (fb == FRAME_BYTES) begin in_frame <= 1'b0; pad <= 1'b0; end
+                    else begin
+                        rb_we <= 1'b1; fb <= fb + 17'd1;
+                        rb_wd <= fb == FRAME_BYTES - 17'd2 ? npx[7:0] : fb == FRAME_BYTES - 17'd1 ? npx[15:8] : 8'd0;
+                    end
+                end
+            end
+            if (in_frame && hdr_i == 10'd512 && !pad && px_we) begin
+                if (px_addr[1:0] == 2'b00) lo_nib <= px_data[7:4];
+                else if (px_addr[1:0] == 2'b10 && fb < PIX_END && !full && !rb_we) begin
+                    rb_we <= 1'b1; rb_wd <= {px_data[7:4], lo_nib}; fb <= fb + 17'd1; npx <= npx + 16'd1;
+                end
+            end
+        end
+    end
+    // ---- SPI byte engine: mode 0, MSB first; sck = clk / (2 * DIV) ---------------------
+    reg        slow;
+    reg [6:0]  div_cnt;
+    reg        sp_go, sp_busy, sp_phase;
+    reg [7:0]  sp_tx, sp_rx, sp_sh;
+    reg [2:0]  sp_bit;
+    wire [6:0] DIV = slow ? 7'd50 : 7'd1;        // 400 kHz while initialising, then 20 MHz
+    always @(posedge clk) begin
+        if (rst) begin sp_busy <= 1'b0; sd_sck <= 1'b0; sd_mosi <= 1'b1; div_cnt <= 7'd0; end
+        else if (!sp_busy) begin
+            if (sp_go) begin sp_busy <= 1'b1; sp_sh <= sp_tx; sp_bit <= 3'd0; sp_phase <= 1'b0; div_cnt <= 7'd0; sd_mosi <= sp_tx[7]; end
+        end else if (div_cnt != DIV - 7'd1) div_cnt <= div_cnt + 7'd1;
+        else begin
+            div_cnt <= 7'd0;
+            if (!sp_phase) begin sd_sck <= 1'b1; sp_rx <= {sp_rx[6:0], sd_miso}; sp_phase <= 1'b1; end
+            else begin
+                sd_sck <= 1'b0; sp_phase <= 1'b0;
+                if (sp_bit == 3'd7) sp_busy <= 1'b0;
+                else begin sp_bit <= sp_bit + 3'd1; sp_sh <= {sp_sh[6:0], 1'b1}; sd_mosi <= sp_sh[6]; end
+            end
+        end
+    end
+    // ---- card --------------------------------------------------------------------------------
+    localparam S_RESET = 0, S_PWR = 1, S_NEXT = 2, S_CMD = 3, S_RESP = 4, S_EXTRA = 5, S_PARSE = 6, S_RDTOK = 7,
+               S_RDDATA = 8, S_RD17 = 9, S_ROOT = 10, S_READY = 11, S_WR25 = 12, S_WRWAIT = 13, S_WRTOK = 14,
+               S_WRDATA = 15, S_BUSY = 16, S_STOP = 17, S_STOPBUSY = 18, S_ERROR = 19;
+    reg [4:0]  st;
+    reg [2:0]  step;                 // init command: 0 CMD0, 1 CMD8, 2 CMD55, 3 ACMD41, 4 CMD58, 5 a CMD17
+    reg [47:0] cmd;
+    reg [3:0]  ci;
+    reg [7:0]  r1;
+    reg [2:0]  extra;
+    reg [31:0] ocr;
+    reg [15:0] tries, acmd_n;
+    reg        ccs;
+    reg [9:0]  bi;
+    reg [31:0] lba, part_lba, data_lba, file_lba, file_sect, pos;
+    reg [15:0] rsvd; reg [7:0] spc, nfats; reg [31:0] fatsz, rootclus, fclus, fsize;
+    reg [1:0]  rd_what;              // 0 sector 0, 1 boot sector, 2 root directory
+    reg        nombr, grab, found;
+    reg [7:0]  rd_sect;
+    reg [87:0] name;
+    reg [23:0] tmo;
+    reg [2:0]  sh;                   // log2(sectors per cluster)
+    reg [9:0]  j; reg [7:0] b;
+    function [47:0] mk; input [5:0] c; input [31:0] arg; input [7:0] crc; mk = {2'b01, c, arg, crc}; endfunction
+    function [2:0] lg; input [7:0] v;
+        lg = v[7] ? 3'd7 : v[6] ? 3'd6 : v[5] ? 3'd5 : v[4] ? 3'd4 : v[3] ? 3'd3 : v[2] ? 3'd2 : v[1] ? 3'd1 : 3'd0;
+    endfunction
+    wire [31:0] addr = ccs ? lba : {lba[22:0], 9'd0};
+    always @(posedge clk) begin
+        sp_go <= 1'b0;
+        if (rst) begin st <= S_RESET; state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; rp <= 16'd0; tmo <= 24'd0; end
+        else if (!sp_busy && !sp_go) case (st)
+            S_RESET: begin state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; ci <= 4'd0; acmd_n <= 16'd0; rp <= wp; st <= S_PWR; end
+            S_PWR: begin                                        // 96 clocks with CS high
+                sp_tx <= 8'hff; sp_go <= 1'b1; ci <= ci + 4'd1;
+                if (ci == 4'd11) begin sd_cs <= 1'b0; step <= 3'd0; st <= S_NEXT; end
+            end
+            S_NEXT: begin
+                ci <= 4'd0; extra <= 3'd0; st <= S_CMD;
+                case (step)
+                    3'd0: cmd <= mk(6'd0, 32'd0, 8'h95);
+                    3'd1: begin cmd <= mk(6'd8, 32'h1aa, 8'h87); extra <= 3'd4; end
+                    3'd2: cmd <= mk(6'd55, 32'd0, 8'h65);
+                    3'd3: cmd <= mk(6'd41, 32'h40000000, 8'h77);
+                    3'd4: begin cmd <= mk(6'd58, 32'd0, 8'hfd); extra <= 3'd4; end
+                    default: begin slow <= 1'b0; lba <= 32'd0; rd_what <= 2'd0; st <= S_RD17; end
+                endcase
+            end
+            S_RD17: begin cmd <= mk(6'd17, addr, 8'hff); ci <= 4'd0; extra <= 3'd0; step <= 3'd5; st <= S_CMD; end
+            S_CMD: begin
+                sp_tx <= cmd[47 - 8 * ci -: 8]; sp_go <= 1'b1; ci <= ci + 4'd1;
+                if (ci == 4'd5) begin st <= S_RESP; tries <= 16'd0; end
+            end
+            S_RESP: begin                                       // R1: the first byte with bit 7 clear
+                if (ci == 4'd6) begin sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'd7; end
+                else if (!sp_rx[7]) begin r1 <= sp_rx; ci <= 4'd0; st <= extra != 3'd0 ? S_EXTRA : S_PARSE; end
+                else if (tries == 16'd16) st <= S_ERROR;
+                else begin tries <= tries + 16'd1; sp_tx <= 8'hff; sp_go <= 1'b1; end
+            end
+            S_EXTRA: begin                                      // the four bytes of R3 / R7
+                if (ci != 4'd0) ocr <= {ocr[23:0], sp_rx};
+                if (ci == {1'b0, extra}) st <= S_PARSE;
+                else begin sp_tx <= 8'hff; sp_go <= 1'b1; ci <= ci + 4'd1; end
+            end
+            S_PARSE: begin
+                st <= S_NEXT;
+                case (step)
+                    3'd0: if (r1 == 8'h01) step <= 3'd1; else st <= S_ERROR;
+                    3'd1: step <= 3'd2;                         // an R7, or "illegal" from a v1 card
+                    3'd2: step <= 3'd3;
+                    3'd3: if (r1 == 8'h00) step <= 3'd4;
+                          else if (acmd_n == 16'd8000) st <= S_ERROR;
+                          else begin acmd_n <= acmd_n + 16'd1; step <= 3'd2; end
+                    3'd4: begin ccs <= ocr[30]; step <= 3'd5; end
+                    default: if (r1 == 8'h00) begin st <= S_RDTOK; tries <= 16'd0; ci <= 4'd0; end else st <= S_ERROR;
+                endcase
+            end
+            S_RDTOK: begin                                      // data token 0xFE
+                if (ci == 4'hf && sp_rx == 8'hfe) begin st <= S_RDDATA; bi <= 10'd0; grab <= 1'b0; end
+                else if (tries == 16'd50000) st <= S_ERROR;
+                else begin tries <= tries + 16'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'hf; end
+            end
+            S_RDDATA: begin                                     // 512 bytes + CRC, parsed on the fly
+                if (bi != 10'd0 && bi <= 10'd512) begin
+                    j = bi - 10'd1; b = sp_rx;
+                    case (rd_what)
+                        2'd0: begin
+                            if (j == 10'd450) nombr <= !(b == 8'h0b || b == 8'h0c);
+                            if (j >= 10'd454 && j < 10'd458) part_lba <= {b, part_lba[31:8]};
+                        end
+                        2'd1: begin
+                            if (j == 10'd13) spc <= b;
+                            if (j == 10'd14) rsvd[7:0] <= b;
+                            if (j == 10'd15) rsvd[15:8] <= b;
+                            if (j == 10'd16) nfats <= b;
+                            if (j >= 10'd36 && j < 10'd40) fatsz <= {b, fatsz[31:8]};
+                            if (j >= 10'd44 && j < 10'd48) rootclus <= {b, rootclus[31:8]};
+                        end
+                        default: begin
+                            if (j[4:0] < 5'd11) name <= {name[79:0], b};
+                            if (j[4:0] == 5'd11) grab <= !found && name == "TRIDVR  BIN";
+                            if (grab) begin
+                                if (j[4:0] == 5'd20) fclus[23:16] <= b;
+                                if (j[4:0] == 5'd21) fclus[31:24] <= {4'd0, b[3:0]};
+                                if (j[4:0] == 5'd26) fclus[7:0] <= b;
+                                if (j[4:0] == 5'd27) fclus[15:8] <= b;
+                                if (j[4:0] >= 5'd28) fsize <= {b, fsize[31:8]};
+                                if (j[4:0] == 5'd31) begin grab <= 1'b0; found <= 1'b1; end
+                            end
+                        end
+                    endcase
+                end
+                if (bi == 10'd515) begin                        // sector done (2 CRC bytes read)
+                    case (rd_what)
+                        2'd0: begin
+                            rd_what <= 2'd1; st <= S_RD17;
+                            if (nombr) begin part_lba <= 32'd0; lba <= 32'd0; end else lba <= part_lba;
+                        end
+                        2'd1: begin
+                            data_lba <= part_lba + rsvd + (nfats == 8'd2 ? {fatsz[30:0], 1'b0} : fatsz);
+                            sh <= lg(spc); rd_what <= 2'd2; rd_sect <= 8'd0; found <= 1'b0; st <= S_ROOT;
+                        end
+                        default: begin
+                            if (found) begin
+                                file_lba <= data_lba + ((fclus - 32'd2) << sh);
+                                file_sect <= fsize >> 9; pos <= 32'd0;
+                                st <= (fsize >> 9) >= 32'd95 ? S_READY : S_ERROR;
+                            end else if (rd_sect + 8'd1 == spc) st <= S_ERROR;
+                            else begin rd_sect <= rd_sect + 8'd1; lba <= lba + 32'd1; st <= S_RD17; end
+                        end
+                    endcase
+                end else begin sp_tx <= 8'hff; sp_go <= 1'b1; bi <= bi + 10'd1; end
+            end
+            S_ROOT: begin lba <= data_lba + ((rootclus - 32'd2) << sh); st <= S_RD17; end
+            S_READY: begin
+                state <= 2'd1; rp <= wp;
+                if (rs[1]) begin state <= 2'd2; lba <= file_lba + pos; st <= S_WR25; end
+            end
+            S_WR25: begin cmd <= mk(6'd25, addr, 8'hff); ci <= 4'd0; st <= S_WRWAIT; end
+            S_WRWAIT: begin                                     // CMD25, its R1, one gap byte
+                if (ci < 4'd6) begin sp_tx <= cmd[47 - 8 * ci -: 8]; sp_go <= 1'b1; ci <= ci + 4'd1; tries <= 16'd0; end
+                else if (ci == 4'd6) begin sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'd7; end
+                else if (ci == 4'd8) st <= S_WRTOK;
+                else if (!sp_rx[7]) begin
+                    if (sp_rx == 8'h00) begin sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'd8; end else st <= S_ERROR;
+                end else if (tries == 16'd16) st <= S_ERROR;
+                else begin tries <= tries + 16'd1; sp_tx <= 8'hff; sp_go <= 1'b1; end
+            end
+            S_WRTOK: begin                                      // a block per 512 bytes waiting
+                if (used >= 16'd512) begin sp_tx <= 8'hfc; sp_go <= 1'b1; bi <= 10'd0; st <= S_WRDATA; end
+                else if (!rs[1] && !in_frame) st <= S_STOP;     // stop once the last frame drained
+            end
+            S_WRDATA: begin
+                if (bi < 10'd512) begin sp_tx <= rb_rd; sp_go <= 1'b1; rp <= rp + 16'd1; bi <= bi + 10'd1; end
+                else if (bi < 10'd515) begin sp_tx <= 8'hff; sp_go <= 1'b1; bi <= bi + 10'd1; end   // CRC, CRC, response
+                else if (sp_rx[4:0] != 5'b00101) st <= S_ERROR;
+                else begin st <= S_BUSY; tmo <= 24'd0; ci <= 4'd0; end
+            end
+            S_BUSY: begin                                       // MISO low while the card programs
+                if (ci == 4'he && sp_rx == 8'hff) begin
+                    if (pos + 32'd1 == file_sect) begin pos <= 32'd0; st <= S_STOP; end
+                    else begin pos <= pos + 32'd1; st <= S_WRTOK; end
+                end else if (tmo == 24'hffffff) st <= S_ERROR;
+                else begin tmo <= tmo + 24'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'he; end
+            end
+            S_STOP: begin sp_tx <= 8'hfd; sp_go <= 1'b1; st <= S_STOPBUSY; ci <= 4'd0; tmo <= 24'd0; end
+            S_STOPBUSY: begin                                   // one byte, then busy until 0xFF
+                if (ci == 4'he && sp_rx == 8'hff) st <= (pos == 32'd0 && rs[1]) ? S_WR25 : S_READY;
+                else if (tmo == 24'hffffff) st <= S_ERROR;
+                else begin tmo <= tmo + 24'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= ci == 4'd0 ? 4'd1 : 4'he; end
+            end
+            S_ERROR: begin                                      // retry from power-up after ~0.4 s
+                state <= 2'd3; sd_cs <= 1'b1; rp <= wp;
+                if (tmo == 24'hffffff) begin tmo <= 24'd0; st <= S_RESET; end else tmo <= tmo + 24'd1;
+            end
+            default: st <= S_RESET;
+        endcase
+    end
+endmodule
+`default_nettype wire
