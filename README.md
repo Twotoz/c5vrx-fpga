@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/receivers-3%C3%97%20ESP32--C5-111111" alt="3x ESP32-C5" />
     <img src="https://img.shields.io/badge/FPGA-Tang%20Nano%2020K-success" alt="Tang Nano 20K" />
     <img src="https://img.shields.io/badge/RF-5.8%20GHz%20(48%20channels)-6f42c1" alt="5.8 GHz" />
-    <img src="https://img.shields.io/badge/output-800x480%20LCD%20%2B%20DVR-orange" alt="LCD and DVR" />
+    <img src="https://img.shields.io/badge/output-800x480%20colour%20LCD-orange" alt="Colour LCD" />
     <img src="https://img.shields.io/badge/license-GPL--3.0--only-blue" alt="GPL-3.0-only" />
   </p>
 
@@ -35,7 +35,8 @@ demodulates once and shows the picture with an on-screen menu.
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
 - Three buttons on C5 A (Up, Select, Down) drive the menu.
 - Colour (NTSC and PAL), 60 / 50 pictures a second on the screen.
-- DVR to the Tang's TF card.
+- DVR to the Tang's TF card as a separate build (it does not fit next to the
+  colour decoder).
 
 > [!NOTE]
 > **Triversity is an official C5VRX version**, made by Twotoz and the C5VRX
@@ -83,7 +84,8 @@ receiver's own.
   or Triversity (A + B + C, IQ fusion). C5s left out keep running and show
   Idle; the live view greys them out.
 - **Scan**: every channel 0.5 s, picks the one with the best sync.
-- **Record**: DVR on / off; No card, Ready, the recording time, Card err.
+- **Record**: DVR on / off; No card, Ready, the recording time, Card err
+  (No DVR in the default build).
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
   brightness, calibrate (filter and DC on every C5).
@@ -243,20 +245,24 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
   video line shown twice (480 lines, genlocked, no frame buffer). OSD: 66 x 20
   cells of 12 x 24 pixels, anti-aliased glyphs, panels that dim the video.
-- DVR (`rtl/io/dvr.v`): 400x240 in 16 grey levels at 30 fps (NTSC) or 25 fps
+- DVR (`rtl/io/dvr.v`, only in `DVR=1 fpga/build.sh`: with the colour decoder
+  it needs 86 % of the logic and does not place; the default build shows
+  "No DVR" under Record): 400x240 in 16 grey levels at 30 fps (NTSC) or 25 fps
   (PAL): every second field, every second pixel of the line. To
   `TRIDVR.BIN` on the TF card (SPI mode; found by its header sector, written
   as a ring: the oldest part is overwritten). About 87 MB a minute; a slow
   card drops whole frames, never half ones. A colour DVR at full resolution
   needs ~15 MB/s or compression: more than the SPI slot (~2.5 MB/s) and the
   logic left on this FPGA.
-- Fit: 79 % LUT4, 37 of 46 BSRAM (16 for the DVR buffer, 6 glyphs, 6 page
-  templates, 3 aspect maps), 45 MULT9 + 4 MULT18; 59 MHz on the 40 MHz IQ
-  clock, 78 MHz on the 33.75 MHz LCD clock, no hold violations.
+- Fit (default build): 78 % LUT4, 24 of 46 BSRAM, 47 MULT9 + 12 MULT18;
+  58 MHz on the 40 MHz IQ clock, 88 MHz on the 33.75 MHz LCD clock, no hold
+  violations. Synthesis runs `-nodsp`: inferred multipliers would take more
+  than the 24 DSP macros.
 
 DVR on the PC:
 
 ```
+DVR=1 fpga/build.sh                               # the DVR build
 python tools/make_dvr_file.py /media/TF          # once, on a freshly formatted FAT32 card
 python tools/dvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4
 ```

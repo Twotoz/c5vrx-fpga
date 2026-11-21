@@ -265,6 +265,8 @@ def field_cells(name, w, st, row, sel, edit):
         return K(segs + [32] + rjust(f'{n}/48', 5))
     if name == 'RECV':
         s = st['dvr_state']
+        if not st.get('has_dvr', True):
+            return K(rjust('No DVR', w))
         if not st['dvr']:
             return K(rjust('Off', w))
         if s == 2:

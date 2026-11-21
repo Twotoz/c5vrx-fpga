@@ -6,7 +6,7 @@ from pathlib import Path
 RTL = Path(__file__).resolve().parent.parent / 'rtl'
 
 
-DEPS = {'vid_sync.v': ['chroma.v'], 'chroma.v': ['mul_dsp.v']}
+DEPS = {'lcd_out.v': ['mul_dsp.v'], 'vid_sync.v': ['chroma.v'], 'chroma.v': ['mul_dsp.v']}
 
 
 def src(*names):

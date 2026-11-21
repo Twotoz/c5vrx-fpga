@@ -18,7 +18,7 @@
 //    ({bg[1:0], fg[2:0], glyph[6:0]}, read by lcd_out.v)
 //  - link frames (c5/main/fpga_link.h) to link_tx.v
 `default_nettype none
-module menu #(parameter CLK_HZ = 33750000) (
+module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     input  wire        clk,
     input  wire        rst,
     input  wire        mk_tog_a,         // markers (clk_a domain): toggle, source C5, payload
@@ -198,7 +198,7 @@ module menu #(parameter CLK_HZ = 33750000) (
                         3'd1: edit <= 1'b1;
                         3'd2: if (scanning) begin scanning <= 1'b0; channel <= orig_ch; end
                               else begin scanning <= 1'b1; scan_ch <= 6'd0; channel <= 6'd0; orig_ch <= channel; best_q <= 16'd0; scan_ms <= 10'd0; end
-                        3'd3: dvr <= ~dvr;
+                        3'd3: if (HAS_DVR != 0) dvr <= ~dvr;
                         3'd4: begin page <= 2'd2; cursor <= 3'd0; end
                         default: begin page <= 2'd3; cursor <= 3'd0; end
                     endcase
@@ -249,7 +249,7 @@ module menu #(parameter CLK_HZ = 33750000) (
                 0: s = " No video"; 1: s = "      PAL"; 2: s = "     NTSC"; 3: s = "      Off"; 4: s = "  No card";
                 5: s = "    Ready"; 6: s = " Card err"; 7: s = "    Level"; 8: s = "     Keel"; 9: s = "     RSSI";
                 10: s = "       On"; 11: s = "      Off"; 12: s = "     Sent"; 13: s = "NO SIGNAL"; 14: s = "     REC ";
-                15: s = "     Off ";
+                15: s = "     Off "; 24: s = "   No DVR";
                 default: s = "         ";
             endcase
             str = s[8 * (8 - i) +: 7];
@@ -306,7 +306,8 @@ module menu #(parameter CLK_HZ = 33750000) (
                 endcase
             end
             F_RECV: begin
-                if (!dvr) fch = str(5'd3, fi[3:0]);
+                if (HAS_DVR == 0) fch = str(5'd24, fi[3:0]);
+                else if (!dvr) fch = str(5'd3, fi[3:0]);
                 else if (ds2 == 2'd2) case (fi)
                     7'd2: fch = rec_m >= 7'd10 ? G_DOT : SP;
                     7'd3: fch = rec_m >= 7'd10 ? SP : G_DOT;

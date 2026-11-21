@@ -120,6 +120,10 @@ module lcd_out (
         p = {s, 7'd0} + {2'd0, s, 5'd0} + {4'd0, s, 3'd0} + {6'd0, s, 1'b0} + {8'd0, s};   // s * 171
         mul171s9 = {1'b0, p[17:9]};
     end endfunction
+    wire [35:0] m_r, m_g, m_b;
+    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mr (.a({8'd0, sr}), .b(18'd171), .y(m_r));
+    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mg (.a({8'd0, sg}), .b(18'd171), .y(m_g));
+    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mb (.a({8'd0, sb}), .b(18'd171), .y(m_b));
     always @(posedge clk) begin
         hq <= hmap[{hmode, xn}];
         lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
@@ -151,10 +155,10 @@ module lcd_out (
             sg <= bgc[15:8]  * (2'd3 - a) + fgc[15:8]  * a;
             sb <= bgc[7:0]   * (2'd3 - a) + fgc[7:0]   * a;
         end
-        // n+4: / 3, out
+        // n+4: / 3 (x 171 >> 9 on DSP blocks), out
         begin : px
             reg [9:0] r8, g8, b8;
-            r8 = mul171s9(sr); g8 = mul171s9(sg); b8 = mul171s9(sb);
+            r8 = m_r[18:9]; g8 = m_g[18:9]; b8 = m_b[18:9];
             if (!de_d[3]) begin lcd_r <= 5'd0; lcd_g <= 6'd0; lcd_b <= 5'd0; end
             else begin lcd_r <= r8[7:3]; lcd_g <= g8[7:2]; lcd_b <= b8[7:3]; end
         end

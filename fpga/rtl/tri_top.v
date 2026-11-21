@@ -7,7 +7,7 @@
 // menu and link on a PLL clock from the 27 MHz crystal (33.75 MHz), so the
 // menu and screen keep running without C5 A.
 // Buttons: S1 (pin 88) reset, S2 (pin 87) SELECT; the menu buttons on C5 A
-// arrive as markers. Menu DVR records to the TF card (dvr.v).
+// arrive as markers. Menu Record records to the TF card (dvr.v, in the DVR=1 build).
 // Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
 `default_nettype none
@@ -88,9 +88,16 @@ module tri_top (
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
+`ifdef TRI_DVR
+    localparam HAS_DVR = 1;
     dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_gray),
                .field_tog(field_tog), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
                .state(dvr_state), .frames(), .dropped());
+`else
+    // the default build leaves the DVR out (logic for the colour decoder): DVR=1 fpga/build.sh
+    localparam HAS_DVR = 0;
+    assign sd_cs = 1'b1; assign sd_sck = 1'b0; assign sd_mosi = 1'b1; assign dvr_state = 2'd0;
+`endif
     wire [10:0] lb_raddr; wire [15:0] lb_rdata;
     linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
     // ---- OSD cell RAM {bg, fg, glyph} (menu writes, lcd_out reads) ----
@@ -100,7 +107,7 @@ module tri_top (
     // ---- menu and link ----
     wire [1:0] hmode;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
-    menu u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
+    menu #(.HAS_DVR(HAS_DVR)) u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
