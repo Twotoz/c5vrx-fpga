@@ -17,16 +17,15 @@ module cordic_angle #(
     reg signed [W-1:0] ys [0:N];
     reg        [15:0]  as [0:N];
 
+    // 180-degree pre-rotation for x < 0: 0 - v or 0 + v on one carry chain
+    wire neg = x_in[W-1];
+    wire [W-1:0] x0, y0;
+    addsub #(W) u_x0 (.a({W{1'b0}}), .b(x_in), .sub(neg), .y(x0));
+    addsub #(W) u_y0 (.a({W{1'b0}}), .b(y_in), .sub(neg), .y(y0));
     always @(posedge clk) begin
-        if (x_in < 0) begin
-            xs[0] <= -x_in;
-            ys[0] <= -y_in;
-            as[0] <= 16'd32768;
-        end else begin
-            xs[0] <= x_in;
-            ys[0] <= y_in;
-            as[0] <= 16'd0;
-        end
+        xs[0] <= x0;
+        ys[0] <= y0;
+        as[0] <= neg ? 16'd32768 : 16'd0;
     end
 
     genvar i;
@@ -34,13 +33,15 @@ module cordic_angle #(
         for (i = 0; i < N; i = i + 1) begin : step
             wire pos = ys[i] > 0;
             wire signed [W-1:0] ysh = ys[i] >>> i, xsh = xs[i] >>> i;
-            // x +/- y as one adder with carry-in: {x,1} + {y or ~y, sub}
-            wire [W:0] xn = {xs[i], 1'b1} + {(pos ? ysh : ~ysh), ~pos};
-            wire [W:0] yn = {ys[i], 1'b1} + {(pos ? ~xsh : xsh), pos};
+            // x + y, y - x, a + atan (pos) or x - y, y + x, a - atan: ADDSUB carry chains
+            wire [W-1:0] xn, yn; wire [15:0] an;
+            addsub #(W)  u_x (.a(xs[i]), .b(ysh), .sub(~pos), .y(xn));
+            addsub #(W)  u_y (.a(ys[i]), .b(xsh), .sub(pos), .y(yn));
+            addsub #(16) u_a (.a(as[i]), .b(atan_lut(i)), .sub(~pos), .y(an));
             always @(posedge clk) begin
-                xs[i+1] <= xn[W:1];
-                ys[i+1] <= yn[W:1];
-                as[i+1] <= as[i] + (pos ? atan_lut(i) : -atan_lut(i));
+                xs[i+1] <= xn;
+                ys[i+1] <= yn;
+                as[i+1] <= an;
             end
         end
     endgenerate

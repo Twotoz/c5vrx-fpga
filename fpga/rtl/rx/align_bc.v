@@ -91,10 +91,14 @@ module align_bc (
             end
         end
     end endgenerate
-    function automatic [19:0] mag; input signed [19:0] r, i; reg [19:0] ar, ai2;
-        begin ar = r[19] ? -r : r; ai2 = i[19] ? -i : i; mag = (ar > ai2) ? ar + (ai2 >> 1) : ai2 + (ar >> 1); end
-    endfunction
-    wire [19:0] mm = mag(xr[0], xi[0]), m0 = mag(xr[1], xi[1]), mp = mag(xr[2], xi[2]);
+    // magnitude ~ max + min / 2 of |re|, |im| (the absolute values on ADDSUB chains)
+    wire [19:0] axr [0:2], axi [0:2], mg [0:2];
+    generate for (l = 0; l < 3; l = l + 1) begin : mg_
+        addsub #(20) u_r (.a(20'd0), .b(xr[l]), .sub(xr[l][19]), .y(axr[l]));
+        addsub #(20) u_i (.a(20'd0), .b(xi[l]), .sub(xi[l][19]), .y(axi[l]));
+        assign mg[l] = (axr[l] > axi[l]) ? axr[l] + (axi[l] >> 1) : axi[l] + (axr[l] >> 1);
+    end endgenerate
+    wire [19:0] mm = mg[0], m0 = mg[1], mp = mg[2];
     function automatic [7:0] sq5; input signed [4:0] c; reg [3:0] m; begin m = c[4] ? -c : c; sq5 = m * m; end endfunction
     reg [15:0] pa_acc, pb_acc;
     wire [8:0] pa = sq5(ai) + sq5(aq);
