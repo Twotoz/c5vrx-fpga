@@ -109,7 +109,9 @@ module vid_sync (
     integer ui; initial for (ui = 0; ui < 1024; ui = ui + 1) uvp[ui] = 20'd0;
     reg  [19:0] uvq;
     wire signed [10:0] yd = $signed({1'b0, p_y}) - $signed({2'b0, porch});
-    wire signed [27:0] gm = yd * $signed({1'b0, k8});
+    wire [35:0] gmp;                                 // on a DSP block
+    mul18 u_gm (.a({{7{yd[10]}}, yd}), .b({2'b0, k8}), .y(gmp));
+    wire signed [27:0] gm = gmp[27:0];
     wire signed [19:0] gy = gm >>> 8;
     wire signed [10:0] yg = gy > 20'sd511 ? 11'sd511 : gy < -20'sd256 ? -11'sd256 : gy[10:0];
     wire signed [9:0]  uq = uvq[19:10], vq = uvq[9:0];

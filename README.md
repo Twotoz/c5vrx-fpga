@@ -284,8 +284,9 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
   pixel for pixel).
 - Grey DVR (`rtl/io/dvr.v`, `DVR=1 fpga/build.sh`, kept for reference: with the
   colour decoder and the menu it does not place): 400x240 in 16 grey levels at 30 fps.
-- Fit (default build): 76 % LUT4, 27 of 46 BSRAM, 47 MULT9 + 12 MULT18;
-  60 MHz on the 40 MHz IQ clock, 88 MHz on the 33.75 MHz LCD clock, no hold
+- Fit (default build): 63 % LUT4, 27 of 46 BSRAM; one alignment engine
+  shared by C5 B and C (`rtl/rx/align_bc.v`), the remaining products on DSP
+  blocks; 73 MHz on the 40 MHz IQ clock, 88 MHz on the 33.75 MHz LCD clock, no hold
   violations. HQ DVR build: 78 % LUT4, 46 of 46 BSRAM, 26 MULT9 + 20 MULT18;
   51 MHz on the IQ clock, 115 MHz on the LCD clock. Synthesis runs `-nodsp`: inferred multipliers would take more
   than the 24 DSP macros.
@@ -320,6 +321,7 @@ them in the menu means loading the other bitstream.
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
 `run_link_tx_tb.py`, `run_chroma_tb.py` (colour, bit-exact),
 `run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`; `--hq` the HQ build's screen),
+`run_align_tb.py` (the shared B/C alignment against two separate engines on FM-modulated video),
 `run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
 `run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),

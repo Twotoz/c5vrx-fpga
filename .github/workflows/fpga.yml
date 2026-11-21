@@ -27,6 +27,8 @@ jobs:
       - name: Combiner and discriminator, bit-exact with the model
         run: python fpga/sim/run_tb3.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+      - name: B / C alignment (shared engine against two separate ones)
+        run: python fpga/sim/run_align_tb.py
       - name: Markers
         run: python fpga/sim/run_marker_tb.py
       - name: Channel link
@@ -37,7 +39,7 @@ jobs:
         run: python fpga/sim/run_chroma_tb.py NTSC && python fpga/sim/run_chroma_tb.py PAL
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
-        run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hq
+        run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
       - name: JPEG encoder, byte-exact with the model (NTSC, PAL, stalled output)
         run: python fpga/sim/run_jpeg_tb.py 3 && python fpga/sim/run_jpeg_tb.py 0 --pal && python fpga/sim/run_jpeg_tb.py 7 --stall
       - name: HQ DVR to the card, byte-exact

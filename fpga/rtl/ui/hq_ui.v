@@ -4,7 +4,9 @@
 // same look) straight from the cell position, with the buttons:
 //   UP / DOWN       previous / next channel (the channel pill lights up 2 s)
 //   SELECT          record on / off (TF card; "No card" / "Card err" if it cannot)
-//   SELECT held     Single <-> Diversity (the receiver bar greys out C5 B)
+//   SELECT held     Single <-> Diversity (the receiver bar greys out C5 B);
+//                   TRI_TRIDVR build: Triversity -> Diversity -> Single, no
+//                   logo, 7-segment glyphs (lcd_out.v seg_row)
 // Aspect follows the camera (Auto), backlight full. Ports as menu.v, so
 // tri_top.v swaps the two; gen_osd.py fill() with hq=True is the reference.
 `default_nettype none
@@ -93,7 +95,11 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     always @(posedge clk) begin
         if (rst) begin
-            dvr <= 1'b0; mode <= 2'd1; channel <= 6'd8; link_on <= 1'b0; toast_ms <= 11'd0;
+`ifdef TRI_TRIDVR
+            dvr <= 1'b0; mode <= 2'd2;
+`else
+            dvr <= 1'b0; mode <= 2'd1;
+`endif channel <= 6'd8; link_on <= 1'b0; toast_ms <= 11'd0;
             sec_ms <= 10'd0; {m1, m0, s1, s0} <= 16'd0;
         end else begin
             if (ms && toast_ms != 11'd0) toast_ms <= toast_ms - 11'd1;
@@ -117,7 +123,11 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                 begin channel <= mk_pl_a[5:0]; link_on <= 1'b1; end
             if (ev) begin
                 link_on <= 1'b1;
+`ifdef TRI_TRIDVR
+                if (hold) mode <= mode == 2'd0 ? 2'd2 : mode - 2'd1;     // Triversity, Diversity, Single
+`else
                 if (hold) mode <= mode == 2'd0 ? 2'd1 : 2'd0;
+`endif
                 else if (sel) dvr <= ~dvr;
                 else if (up) begin channel <= channel == 6'd47 ? 6'd0 : channel + 6'd1; toast_ms <= 11'd2000; end
                 else if (dn) begin channel <= channel == 6'd0 ? 6'd47 : channel - 6'd1; toast_ms <= 11'd2000; end
@@ -194,10 +204,12 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                 ch = !fresh[bk] ? G_BARS : st_sig[bk] >= 7'd88 ? G_BARS + 7'd4 : st_sig[bk] >= 7'd63 ? G_BARS + 7'd3 :
                      st_sig[bk] >= 7'd38 ? G_BARS + 7'd2 : st_sig[bk] >= 7'd13 ? G_BARS + 7'd1 : G_BARS;
             end else ch = SP;
+`ifndef TRI_TRIDVR
         end else if (r1 == 5'd18 && c1 >= 7'd53 && c1 <= 7'd64) begin                      // logo
             fi = c1 - 7'd53;
             if (fi == 7'd0 || fi == 7'd11) begin ch = fi == 7'd0 ? G_CAPL : G_CAPR; fg = PANELFG; end
             else begin ch = G_LOGO0 + fi - 7'd1; fg = fi <= 7'd4 ? ACCENT : WHITE; bg = BG_PANEL; end
+`endif
         end
     end
     always @(posedge clk) begin osd_we <= !rst; osd_waddr <= wa1; osd_wdata <= {bg, fg, ch}; end

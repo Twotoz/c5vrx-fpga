@@ -41,7 +41,7 @@ module tb_jpeg;
             p = p + 65;
         end
         @(posedge clk) f_end <= 1; @(posedge clk) f_end <= 0;
-        wait (f_done); @(posedge clk);
+        wait (f_done); @(posedge clk); while (o_valid) @(posedge clk);   // the last byte may still wait on o_ready
         $display("cycles %0d bytes %0d", cyc, f_bytes);
         $fclose(f); $finish;
     end

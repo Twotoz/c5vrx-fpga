@@ -11,6 +11,12 @@
 // Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
 `default_nettype none
+// TRI_HQDVR: the HQ DVR builds; TRI_NO_C: without C5 C (HQ DVR Diversity build)
+`ifdef TRI_HQDVR
+`ifndef TRI_TRIDVR
+`define TRI_NO_C
+`endif
+`endif
 module tri_top (
     input  wire       xtal,          // 27 MHz
     input  wire       s1_n,          // reset
@@ -55,14 +61,17 @@ module tri_top (
     // ---- alignment of B and C to A ----
     wire [7:0] a_al1, a_al2, b_al, c_al;
     wire       en_b, en_c, b_alive, c_alive;
+`ifdef TRI_NO_C
+    // the HQ DVR build fuses two C5s (Diversity): C5 C's logic makes room for the JPEG encoder
     align_b u_alb (.clk_b(b_clk), .raw_b_in(nib(cap_b)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
                    .raw_a_d(a_al1), .raw_b(b_al), .en_b(en_b), .b_alive(b_alive), .lag());
-`ifdef TRI_HQDVR
-    // the HQ DVR build fuses two C5s (Diversity): C5 C's logic makes room for the JPEG encoder
     assign a_al2 = 8'd0; assign c_al = 8'd0; assign en_c = 1'b0; assign c_alive = 1'b0;
 `else
-    align_b u_alc (.clk_b(c_clk), .raw_b_in(nib(cap_c)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
-                   .raw_a_d(a_al2), .raw_b(c_al), .en_b(en_c), .b_alive(c_alive), .lag());
+    // one alignment engine shared by B and C (align_bc.v)
+    align_bc u_albc (.clk_b(b_clk), .clk_c(c_clk), .raw_b_in(nib(cap_b)), .raw_c_in(nib(cap_c)), .clk_a(a_clk), .rst_a(rst),
+                     .raw_a(nib(ra)), .raw_a_d(a_al1), .raw_b(b_al), .raw_c(c_al), .en_b(en_b), .en_c(en_c),
+                     .b_alive(b_alive), .c_alive(c_alive), .lag_b(), .lag_c());
+    assign a_al2 = a_al1;
 `endif
     // ---- markers: detect, decode, delay the IQ past them ----
     wire [5:0]  a_m, b_m, c_m;
@@ -70,7 +79,7 @@ module tri_top (
     wire [15:0] pl_a, pl_b, pl_c;
     marker_rx u_mka (.clk(a_clk), .rst(rst), .raw({a_al1[7:5], a_al1[3:1]}), .raw_d(a_m), .valid_d(va), .ev(ev_a), .payload(pl_a), .count());
     marker_rx u_mkb (.clk(a_clk), .rst(rst), .raw({b_al[7:5], b_al[3:1]}),   .raw_d(b_m), .valid_d(vb), .ev(ev_b), .payload(pl_b), .count());
-`ifdef TRI_HQDVR
+`ifdef TRI_NO_C
     assign c_m = 6'd0; assign vc = 1'b0; assign ev_c = 1'b0; assign pl_c = 16'd0;
 `else
     marker_rx u_mkc (.clk(a_clk), .rst(rst), .raw({c_al[7:5], c_al[3:1]}),   .raw_d(c_m), .valid_d(vc), .ev(ev_c), .payload(pl_c), .count());
@@ -88,7 +97,7 @@ module tri_top (
     always @(posedge a_clk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
-`ifdef TRI_HQDVR
+`ifdef TRI_NO_C
     mrc3_core #(.HAS_C(0)) u_core (
 `else
     mrc3_core u_core (

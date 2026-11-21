@@ -182,8 +182,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     end
 
     // ---- weight engine: three branches in turn ------------------------------------
-    // 42 clocks a branch: the third weight is ready 127 clocks after the
-    // snapshot, two before the hand-over at idx3 == 127 of the next period.
+    // 20 clocks a branch (the products on DSP blocks): the weights are ready
+    // well before the hand-over at idx3 == 127 of the next period.
     reg  [7:0]  w_use [0:2];
     reg  [7:0]  pend  [0:2];
     reg         have_pend;
@@ -194,14 +194,15 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg  [9:0]  q;
     reg  [4:0]  bitn;
     reg  [8:0]  mi;
-    reg  [31:0] ma;
-    reg  [15:0] mb;
     reg  [31:0] mp_acc;
     reg  [7:0]  g_q, isq_q, g_addr;
     always @(posedge clk) begin g_q <= g_rom[g_addr]; isq_q <= isq_rom[mi]; end
     localparam S_IDLE = 0, S_LOAD = 1, S_SQ = 2, S_SH = 3, S_CHK = 4, S_DIV = 5, S_LUT = 6,
                S_LUT2 = 7, S_GM = 8, S_WR = 9, S_NEXT = 10, S_STORE = 11;
     wire [15:0] m2j = snap_m2[wj];
+    wire [35:0] sq_p; wire [17:0] gi_p;            // the weight engine's products on DSP blocks
+    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_sq2 (.a({2'b0, m2j}), .b({2'b0, m2j}), .y(sq_p));
+    mul9  #(.A_SIGNED(0), .B_SIGNED(0)) u_gi (.a({1'b0, g_q}), .b({1'b0, isq_q}), .y(gi_p));
     wire [24:0] m4j = snap_m4[wj];
     wire [9:0]  rq  = (q > 10'd511) ? 10'd511 : (q < 10'd256) ? 10'd256 : q;
     wire [7:0]  w_new = (mp_acc[15:8] == 8'd0) ? 8'd1 : mp_acc[15:8];
@@ -212,16 +213,11 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
         end else case (st)
             S_IDLE: if (snap_go) begin wj <= 2'd0; st <= S_LOAD; end
             S_LOAD: begin
-                ma <= {16'd0, m2j}; mb <= m2j; mp_acc <= 32'd0;
                 num <= {2'b0, m4j, 14'd0};
                 mi <= (m2j[15:6] > 10'd511) ? 9'd511 : m2j[14:6];
-                q <= 10'd0; bitn <= 5'd15; st <= S_SQ;
+                q <= 10'd0; st <= S_SQ;
             end
-            S_SQ: begin
-                if (mb[0]) mp_acc <= mp_acc + ma;
-                ma <= ma << 1; mb <= mb >> 1;
-                if (bitn == 0) st <= S_SH; else bitn <= bitn - 5'd1;
-            end
+            S_SQ: begin mp_acc <= sq_p[31:0]; st <= S_SH; end           // m2^2 (DSP)
             S_SH: begin den <= mp_acc; dsh <= {mp_acc, 9'd0}; bitn <= 5'd9; st <= S_CHK; end
             S_CHK: begin
                 if (den == 0) begin pend[wj] <= 8'd1; st <= S_NEXT; end
@@ -235,12 +231,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
             end
             S_LUT:  begin g_addr <= rq[7:0]; st <= S_LUT2; end
             S_LUT2: st <= S_GM;
-            S_GM:   begin ma <= {24'd0, g_q}; mb <= {8'd0, isq_q}; mp_acc <= 32'd0; bitn <= 5'd7; st <= S_WR; end
-            S_WR: begin
-                if (mb[0]) mp_acc <= mp_acc + ma;
-                ma <= ma << 1; mb <= mb >> 1;
-                if (bitn == 0) st <= S_STORE; else bitn <= bitn - 5'd1;
-            end
+            S_GM:   st <= S_WR;
+            S_WR:   begin mp_acc <= {16'd0, gi_p[15:0]}; st <= S_STORE; end   // g x isq (DSP)
             S_STORE: begin pend[wj] <= w_new; st <= S_NEXT; end
             S_NEXT: begin
                 if (wj != 2'd2) begin wj <= wj + 2'd1; st <= S_LOAD; end
@@ -290,12 +282,16 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg  [9:0]  st_s;
     reg         st_ok;
     wire signed [9:0]  d = tok - st_s;               // wrapped to -512..511
-    wire signed [17:0] d179 = d * 18'sd179;
+    wire [35:0] p179, p105; wire [17:0] p205;      // products on DSP blocks (the LUTs are scarce)
+    mul18 u_d179 (.a({{8{d[9]}}, d}), .b(18'd179), .y(p179));
+    wire signed [17:0] d179 = p179[17:0];
     wire        inwin = d >= -10'sd312 && d <= 10'sd384;
     wire signed [9:0]  step = inwin ? d : d179[17:8];
-    wire signed [17:0] cx = step * 18'sd105 + 18'sd32896;
+    mul18 u_s105 (.a({{8{step[9]}}, step}), .b(18'd105), .y(p105));
+    wire signed [17:0] cx = $signed(p105[17:0]) + 18'sd32896;
     wire signed [9:0]  cy = cx[17:8];                // floor(cx / 256)
-    wire [17:0] c5 = cy[8:0] * 9'd205;               // floor(cy / 5) for 0 <= cy < 1029
+    mul9 #(.A_SIGNED(0), .B_SIGNED(0)) u_c205 (.a(cy[8:0]), .b(9'd205), .y(p205));
+    wire [17:0] c5 = p205;                           // floor(cy / 5) for 0 <= cy < 1029
     wire [7:0]  cq = c5[17:10];
     always @(posedge clk) begin
         if (rst) begin st_ok <= 1'b0; code <= 6'd25; end

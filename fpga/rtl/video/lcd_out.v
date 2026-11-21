@@ -91,8 +91,14 @@ module lcd_out (
     // grid: at hc = HBP + X0 the counters read cell 0, pixel 0)
     // ---- pipeline: addresses end of n, RAM data in n+2, glyph row in n+3,
     //      blend sums end of n+3, pixel registers end of n+4 (shown in n+5) ----
+`ifdef TRI_TRIDVR
+    // Triversity DVR build: 7-segment glyphs from logic instead of the font ROM
+    // (gen_osd.seg_glyphs() is the reference; coverage 0 / 1 / 3)
+`include "osd_seg.vh"
+`else
     reg [23:0] font [0:4095];
 `include "osd_font.vh"
+`endif
     reg [4:0]  de_d, hs_d, vs_d;
     reg [3:0]  sx1, sx2, sx3;
     reg        g1, g2, g3;
@@ -145,7 +151,11 @@ module lcd_out (
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
         cell3 <= osd_cell; v3 <= (locked && hv2) ? lb_data : 16'd0;
+`ifdef TRI_TRIDVR
+        glyph <= seg_row(osd_cell[6:0], ry2);
+`else
         glyph <= font[{osd_cell[6:0], ry2}];
+`endif
         // n+3: blend sums
         begin : blend
             reg [1:0] a; reg [7:0] vr, vg, vb; reg [23:0] bgc, fgc, pnl;

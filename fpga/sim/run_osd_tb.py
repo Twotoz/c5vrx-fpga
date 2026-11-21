@@ -5,7 +5,7 @@ every captured LCD frame must equal fpga/gen/gen_osd.py's render() of the
 state the scenario reached (RGB565). Writes the frames to fpga/build/osd_*.png
 and, with --docs, the menu screenshots for the README to docs/.
 
-    python fpga/sim/run_osd_tb.py [--docs] [--hq]      (--hq: the HQ DVR build's hq_ui.v)
+    python fpga/sim/run_osd_tb.py [--docs] [--hq | --tridvr]      (the HQ DVR builds' hq_ui.v)
 """
 import subprocess, sys, tempfile
 from pathlib import Path
@@ -31,7 +31,10 @@ HQ_SHOTS = [('hq_live', {}), ('hq_nocard', dict(dvr=True)), ('hq_rec', dict(dvr=
             ('hq_channel', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True)),
             ('hq_single', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True, mode=0)),
             ('hq_nosig', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True, mode=0, locked=False))]
-DOCS = ['hq_rec', 'menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
+# the Triversity DVR build (--tridvr): hq_ui.v with 7-segment glyphs, Triversity first, no logo
+TRI_BASE = dict(HQ_BASE, mode=2, logo=False)
+TRI_SHOTS = [(n.replace('hq_', 'tri_').replace('single', 'diversity'), dict(d, mode=1) if 'mode' in d else d) for n, d in HQ_SHOTS]
+DOCS = ['hq_rec', 'tri_rec', 'menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
 
 
 def picture():
@@ -48,15 +51,16 @@ def widen(p):
 
 def main():
     docs = '--docs' in sys.argv
-    hq = '--hq' in sys.argv
-    shots, base = (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
+    tri = '--tridvr' in sys.argv
+    hq = '--hq' in sys.argv or tri
+    shots, base = (TRI_SHOTS, TRI_BASE) if tri else (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
-    g, ps = G.glyphs_vh(), G.pages()
+    g, ps = G.seg_glyphs() if tri else G.glyphs_vh(), G.pages()
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
-        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR'] if hq else []), *rtl_.inc(), '-o', str(t / 'tb'),
+        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR'] if hq else []), *(['-DTRI_TRIDVR'] if tri else []), *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_osd.v'), *rtl_.src('hq_ui.v' if hq else 'menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
         print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-2000:])
