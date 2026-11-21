@@ -157,11 +157,14 @@ module jpeg_enc (
     (* ram_style = "block" *) reg signed [12:0] qb [0:127];   // {bank, zigzag index} (BSRAM, read registered)
     reg  [16:0] rq, rq0;
     reg  signed [12:0] fz;                       // zb read, one clock after the issue
+    wire [12:0] fz_abs, q_signed;                // |F| and the quantised value with the sign back (ADDSUB chains)
+    addsub #(13) u_fza (.a(13'd0), .b(fz), .sub(fz[12]), .y(fz_abs));
     reg        p_v; reg [5:0] p_wi;
     wire [1:0]  c_comp = z_comp[zr];
     wire [35:0] mq;
     mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_q (.a({6'd0, c_mag}), .b({1'b0, rq}), .y(mq));
     wire [19:0] qm = (mq[31:0] + 32'd32768) >> 16;
+    addsub #(13) u_qs (.a(13'd0), .b({1'b0, qm[11:0]}), .sub(c_neg), .y(q_signed));
     wire c_done = c_run && c_i == 7'd65;
     always @(posedge clk) begin
         fz <= zb[{zr, zigzag(c_i[5:0])}];
@@ -170,8 +173,8 @@ module jpeg_enc (
         else begin
             if (b_done) z_full[zw] <= 1'b1;
             p_v <= 1'b0; c_v <= p_v;
-            if (p_v) begin c_wi <= p_wi; c_neg <= fz < 0; c_mag <= fz < 0 ? -fz : fz; rq <= rq0; end
-            if (c_v) qb[{qw, c_wi}] <= c_neg ? -$signed({1'b0, qm[11:0]}) : $signed({1'b0, qm[11:0]});
+            if (p_v) begin c_wi <= p_wi; c_neg <= fz[12]; c_mag <= fz_abs[11:0]; rq <= rq0; end
+            if (c_v) qb[{qw, c_wi}] <= q_signed;
             if (!c_run) begin
                 if (z_full[zr] && !q_full[qw]) begin c_run <= 1'b1; c_i <= 7'd0; end
             end else if (c_i < 7'd64) begin
@@ -195,7 +198,9 @@ module jpeg_enc (
     reg  [5:0] d_i_n; reg qr_n;
     wire signed [13:0] ddiff = {dq[12], dq} - {pred[d_comp][12], pred[d_comp]};
     wire signed [13:0] dval = d_i == 6'd0 ? ddiff : {dq[12], dq};
-    wire [12:0] dmag = dval < 0 ? -dval : dval;
+    wire [13:0] dmag_w;
+    addsub #(14) u_dm (.a(14'd0), .b(dval), .sub(dval[13]), .y(dmag_w));
+    wire [12:0] dmag = dmag_w[12:0];
     wire [3:0] dn = dmag[11] ? 4'd12 : dmag[10] ? 4'd11 : dmag[9] ? 4'd10 : dmag[8] ? 4'd9 : dmag[7] ? 4'd8 : dmag[6] ? 4'd7 :
                     dmag[5] ? 4'd6 : dmag[4] ? 4'd5 : dmag[3] ? 4'd4 : dmag[2] ? 4'd3 : dmag[1] ? 4'd2 : dmag[0] ? 4'd1 : 4'd0;
     wire [13:0] dev = dval < 0 ? dval - 14'sd1 : dval;          // ones' complement for negatives

@@ -57,6 +57,15 @@ module chroma (
     reg signed [15:0] xp, yp, xa, ya;
     wire        c_go = hc == BE + 12'd1 || hc == BE + 12'd12;
     wire signed [15:0] cxi = hc == BE + 12'd1 ? xq : xa, cyi = hc == BE + 12'd1 ? yq : ya;
+    // the CORDIC's sums on ADDSUB carry chains (rtl/rx/addsub.v): pre-rotation 0 -/+ v,
+    // steps x +/- y >> n, y -/+ x >> n, angle +/- atan
+    wire [17:0] cx0, cy0, cxn, cyn; wire [15:0] angn;
+    wire        cpos = cy > 0;
+    addsub #(18) u_cx0 (.a(18'd0), .b({{2{cxi[15]}}, cxi}), .sub(cxi[15]), .y(cx0));
+    addsub #(18) u_cy0 (.a(18'd0), .b({{2{cyi[15]}}, cyi}), .sub(cxi[15]), .y(cy0));
+    addsub #(18) u_cxn (.a(cx), .b(cy >>> cn), .sub(~cpos), .y(cxn));
+    addsub #(18) u_cyn (.a(cy), .b(cx >>> cn), .sub(cpos), .y(cyn));
+    addsub #(16) u_ang (.a(ang), .b(atan_lut(cn)), .sub(~cpos), .y(angn));
     always @(posedge clk) begin
         if (hc == BE + 12'd1) begin
             xa <= ($signed({xq[15], xq}) + $signed({xp[15], xp})) >>> 1;
@@ -65,12 +74,10 @@ module chroma (
         end
         if (hc == BE + 12'd12) t_cur <= ang;
         if (c_go) begin
-            if (cxi < 0) begin cx <= -{{2{cxi[15]}}, cxi}; cy <= -{{2{cyi[15]}}, cyi}; ang <= 16'd32768; end
-            else begin cx <= {{2{cxi[15]}}, cxi}; cy <= {{2{cyi[15]}}, cyi}; ang <= 16'd0; end
+            cx <= cx0; cy <= cy0; ang <= cxi[15] ? 16'd32768 : 16'd0;
             cn <= 4'd0; crun <= 1'b1;
         end else if (crun) begin
-            if (cy > 0) begin cx <= cx + (cy >>> cn); cy <= cy - (cx >>> cn); ang <= ang + atan_lut(cn); end
-            else begin cx <= cx - (cy >>> cn); cy <= cy + (cx >>> cn); ang <= ang - atan_lut(cn); end
+            cx <= cxn; cy <= cyn; ang <= angn;
             cn <= cn + 4'd1;
             if (cn == 4'd9) crun <= 1'b0;
         end
@@ -79,7 +86,9 @@ module chroma (
         sat16 = v > 21'sd32767 ? 16'sd32767 : v < -21'sd32768 ? -16'sd32768 : v[15:0];
     endfunction
     wire signed [20:0] nbq = -bq;
-    wire [15:0] ax = xq[15] ? -xq : xq, ay = yq[15] ? -yq : yq;
+    wire [15:0] ax, ay;
+    addsub #(16) u_ax (.a(16'd0), .b(xq), .sub(xq[15]), .y(ax));
+    addsub #(16) u_ay (.a(16'd0), .b(yq), .sub(yq[15]), .y(ay));
     // NTSC: the error is this burst's angle; PAL: the two-burst mean's, and the
     // V switch is this burst against the mean
     wire signed [15:0] t = pal ? ang : t_cur;

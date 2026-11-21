@@ -6,7 +6,7 @@ from pathlib import Path
 RTL = Path(__file__).resolve().parent.parent / 'rtl'
 
 
-DEPS = {'lcd_out.v': ['mul_dsp.v'], 'vid_sync.v': ['chroma.v'], 'chroma.v': ['mul_dsp.v', 'cordic_iter.v'],
+DEPS = {'lcd_out.v': ['mul_dsp.v'], 'vid_sync.v': ['chroma.v'], 'chroma.v': ['mul_dsp.v', 'cordic_iter.v', 'addsub.v'], 'jpeg_enc.v': ['addsub.v', 'mul_dsp.v'],
         'cordic_angle.v': ['addsub.v'], 'cordic_iter.v': ['addsub.v'], 'align_bc.v': ['addsub.v']}
 
 
