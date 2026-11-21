@@ -20,5 +20,5 @@ OUT="triversity"; [ "${HQDVR:-0}" = 1 ] && OUT="triversity_hqdvr"; [ "${TRIDVR:-
 "$NEXTPNR" -q -l "$B/nextpnr.log" --json "$B/triversity.json" --write "$B/triversity_pnr.json" \
   --device GW2AR-LV18QN88C8/I7 --vopt family=GW2A-18C ${PNR_OPTS-} --vopt cst="$HERE/boards/tang_nano_20k.cst" --freq 40 --timing-allow-fail --report "$B/report.json"
 gowin_pack -d GW2A-18C -o "$B/$OUT.fs" "$B/triversity_pnr.json"
-grep -E "LUT4|DFF|BSRAM|MULT|Max frequency" "$B/nextpnr.log" | sort -u | head -20
+grep -E "LUT4|DFF|BSRAM|MULT|Max frequency" "$B/nextpnr.log" | sort -u | head -20 || true
 echo "bitstream: $B/$OUT.fs"

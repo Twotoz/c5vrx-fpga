@@ -130,66 +130,76 @@ module chroma (
         end
     end
     // ---- chroma filters: two boxcars of n (pipelined; filters restart on a standard change) ----
+    // The delay lines are 32-entry rings in block RAM (registered reads, the
+    // address one clock ahead). "Cleared" on a reset or a standard change:
+    // a ring value older than that counts as 0 (age counters), exactly as the
+    // shift registers' clear did.
     reg  signed [13:0] pu_r, pv_r;
-    reg  signed [13:0] dpu [0:23];
-    reg  signed [13:0] dpv [0:23];
     reg  signed [17:0] u1, v1;
-    reg  signed [17:0] du1 [0:23];
-    reg  signed [17:0] dv1 [0:23];
     reg  signed [21:0] u2, v2;
     reg  [3:0]  palr;
     wire        p1 = palr[0];                       // pal of pu_r
     wire        chg1 = palr[0] != palr[1];          // standard changed at pu_r
     wire [4:0]  n1 = p1 ? 5'd18 : 5'd22;
-    integer i, i2, i0;
-    // delayed code and table values (python: c, s, co at k - (n - 1))
-    reg  signed [6:0] dc [0:31];
-    reg  signed [7:0] ds [0:31];
-    reg  signed [7:0] dco [0:31];
+    reg  [4:0]  wr = 5'd0;                          // ring write address (one entry a clock)
+    reg  [4:0]  age1 = 5'd0, age2 = 5'd0;           // clocks since the stage's last clear (saturating)
+    (* ram_style = "block" *) reg [27:0] r1 [0:31]; // {pu_r, pv_r}
+    (* ram_style = "block" *) reg [35:0] r2 [0:31]; // {u1, v1}
+    (* ram_style = "block" *) reg [22:0] r0 [0:31]; // {c, s, co}
+    reg  [27:0] q1; reg [35:0] q2; reg [22:0] q0;
+    integer i0;
     initial begin
         palr = 4'd0; u1 = 18'sd0; v1 = 18'sd0; u2 = 22'sd0; v2 = 22'sd0; pu_r = 14'sd0; pv_r = 14'sd0;
-        for (i0 = 0; i0 < 24; i0 = i0 + 1) begin dpu[i0] = 14'sd0; dpv[i0] = 14'sd0; du1[i0] = 18'sd0; dv1[i0] = 18'sd0; end
-        for (i0 = 0; i0 < 32; i0 = i0 + 1) begin dc[i0] = 7'sd0; ds[i0] = 8'sd0; dco[i0] = 8'sd0; end
+        for (i0 = 0; i0 < 32; i0 = i0 + 1) begin r1[i0] = 28'd0; r2[i0] = 36'd0; r0[i0] = 23'd0; end
+        q1 = 28'd0; q2 = 36'd0; q0 = 23'd0;
     end
+    // next clock's pal (p1) and stage-2 pal (p2): the tap distances for the reads issued now
+    wire [4:0] d1 = (pal ? 5'd18 : 5'd22) - 5'd1;   // stage 1 reads entry n1 - 1
+    wire [4:0] d2 = (p1 ? 5'd18 : 5'd22) - 5'd1;    // stage 2 reads entry n2 - 1
+    wire [4:0] d0 = p1 ? 5'd19 : 5'd23;             // stage 3: code / table at tap3
+    wire       rst1 = rst || chg1;
     always @(posedge clk) begin
         palr <= {palr[2:0], pal};
         pu_r <= pu; pv_r <= pv;
-        dc[0] <= c; ds[0] <= s; dco[0] <= co;
-        for (i = 1; i < 32; i = i + 1) begin dc[i] <= dc[i-1]; ds[i] <= ds[i-1]; dco[i] <= dco[i-1]; end
-        // stage 1: u1 = sum of the last n pu (python u1[k] lands here at k + 2);
-        // reset clears the integrators with their delay lines (they must agree)
+        wr <= wr + 5'd1;
+        // ring k-entry of a shift register d (d[0] <= x each clock): d[k](t) = x(t - 1 - k),
+        // written at wr(t - 1 - k) = wr(t - 1) - k: read now (wr) at wr - k for the next clock
+        r0[wr] <= {c, s, co};
+        r1[wr] <= rst ? 28'd0 : {pu_r, pv_r};
+        r2[wr] <= rst ? 36'd0 : {u1, v1};
+        q0 <= r0[wr - d0]; q1 <= r1[wr - d1]; q2 <= r2[wr - d2];
+    end
+    wire signed [13:0] dpu_n = age1 >= n1 ? $signed(q1[27:14]) : 14'sd0, dpv_n = age1 >= n1 ? $signed(q1[13:0]) : 14'sd0;
+    // stage 1: u1 = sum of the last n pu (python u1[k] lands here at k + 2)
+    always @(posedge clk) begin
         if (rst) begin
-            for (i = 0; i < 24; i = i + 1) begin dpu[i] <= 14'sd0; dpv[i] <= 14'sd0; end
-            u1 <= 18'sd0; v1 <= 18'sd0; pu_r <= 14'sd0; pv_r <= 14'sd0;
+            u1 <= 18'sd0; v1 <= 18'sd0; pu_r <= 14'sd0; pv_r <= 14'sd0; age1 <= 5'd0;
         end else if (chg1) begin
-            for (i = 0; i < 24; i = i + 1) begin dpu[i] <= 14'sd0; dpv[i] <= 14'sd0; end
-            dpu[0] <= pu_r; dpv[0] <= pv_r; u1 <= pu_r; v1 <= pv_r;
+            u1 <= pu_r; v1 <= pv_r; age1 <= 5'd1;
         end else begin
-            dpu[0] <= pu_r; dpv[0] <= pv_r;
-            for (i = 1; i < 24; i = i + 1) begin dpu[i] <= dpu[i-1]; dpv[i] <= dpv[i-1]; end
-            u1 <= u1 + pu_r - dpu[n1 - 5'd1]; v1 <= v1 + pv_r - dpv[n1 - 5'd1];
+            u1 <= u1 + pu_r - dpu_n; v1 <= v1 + pv_r - dpv_n;
+            if (age1 != 5'd31) age1 <= age1 + 5'd1;
         end
     end
     // stage 2: u2 (python u2[k] at k + 3)
     reg chg2 = 1'b0, p2 = 1'b0;
+    wire [4:0] n2 = p2 ? 5'd18 : 5'd22;
+    wire signed [17:0] du1_n = age2 >= n2 ? $signed(q2[35:18]) : 18'sd0, dv1_n = age2 >= n2 ? $signed(q2[17:0]) : 18'sd0;
     always @(posedge clk) begin
         chg2 <= chg1; p2 <= p1;
         if (rst) begin
-            for (i2 = 0; i2 < 24; i2 = i2 + 1) begin du1[i2] <= 18'sd0; dv1[i2] <= 18'sd0; end
-            u2 <= 22'sd0; v2 <= 22'sd0;
+            u2 <= 22'sd0; v2 <= 22'sd0; age2 <= 5'd0;
         end else if (chg2) begin
-            for (i2 = 0; i2 < 24; i2 = i2 + 1) begin du1[i2] <= 18'sd0; dv1[i2] <= 18'sd0; end
-            du1[0] <= u1; dv1[0] <= v1; u2 <= u1; v2 <= v1;
+            u2 <= u1; v2 <= v1; age2 <= 5'd1;
         end else begin
-            du1[0] <= u1; dv1[0] <= v1;
-            for (i2 = 1; i2 < 24; i2 = i2 + 1) begin du1[i2] <= du1[i2-1]; dv1[i2] <= dv1[i2-1]; end
-            u2 <= u2 + u1 - du1[(p2 ? 5'd18 : 5'd22) - 5'd1]; v2 <= v2 + v1 - dv1[(p2 ? 5'd18 : 5'd22) - 5'd1];
+            u2 <= u2 + u1 - du1_n; v2 <= v2 + v1 - dv1_n;
+            if (age2 != 5'd31) age2 <= age2 + 5'd1;
         end
     end
     // stage 3 (k + 3): remodulation and U, V in gray units; table and code delayed by n - 1 + 3
     reg p3 = 1'b0; always @(posedge clk) p3 <= p2;
-    wire [4:0] tap3 = p2 ? 5'd19 : 5'd23;            // c[k - (n - 1)] at stage 3: dc[j] = c[k + 2 - j]
-    wire signed [7:0] sd = ds[tap3], cod = dco[tap3];
+    // c[k - (n - 1)] at stage 3: the ring at tap 19 / 23 (dc[j] = c[k + 2 - j])
+    wire signed [7:0] sd = q0[15:8], cod = q0[7:0];
     wire signed [17:0] u2s = u2 >>> 4, v2s = v2 >>> 4;
     wire [35:0] m_us, m_vc;
     mul18 u_us (.a(u2s), .b({{10{sd[7]}}, sd}), .y(m_us));
@@ -215,7 +225,7 @@ module chroma (
         chr_r <= sat18(chr_ >>> 7);
         ug3 <= kill ? 10'sd0 : sat10(ugp);
         vg3 <= kill ? 10'sd0 : (sw ? -sat10(vgp) : sat10(vgp));
-        cd4 <= dc[tap3];
+        cd4 <= q0[22:16];
     end
     // stage 4 (k + 4): luma
     wire [35:0] m_ch;

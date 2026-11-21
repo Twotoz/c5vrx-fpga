@@ -77,10 +77,10 @@ module align_bc (
     generate for (l = 0; l < 3; l = l + 1) begin : corr
         wire signed [4:0] bi_ = cv(bsel[l][7:4]), bq_ = cv(bsel[l][3:0]);
         wire [17:0] p_ii, p_qq, p_qi, p_iq;
-        mul9 u_ii (.a({{4{ai[4]}}, ai}), .b({{4{bi_[4]}}, bi_}), .y(p_ii));
-        mul9 u_qq (.a({{4{aq[4]}}, aq}), .b({{4{bq_[4]}}, bq_}), .y(p_qq));
-        mul9 u_qi (.a({{4{aq[4]}}, aq}), .b({{4{bi_[4]}}, bi_}), .y(p_qi));
-        mul9 u_iq (.a({{4{ai[4]}}, ai}), .b({{4{bq_[4]}}, bq_}), .y(p_iq));
+        mul9 #(.USE_DSP(0)) u_ii (.a({{4{ai[4]}}, ai}), .b({{4{bi_[4]}}, bi_}), .y(p_ii));
+        mul9 #(.USE_DSP(0)) u_qq (.a({{4{aq[4]}}, aq}), .b({{4{bq_[4]}}, bq_}), .y(p_qq));
+        mul9 #(.USE_DSP(0)) u_qi (.a({{4{aq[4]}}, aq}), .b({{4{bi_[4]}}, bi_}), .y(p_qi));
+        mul9 #(.USE_DSP(0)) u_iq (.a({{4{ai[4]}}, ai}), .b({{4{bq_[4]}}, bq_}), .y(p_iq));
         wire signed [10:0] pr = $signed(p_ii[10:0]) + $signed(p_qq[10:0]);
         wire signed [10:0] pq = $signed(p_qi[10:0]) - $signed(p_iq[10:0]);
         always @(posedge clk_a) begin

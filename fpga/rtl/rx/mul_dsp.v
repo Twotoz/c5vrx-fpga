@@ -4,15 +4,22 @@
 // uses the behavioural product. The build runs synth_gowin -nodsp, so only
 // these instances use DSP blocks and the small products stay in logic.
 `default_nettype none
-module mul9 #(parameter A_SIGNED = 1, B_SIGNED = 1) (
+module mul9 #(parameter A_SIGNED = 1, B_SIGNED = 1, USE_DSP = 1) (   // USE_DSP 0: in logic (tiny products)
     input  wire [8:0]  a,
     input  wire [8:0]  b,
     output wire [17:0] y
 );
 `ifdef SYNTHESIS
+  generate if (USE_DSP == 0) begin : lg
+    wire signed [9:0] as = A_SIGNED ? {a[8], a} : {1'b0, a};
+    wire signed [9:0] bs = B_SIGNED ? {b[8], b} : {1'b0, b};
+    wire signed [19:0] p = as * bs;
+    assign y = p[17:0];
+  end else begin : dsp
     MULT9X9 m (.CLK(1'b0), .CE(1'b0), .RESET(1'b0), .A(a), .SIA(9'd0), .ASEL(1'b0),
                .ASIGN(A_SIGNED ? 1'b1 : 1'b0), .B(b), .SIB(9'd0), .BSEL(1'b0),
                .BSIGN(B_SIGNED ? 1'b1 : 1'b0), .DOUT(y), .SOA(), .SOB());
+  end endgenerate
 `else
     wire signed [9:0] as = A_SIGNED ? {a[8], a} : {1'b0, a};
     wire signed [9:0] bs = B_SIGNED ? {b[8], b} : {1'b0, b};

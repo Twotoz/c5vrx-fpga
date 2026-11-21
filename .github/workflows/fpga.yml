@@ -82,3 +82,19 @@ jobs:
         with:
           name: triversity-fpga-bitstream-hqdvr
           path: fpga/build/triversity_hqdvr.fs
+
+  bitstream-tridvr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tools
+        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - name: Build (Triversity + HQ DVR)
+        run: TRIDVR=1 fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triversity-fpga-bitstream-tridvr
+          path: fpga/build/triversity_dvr.fs

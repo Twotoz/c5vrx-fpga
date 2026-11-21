@@ -59,13 +59,17 @@ releases into the flasher.
 
 Two bitstreams, one at a time on the Tang:
 
-| | `triversity.fs` | `triversity_hqdvr.fs` |
-|---|---|---|
-| Fusion | Single, Diversity, Triversity | Single, Diversity (C5 A + B) |
-| Screen | 800x480, colour, full menu | 800x480, colour, live view |
-| Aspect | 4:3, 16:9, Stretch, Auto | Auto (4:3 or 16:9) |
-| DVR | none | 720x480 / 720x576 colour JPEG, 60 / 50 fields a second |
-| Buttons | Up / Down / Select menu | Up / Down channel, Select record, Select held Single / Diversity |
+| | `triversity.fs` | `triversity_dvr.fs` | `triversity_hqdvr.fs` |
+|---|---|---|---|
+| Fusion | Single, Diversity, Triversity | Single, Diversity, Triversity | Single, Diversity (C5 A + B) |
+| Screen | 800x480, colour, full menu | 800x480, colour, compact status OSD | 800x480, colour, live view |
+| Aspect | 4:3, 16:9, Stretch, Auto | Auto (4:3 or 16:9) | Auto (4:3 or 16:9) |
+| DVR | none | 720x480 / 720x576 colour JPEG, 60 / 50 fields a second | the same |
+| Buttons | Up / Down / Select menu | Up / Down channel, Select record, Select held mode | Up / Down channel, Select record, Select held Single / Diversity |
+
+`triversity_dvr.fs` is the recording build for the receiver comparisons:
+all three C5s fused and the HQ DVR at once (77 % LUT4, 44 of 46 BSRAM, 73 MHz
+on the IQ clock). Its OSD draws 7-segment characters from logic (no font ROM).
 
 ## Experimental hardware — flight safety warning
 

@@ -163,10 +163,12 @@
         <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer. Pick one of the two:</p>
         <ul class="bitstream-list">
           <li><strong>triversity.fs</strong>: Triversity (three C5s fused), the full menu, all aspect modes. No DVR.</li>
+          <li><strong>triversity_dvr.fs</strong>: Triversity (three C5s fused) with the HQ DVR: every field as a 720-wide colour JPEG to the TF card; a compact status OSD (channel, REC, receivers). SELECT records, SELECT held cycles Triversity / Diversity / Single.</li>
           <li><strong>triversity_hqdvr.fs</strong>: HQ DVR. Diversity (C5 A and B fused), every field recorded as a 720-wide colour JPEG to the TF card; the screen shows the live view only (SELECT records, SELECT held switches Single / Diversity).</li>
         </ul>
         <div class="flash-actions">
           <a id="dlFs" class="action primary" href="#" download>Download triversity.fs</a>
+          <a id="dlFsTri" class="action" href="#" download>Download triversity_dvr.fs</a>
           <a id="dlFsHq" class="action" href="#" download>Download triversity_hqdvr.fs</a>
         </div>
         <pre class="terminal-output bitstream-cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>

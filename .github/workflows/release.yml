@@ -53,8 +53,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: fpga-hqdvr, path: fpga/build/triversity_hqdvr.fs }
 
+  fpga-tridvr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - run: TRIDVR=1 fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: fpga-tridvr, path: fpga/build/triversity_dvr.fs }
+
   publish:
-    needs: [c5, fpga, fpga-hqdvr]
+    needs: [c5, fpga, fpga-hqdvr, fpga-tridvr]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,6 +82,6 @@ jobs:
           sha256sum * > SHA256SUMS
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Triversity $TAG" \
-            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (triversity.fs: Triversity with the menu; triversity_hqdvr.fs: Diversity with the HQ DVR), built from ${GITHUB_SHA}. Flash with the web flasher." \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (triversity.fs: Triversity with the menu; triversity_hqdvr.fs: Diversity with the HQ DVR; triversity_dvr.fs: Triversity with the HQ DVR), built from ${GITHUB_SHA}. Flash with the web flasher." \
             *
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
