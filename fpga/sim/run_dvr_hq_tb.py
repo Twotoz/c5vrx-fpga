@@ -75,7 +75,7 @@ def main():
         subprocess.run(['iverilog', '-g2012', f'-Ptb_dvr_hq.BUSY={busy}', *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_dvr_hq.v'), str(HERE / 'sd_model.v'), *rtl_.src('dvr_hq.v', 'jpeg_enc.v', 'sd_ring.v', 'sdram.v', 'mul_dsp.v', 'addsub.v'), str(HERE / 'sdram_model.v')],
                        check=True)
-        rr = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={nf}'], cwd=t, capture_output=True, text=True)
+        rr = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={nf}'], cwd=t, capture_output=True, text=True)  # noqa
         print(rr.stdout[-1500:])
         words = [x for ln in (t / 'sd_out.hex').read_text().splitlines() for x in ln.split('//')[0].split()]
         out = bytes(int(x, 16) for x in words)

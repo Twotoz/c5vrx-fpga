@@ -118,7 +118,8 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
     wire [15:0] coff = cbase + {3'd0, ck[7:1], 5'd0} + {11'd0, fq[33], 4'd0} + {11'd0, crr, 1'b0} + {15'd0, ck[0]};
     wire [20:0] d_addr = fq[33:32] == 2'd0 ? {dslot, 3'd0, yoff} : {dslot, 3'd1, coff};
     wire        d_mark = fq_ok && fq[33:32] == 2'd3;
-    wire        d_want = fq_ok && !d_mark;
+    reg         d_busy;                  // a write was taken and its word not yet pulled: no new request
+    wire        d_want = fq_ok && !d_mark && !d_busy;
     // SDRAM requests: the drain first, the encoder's block reads otherwise
     wire        s_ack, s_wnext, s_rv; wire [31:0] s_rd;
     reg         r_want; reg [20:0] r_addr;
@@ -128,6 +129,7 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
     wire [4:0]  s_len = d_want ? 5'd1 : 5'd16;
     assign f_pop = s_wnext || d_mark;
     reg         req_was_we; always @(posedge clk) req_was_we <= s_we;   // the request the controller saw
+    always @(posedge clk) if (rst || s_wnext) d_busy <= 1'b0; else if (s_ack && req_was_we) d_busy <= 1'b1;
     always @(posedge clk) begin
         if (rst) begin comp <= 4'd0; yl <= 9'd0; cl <= 8'd0; yk <= 8'd0; ck <= 8'd0; ybase <= 16'd0; cbase <= 16'd0; dslot <= 2'd0; end
         else begin
@@ -181,7 +183,7 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
             in_field <= 1'b0; ending <= 1'b0; r_want <= 1'b0; fph <= 3'd0; seq <= 16'd0; qi <= 3'd3; fields <= 16'd0;
         end else begin
             if (!in_field && !ending) begin
-                if (scnt != 2'd0 && !e_busy && !e_start) begin
+                if (scnt != 2'd0 && !enc_done && !e_busy && !e_start) begin   // (scnt drops the clock after enc_done)
                     in_field <= 1'b1; e_start <= 1'b1; seq <= seq + 16'd1;
                     my <= 5'd0; mx <= 6'd0; blk <= 3'd0; ys <= 16'd0; cs <= 16'd0; fph <= 3'd0;
                 end

@@ -27,6 +27,14 @@ module tri_top (
     output wire [4:0] lcd_b,
     output wire       sd_cs, sd_sck, sd_mosi,   // TF card, SPI mode (DVR)
     input  wire       sd_miso
+`ifdef TRI_HQDVR
+    ,                                           // the GW2AR's built-in SDRAM (field buffers of the HQ DVR)
+    output wire        O_sdram_clk, O_sdram_cke, O_sdram_cs_n, O_sdram_ras_n, O_sdram_cas_n, O_sdram_wen_n,
+    output wire [10:0] O_sdram_addr,
+    output wire [1:0]  O_sdram_ba,
+    output wire [3:0]  O_sdram_dqm,
+    inout  wire [31:0] IO_sdram_dq
+`endif
 );
     // pads -> raw word {I sign, I2, I1, Q sign, Q2, Q1} = {D3, D4, D5, D1, D2, D6}
     function [5:0] word; input [6:1] d; word = {d[3], d[4], d[5], d[1], d[2], d[6]}; endfunction
@@ -115,7 +123,10 @@ module tri_top (
     localparam HAS_DVR = 1;
     dvr_hq u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
                   .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
-                  .sd_miso(sd_miso), .state(dvr_state), .qi(), .fields(), .dropped());
+                  .sd_miso(sd_miso), .state(dvr_state), .qi(), .fields(), .dropped(),
+                  .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
+                  .O_sdram_cas_n(O_sdram_cas_n), .O_sdram_wen_n(O_sdram_wen_n), .O_sdram_addr(O_sdram_addr), .O_sdram_ba(O_sdram_ba),
+                  .O_sdram_dqm(O_sdram_dqm), .IO_sdram_dq(IO_sdram_dq));
 `elsif TRI_DVR
     localparam HAS_DVR = 1;
     dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_gray),

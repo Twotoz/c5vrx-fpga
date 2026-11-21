@@ -52,4 +52,12 @@ module tb_dvr_hq #(parameter SECTORS = 4096, parameter BUSY = 40);
         $finish;
     end
     initial begin #3000000000; $display("TIMEOUT"); $finish; end
+`ifdef DBG
+    reg xseen = 0; always @(posedge clk) if (!rst && !xseen && (^u.fr === 1'bx || ^u.f_pop === 1'bx)) begin xseen = 1; $display("X at %0t: fr=%b f_pop=%b wnext=%b dmark=%b fq_ok=%b fq=%h st=%0d we=%b reqwe=%b sreq=%b fw=%0d", $time, u.fr, u.f_pop, u.s_wnext, u.d_mark, u.fq_ok, u.fq, u.u_ram.st, u.u_ram.we, u.s_we, u.s_req, u.fw); end
+    initial begin #150; repeat (12) begin @(posedge clk); #1 $display("rst=%b fr=%0d fq_ok=%b f_pop=%b wnext=%b dmark=%b fq=%h fw=%0d", rst, u.fr, u.fq_ok, u.f_pop, u.s_wnext, u.d_mark, u.fq, u.fw); end end
+    always begin #2000000;
+        $display("t=%0t inf=%b end=%b fph=%0d my=%0d mx=%0d blk=%0d yl=%0d cl=%0d comp=%b dslot=%0d shead=%0d scnt=%0d ram_st=%0d fq_ok=%b fw=%0d fr=%0d rwant=%b erdy=%b ebusy=%b",
+            $time, u.in_field, u.ending, u.fph, u.my, u.mx, u.blk, u.yl, u.cl, u.comp, u.dslot, u.shead, u.scnt, u.u_ram.st, u.fq_ok, u.fw, u.fr, u.r_want, u.e_rdy, u.e_busy);
+    end
+`endif
 endmodule
