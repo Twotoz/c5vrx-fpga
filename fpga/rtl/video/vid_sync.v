@@ -272,7 +272,7 @@ module vid_sync (
         end
     end
 `else
-    always @(*) begin d_valid = 1'b0; d_x = 10'd0; d_line = 9'd0; d_y = 8'd0; d_cb = 8'd0; d_cr = 8'd0; d_fstart = 1'b0; d_parity = 1'b0; end
+    always @(posedge clk) begin d_valid <= 1'b0; d_x <= 10'd0; d_line <= 9'd0; d_y <= 8'd0; d_cb <= 8'd0; d_cr <= 8'd0; d_fstart <= 1'b0; d_parity <= 1'b0; end
 `endif
     // ---- aspect signalling ----------------------------------------------------------
     wire [8:0]  athr = porch + (porch - tip);            // ~ +40 IRE
