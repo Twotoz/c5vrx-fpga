@@ -43,7 +43,11 @@ module tb_osd;
     initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;
     always @(posedge clk) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire dvr; wire [1:0] mode;
+`ifdef TRI_HQDVR
+    hq_ui u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
+`else
     menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
+`endif
         .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state), .wide_a(1'b0),
         .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
         .dvr(dvr), .mode(mode), .hmode(hm), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
@@ -66,7 +70,27 @@ module tb_osd;
         if (cap && de_p && !de) begin row = row + 1; col = 0; if (row == 480) begin cap = 0; $fclose(f); end end
         de_p = de; vs_p = vs;
     end
-    // ---- scenario (run_osd_tb.py SHOTS has the expected states) ----
+    // ---- scenario (run_osd_tb.py HQ_SHOTS has the expected states) ----
+`ifdef TRI_HQDVR
+    initial begin
+        $readmemh("video.hex", pic);
+        #100 rst = 0;
+        dvr_state = 2'd0;
+        repeat (100) @(posedge clk);
+        mark(2'd0, {4'd5, 12'd8});                                   // C5 A: channel A1
+        mark(2'd0, {4'd6, 12'd78}); mark(2'd1, {4'd6, 12'd55});
+        shot;                                                        // 0 live view (Diversity)
+        press(5'b00010); shot;                                       // 1 record, no card
+        dvr_state = 2'd2; repeat (20) @(posedge clk);
+        u_menu.m1 = 4'd0; u_menu.m0 = 4'd1; u_menu.s1 = 4'd2; u_menu.s0 = 4'd3; u_menu.sec_ms = 10'd0;
+        shot;                                                        // 2 recording 1:23
+        press(5'b00001); shot;                                       // 3 next channel (pill lit)
+        press(5'b10010); shot;                                       // 4 held: Single
+        locked = 0; repeat (20000) @(posedge clk); shot;             // 5 no signal
+        $display("shots %0d", nshot);
+        $finish;
+    end
+`else
     initial begin
         $readmemh("video.hex", pic);
         #100 rst = 0;
@@ -97,4 +121,5 @@ module tb_osd;
         $display("shots %0d", nshot);
         $finish;
     end
+`endif
 endmodule

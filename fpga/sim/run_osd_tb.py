@@ -5,7 +5,7 @@ every captured LCD frame must equal fpga/gen/gen_osd.py's render() of the
 state the scenario reached (RGB565). Writes the frames to fpga/build/osd_*.png
 and, with --docs, the menu screenshots for the README to docs/.
 
-    python fpga/sim/run_osd_tb.py [--docs]
+    python fpga/sim/run_osd_tb.py [--docs] [--hq]      (--hq: the HQ DVR build's hq_ui.v)
 """
 import subprocess, sys, tempfile
 from pathlib import Path
@@ -25,7 +25,13 @@ SHOTS = [('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor
          ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)), ('live', dict(open=False, aspect=2)),
          ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
          ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]
-DOCS = ['menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
+# the HQ DVR build's screen (hq_ui.v, --hq): the live view only
+HQ_BASE = dict(BASE, open=False, mode=1, dvr=False, dvr_state=0, rec_s=0, age=[0, 0, 4095], sig=[78, 55, 0], aspect=3, hq=True)
+HQ_SHOTS = [('hq_live', {}), ('hq_nocard', dict(dvr=True)), ('hq_rec', dict(dvr=True, dvr_state=2, rec_s=83)),
+            ('hq_channel', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True)),
+            ('hq_single', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True, mode=0)),
+            ('hq_nosig', dict(dvr=True, dvr_state=2, rec_s=83, channel=9, toast=True, mode=0, locked=False))]
+DOCS = ['hq_rec', 'menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
 
 
 def picture():
@@ -42,20 +48,22 @@ def widen(p):
 
 def main():
     docs = '--docs' in sys.argv
+    hq = '--hq' in sys.argv
+    shots, base = (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
     g, ps = G.glyphs_vh(), G.pages()
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
-        subprocess.run(['iverilog', '-g2012', *rtl_.inc(), '-o', str(t / 'tb'), str(HERE / 'tb_osd.v'),
-                        *rtl_.src('menu.v', 'lcd_out.v')], check=True)
+        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR'] if hq else []), *rtl_.inc(), '-o', str(t / 'tb'),
+                        str(HERE / 'tb_osd.v'), *rtl_.src('hq_ui.v' if hq else 'menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
         print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-2000:])
-        frames = [np.array([int(v, 16) for v in (t / f'shot_{k}.hex').read_text().split()]) for k in range(len(SHOTS))]
+        frames = [np.array([int(v, 16) for v in (t / f'shot_{k}.hex').read_text().split()]) for k in range(len(shots))]
     ok = True
-    for (name, d), fr in zip(SHOTS, frames):
-        st = dict(BASE, **d)
+    for (name, d), fr in zip(shots, frames):
+        st = dict(base, **d)
         hm = G.hmaps()[G.hmode(st)]
         wid = [[widen(int(v)) for v in row] for row in pic]
         video = [[wid[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]

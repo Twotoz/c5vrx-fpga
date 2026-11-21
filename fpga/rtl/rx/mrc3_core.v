@@ -77,7 +77,7 @@ module mrc3_trk (
     end
 endmodule
 
-module mrc3_core (
+module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's tracker and products left out
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
@@ -138,8 +138,12 @@ module mrc3_core (
     wire signed [12:0] rb_i3, rb_q3, rc_i3, rc_q3;
     mrc3_trk u_tb (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[1]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cb_i1), .ck_q1(cb_q1), .rk_i3(rb_i3), .rk_q3(rb_q3));
+    generate if (HAS_C) begin : tc
     mrc3_trk u_tc (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[2]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cc_i1), .ck_q1(cc_q1), .rk_i3(rc_i3), .rk_q3(rc_q3));
+    end else begin : notc
+    assign rc_i3 = 13'sd0; assign rc_q3 = 13'sd0;
+    end endgenerate
 
     // ---- S3: moments ------------------------------------------------------------
     reg [15:0] m2 [0:2];
@@ -256,8 +260,12 @@ module mrc3_core (
     mul9  u_aq (.a({1'b0, wa_eff}), .b({{4{ca_q3[4]}}, ca_q3}), .y(a_q));
     mul18 u_bi (.a({10'd0, wb_eff}), .b({{5{rb_i3[12]}}, rb_i3}), .y(b_i));
     mul18 u_bq (.a({10'd0, wb_eff}), .b({{5{rb_q3[12]}}, rb_q3}), .y(b_q));
+    generate if (HAS_C) begin : pc
     mul18 u_ci (.a({10'd0, wc_eff}), .b({{5{rc_i3[12]}}, rc_i3}), .y(c_i));
     mul18 u_cq (.a({10'd0, wc_eff}), .b({{5{rc_q3[12]}}, rc_q3}), .y(c_q));
+    end else begin : nopc
+    assign c_i = 36'd0; assign c_q = 36'd0;
+    end endgenerate
     always @(posedge clk) begin
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;

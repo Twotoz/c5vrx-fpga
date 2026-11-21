@@ -160,12 +160,17 @@
 
       <section class="project-info" id="bitstream" aria-labelledby="bitstreamTitle">
         <h2 id="bitstreamTitle">FPGA bitstream</h2>
-        <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer.</p>
+        <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer. Pick one of the two:</p>
+        <ul class="bitstream-list">
+          <li><strong>triversity.fs</strong>: Triversity (three C5s fused), the full menu, all aspect modes. No DVR.</li>
+          <li><strong>triversity_hqdvr.fs</strong>: HQ DVR. Diversity (C5 A and B fused), every field recorded as a 720-wide colour JPEG to the TF card; the screen shows the live view only (SELECT records, SELECT held switches Single / Diversity).</li>
+        </ul>
         <div class="flash-actions">
           <a id="dlFs" class="action primary" href="#" download>Download triversity.fs</a>
+          <a id="dlFsHq" class="action" href="#" download>Download triversity_hqdvr.fs</a>
         </div>
         <pre class="terminal-output bitstream-cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>
-        <p class="hint">Without <code>-f</code> openFPGALoader loads it until the next power-up only. The DVR is a separate build (<code>DVR=1 fpga/build.sh</code>): it does not fit next to the colour decoder.</p>
+        <p class="hint">Without <code>-f</code> openFPGALoader loads it until the next power-up only. Recordings: <code>python tools/hqdvr_to_mp4.py TRIDVR.BIN rec.mp4</code>.</p>
       </section>
 
       <section class="project-info hardware-section" id="hardware" aria-labelledby="hardwareTitle">

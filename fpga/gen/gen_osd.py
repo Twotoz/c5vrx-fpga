@@ -311,6 +311,9 @@ def field_cells(name, w, st, row, sel, edit):
     if name == 'CALV':
         return K(rjust('Sent', w - 1) + [CHECK], fg=GREEN) if st['cal_ms'] else K([32] * w)
     if name == 'REC':
+        if st.get('hq') and st['dvr'] and st['dvr_state'] in (0, 3):     # hq_ui.v: why it does not record
+            body = [(CAP_L, PANEL, BG_VIDEO), (DOT, RED, None), (32, None, None)] + K('Card err' if st['dvr_state'] == 3 else 'No card ')
+            return body + [(32, None, None)] + [(CAP_R, PANEL, BG_VIDEO)]
         if not (st['dvr'] and st['dvr_state'] == 2):
             return hide
         t = st['rec_s']
@@ -443,6 +446,7 @@ def emit(g, ps):
     lines += [f"    freq[{i}] = 16'h{int(str(f), 16):04x};" for i, f in enumerate(FREQS)]
     lines.append('end')
     (RTL / 'osd_pages.vh').write_text('\n'.join(lines) + '\n')
+    (RTL / 'osd_freq.vh').write_text('\n'.join(head + ['initial begin'] + [l for l in lines if 'freq[' in l] + ['end']) + '\n')
     lines = head + ['initial begin']
     for m, mp in enumerate(hmaps()):
         lines += [f"    hmap[{m * 1024 + x}] = 11'h{(0 if v is None else 1024 | v):03x};" for x, v in enumerate(mp)]
@@ -452,7 +456,7 @@ def emit(g, ps):
 
 def main():
     emit(glyphs(), pages())
-    print('wrote rtl/ui/osd_font.vh, rtl/ui/osd_pages.vh, rtl/video/hmap.vh')
+    print('wrote rtl/ui/osd_font.vh, osd_pages.vh, osd_freq.vh, rtl/video/hmap.vh')
 
 
 if __name__ == '__main__':

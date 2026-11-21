@@ -39,7 +39,14 @@ module vid_sync (
     output reg         pal,
     output reg         locked,
     output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
-    output reg         wide           // the camera signals 16:9 (CGMS-A / WSS)
+    output reg         wide,          // the camera signals 16:9 (CGMS-A / WSS)
+    // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
+    output reg         d_valid,
+    output reg  [9:0]  d_x,
+    output reg  [8:0]  d_line,
+    output reg  [7:0]  d_y, d_cb, d_cr,
+    output reg         d_fstart,      // a field begins (one clock)
+    output reg         d_parity       // the field's parity (vertical sync mid-line)
 );
     // ---- luma -------------------------------------------------------------
     reg [5:0] c [0:7];
@@ -227,6 +234,44 @@ module vid_sync (
             wr_gray <= y8;
         end
     end
+`ifdef TRI_HQDVR
+    // ---- HQ DVR stream: a second DDA, 720 pixels over the active line; JPEG
+    // Y = the display's luma, Cb = 128 + 1.146 U, Cr = 128 + 0.813 V (gray
+    // units; dvr_hq.v's 4:2:0 averages each line pair, which also cancels
+    // PAL's phase errors like the display's line-above average) ----
+    reg  [11:0] d_dda; reg [9:0] d_px; reg d_act; reg [8:0] d_ln; reg [2:0] d_ft;
+    reg         q_tick; reg [9:0] q_x; reg [8:0] q_ln; reg [9:0] q_y; reg signed [9:0] q_u, q_v;
+    wire signed [10:0] qyd = $signed({1'b0, q_y}) - $signed({2'b0, porch});
+    wire [35:0] qgm;
+    mul18 u_qgm (.a({{7{qyd[10]}}, qyd}), .b({2'b0, k8}), .y(qgm));
+    wire signed [19:0] qgy = $signed(qgm[27:0]) >>> 8;
+    wire signed [10:0] q_uo = {q_u[9], q_u}, q_vo = {q_v[9], q_v};
+    wire signed [12:0] q_cb = 13'sd128 + q_uo + (q_uo >>> 3) + (q_uo >>> 6) + (q_uo >>> 8);
+    wire signed [12:0] q_cr = 13'sd128 + (q_vo >>> 1) + (q_vo >>> 2) + (q_vo >>> 4);
+    function [7:0] clq; input signed [19:0] v; clq = v < 0 ? 8'd0 : v > 20'sd255 ? 8'd255 : v[7:0]; endfunction
+    always @(posedge clk) begin
+        d_ft <= {d_ft[1:0], field_tog};
+        d_fstart <= d_ft[2] ^ d_ft[1];
+        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        // line: the main block set act and aidx at hc = 0
+        if (hc == 12'd1) begin d_act <= act; d_ln <= aidx[8:0] - 9'd1; d_dda <= 12'd0; d_px <= 10'd0; end
+        q_tick <= 1'b0;
+        if (d_act && hc >= HSTART && d_px < 10'd720) begin
+            if (d_dda + 12'd720 >= ACT) begin
+                d_dda <= d_dda + 12'd720 - ACT;
+                q_tick <= 1'b1; q_x <= d_px; q_ln <= d_ln; q_y <= cy8u; q_u <= cug; q_v <= cvg;
+                d_px <= d_px + 10'd1;
+            end else d_dda <= d_dda + 12'd720;
+        end
+        d_valid <= q_tick;
+        if (q_tick) begin
+            d_x <= q_x; d_line <= q_ln;
+            d_y <= clq(qgy); d_cb <= clq({{7{q_cb[12]}}, q_cb}); d_cr <= clq({{7{q_cr[12]}}, q_cr});
+        end
+    end
+`else
+    always @(*) begin d_valid = 1'b0; d_x = 10'd0; d_line = 9'd0; d_y = 8'd0; d_cb = 8'd0; d_cr = 8'd0; d_fstart = 1'b0; d_parity = 1'b0; end
+`endif
     // ---- aspect signalling ----------------------------------------------------------
     wire [8:0]  athr = porch + (porch - tip);            // ~ +40 IRE
     wire        ahi  = y > athr;

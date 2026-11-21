@@ -12,10 +12,12 @@ YOSYS="${YOSYS:-$(command -v yowasp-yosys || command -v yosys)}"
 NEXTPNR="${NEXTPNR:-$(command -v yowasp-nextpnr-himbaechel-gowin || command -v nextpnr-himbaechel)}"
 SRC="$(find . -name '*.v' | sort | tr '\n' ' ')"
 INC="$(find . -type d | sort | sed 's/^/-I/' | tr '\n' ' ')"
-DEF=""; [ "${DVR:-0}" = 1 ] && DEF="-DTRI_DVR"      # DVR=1: with the DVR (does not fit next to the colour decoder)
+DEF=""; [ "${DVR:-0}" = 1 ] && DEF="-DTRI_DVR"      # DVR=1: with the old grey DVR (does not fit next to the colour decoder)
+[ "${HQDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR"          # HQDVR=1: Diversity + HQ DVR (720-wide colour JPEG fields) -> triversity_hqdvr.fs
+OUT="triversity"; [ "${HQDVR:-0}" = 1 ] && OUT="triversity_hqdvr"
 "$YOSYS" -q -l "$B/yosys.log" -p "read_verilog $DEF $INC $SRC; synth_gowin -family gw2a ${SYNTH_OPTS--nodsp} -top tri_top -json $B/triversity.json"
 "$NEXTPNR" -q -l "$B/nextpnr.log" --json "$B/triversity.json" --write "$B/triversity_pnr.json" \
   --device GW2AR-LV18QN88C8/I7 --vopt family=GW2A-18C ${PNR_OPTS-} --vopt cst="$HERE/boards/tang_nano_20k.cst" --freq 40 --timing-allow-fail --report "$B/report.json"
-gowin_pack -d GW2A-18C -o "$B/triversity.fs" "$B/triversity_pnr.json"
+gowin_pack -d GW2A-18C -o "$B/$OUT.fs" "$B/triversity_pnr.json"
 grep -E "LUT4|DFF|BSRAM|MULT|Max frequency" "$B/nextpnr.log" | sort -u | head -20
-echo "bitstream: $B/triversity.fs"
+echo "bitstream: $B/$OUT.fs"

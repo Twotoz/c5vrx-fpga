@@ -20,7 +20,7 @@ module marker_rx (
 );
     localparam HOLD = 8'd48, INVAL = 10'd600, TIMEOUT = 9'd300;
     // ---- 128-sample delay of the stream and of its valid flag -----------
-    reg [5:0]   mem [0:127];
+    (* ram_style = "block" *) reg [5:0] mem [0:127];   // BSRAM (read before write)
     integer     mi;
     initial for (mi = 0; mi < 128; mi = mi + 1) mem[mi] = 6'd0;
     reg [6:0]   wp = 7'd0;

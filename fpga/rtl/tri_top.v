@@ -57,15 +57,24 @@ module tri_top (
     wire       en_b, en_c, b_alive, c_alive;
     align_b u_alb (.clk_b(b_clk), .raw_b_in(nib(cap_b)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
                    .raw_a_d(a_al1), .raw_b(b_al), .en_b(en_b), .b_alive(b_alive), .lag());
+`ifdef TRI_HQDVR
+    // the HQ DVR build fuses two C5s (Diversity): C5 C's logic makes room for the JPEG encoder
+    assign a_al2 = 8'd0; assign c_al = 8'd0; assign en_c = 1'b0; assign c_alive = 1'b0;
+`else
     align_b u_alc (.clk_b(c_clk), .raw_b_in(nib(cap_c)), .clk_a(a_clk), .rst_a(rst), .raw_a(nib(ra)),
                    .raw_a_d(a_al2), .raw_b(c_al), .en_b(en_c), .b_alive(c_alive), .lag());
+`endif
     // ---- markers: detect, decode, delay the IQ past them ----
     wire [5:0]  a_m, b_m, c_m;
     wire        va, vb, vc, ev_a, ev_b, ev_c;
     wire [15:0] pl_a, pl_b, pl_c;
     marker_rx u_mka (.clk(a_clk), .rst(rst), .raw({a_al1[7:5], a_al1[3:1]}), .raw_d(a_m), .valid_d(va), .ev(ev_a), .payload(pl_a), .count());
     marker_rx u_mkb (.clk(a_clk), .rst(rst), .raw({b_al[7:5], b_al[3:1]}),   .raw_d(b_m), .valid_d(vb), .ev(ev_b), .payload(pl_b), .count());
+`ifdef TRI_HQDVR
+    assign c_m = 6'd0; assign vc = 1'b0; assign ev_c = 1'b0; assign pl_c = 16'd0;
+`else
     marker_rx u_mkc (.clk(a_clk), .rst(rst), .raw({c_al[7:5], c_al[3:1]}),   .raw_d(c_m), .valid_d(vc), .ev(ev_c), .payload(pl_c), .count());
+`endif
     reg        mk_tog = 1'b0; reg [1:0] mk_src = 2'd3; reg [15:0] mk_pl = 16'd0;
     always @(posedge a_clk) if (ev_a | ev_b | ev_c) begin
         mk_tog <= ~mk_tog;
@@ -79,16 +88,29 @@ module tri_top (
     always @(posedge a_clk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
-    mrc3_core u_core (.clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
+`ifdef TRI_HQDVR
+    mrc3_core #(.HAS_C(0)) u_core (
+`else
+    mrc3_core u_core (
+`endif
+                      .clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
                       .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .code(code));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
+    wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
     vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
-                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide));
+                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
+                   .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
-`ifdef TRI_DVR
+`ifdef TRI_HQDVR
+    // HQ DVR: every field as a 720-wide colour JPEG (dvr_hq.v, HQDVR=1 fpga/build.sh)
+    localparam HAS_DVR = 1;
+    dvr_hq u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
+                  .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
+                  .sd_miso(sd_miso), .state(dvr_state), .qi(), .fields(), .dropped());
+`elsif TRI_DVR
     localparam HAS_DVR = 1;
     dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_gray),
                .field_tog(field_tog), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
@@ -107,7 +129,12 @@ module tri_top (
     // ---- menu and link ----
     wire [1:0] hmode;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
-    menu #(.HAS_DVR(HAS_DVR)) u_menu (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
+`ifdef TRI_HQDVR
+    hq_ui u_menu (
+`else
+    menu #(.HAS_DVR(HAS_DVR)) u_menu (
+`endif
+                 .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),

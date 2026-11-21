@@ -36,8 +36,9 @@ demodulates once and shows the picture with an on-screen menu.
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
 - Three buttons on C5 A (Up, Select, Down) drive the menu.
 - Colour (NTSC and PAL), 60 / 50 pictures a second on the screen.
-- DVR to the Tang's TF card as a separate build (it does not fit next to the
-  colour decoder).
+- HQ DVR as a second bitstream: every field as a 720-wide colour JPEG on the
+  Tang's TF card, 60 / 50 fields a second (Diversity, live view without the
+  menu: the encoder takes the menu's room).
 
 > [!NOTE]
 > **Triversity is an official C5VRX version**, made by Twotoz and the C5VRX
@@ -55,6 +56,16 @@ download with its `openFPGALoader` command (browsers cannot reach the Tang's
 USB debugger). Every push to `main` that changes the firmware or the FPGA
 design publishes a release (`release.yml`); `pages.yml` mirrors the newest
 releases into the flasher.
+
+Two bitstreams, one at a time on the Tang:
+
+| | `triversity.fs` | `triversity_hqdvr.fs` |
+|---|---|---|
+| Fusion | Single, Diversity, Triversity | Single, Diversity (C5 A + B) |
+| Screen | 800x480, colour, full menu | 800x480, colour, live view |
+| Aspect | 4:3, 16:9, Stretch, Auto | Auto (4:3 or 16:9) |
+| DVR | none | 720x480 / 720x576 colour JPEG, 60 / 50 fields a second |
+| Buttons | Up / Down / Select menu | Up / Down channel, Select record, Select held Single / Diversity |
 
 ## Experimental hardware — flight safety warning
 
@@ -257,27 +268,46 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
   video line shown twice (480 lines, genlocked, no frame buffer). OSD: 66 x 20
   cells of 12 x 24 pixels, anti-aliased glyphs, panels that dim the video.
-- DVR (`rtl/io/dvr.v`, only in `DVR=1 fpga/build.sh`: with the colour decoder
-  it needs 86 % of the logic and does not place; the default build shows
-  "No DVR" under Record): 400x240 in 16 grey levels at 30 fps (NTSC) or 25 fps
-  (PAL): every second field, every second pixel of the line. To
-  `TRIDVR.BIN` on the TF card (SPI mode; found by its header sector, written
-  as a ring: the oldest part is overwritten). About 87 MB a minute; a slow
-  card drops whole frames, never half ones. A colour DVR at full resolution
-  needs ~15 MB/s or compression: more than the SPI slot (~2.5 MB/s) and the
-  logic left on this FPGA.
-- Fit (default build): 78 % LUT4, 24 of 46 BSRAM, 47 MULT9 + 12 MULT18;
-  58 MHz on the 40 MHz IQ clock, 88 MHz on the 33.75 MHz LCD clock, no hold
-  violations. Synthesis runs `-nodsp`: inferred multipliers would take more
+- HQ DVR (`HQDVR=1 fpga/build.sh` -> `triversity_hqdvr.fs`): every field as a
+  baseline JPEG, 720x240 (NTSC) or 720x288 (PAL), colour 4:2:0, 59.94 / 50
+  fields a second; the PC weaves pairs into 720x480 / 720x576 frames.
+  `rtl/io/jpeg_enc.v` (DCT, quantiser, Huffman coder; byte for byte the same
+  as `model/jpeg_model.py`) gets 16-line strips from `rtl/io/dvr_hq.v`;
+  `rtl/io/sd_ring.v` writes the records to `TRIDVR.BIN` on the TF card
+  (SPI mode at 20 MHz; found by its header sector, written as a ring: the
+  oldest part is overwritten). The quality follows the field sizes (8 steps,
+  JPEG quality 30 to 90) to about 1.5 MB/s, 88 MB a minute, what SPI mode
+  keeps up with; a field that would not fit (slow card) is dropped whole.
+  To make room: C5 C, the menu's page templates and the Stretch map are left
+  out of this build, and the OSD shows the live view only
+  (`rtl/ui/hq_ui.v`, the same cells as the menu build's live view, checked
+  pixel for pixel).
+- Grey DVR (`rtl/io/dvr.v`, `DVR=1 fpga/build.sh`, kept for reference: with the
+  colour decoder and the menu it does not place): 400x240 in 16 grey levels at 30 fps.
+- Fit (default build): 76 % LUT4, 27 of 46 BSRAM, 47 MULT9 + 12 MULT18;
+  60 MHz on the 40 MHz IQ clock, 88 MHz on the 33.75 MHz LCD clock, no hold
+  violations. HQ DVR build: 78 % LUT4, 46 of 46 BSRAM, 26 MULT9 + 20 MULT18;
+  51 MHz on the IQ clock, 115 MHz on the LCD clock. Synthesis runs `-nodsp`: inferred multipliers would take more
   than the 24 DSP macros.
 
-DVR on the PC:
+HQ DVR on the PC:
 
 ```
-DVR=1 fpga/build.sh                               # the DVR build
+HQDVR=1 fpga/build.sh                            # the HQ DVR build (or triversity_hqdvr.fs from a release)
 python tools/make_dvr_file.py /media/TF          # once, on a freshly formatted FAT32 card
-python tools/dvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4
+python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4          # 720x480 at 29.97 fps (PAL 720x576, 25)
+python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4 --bob    # every field, 59.94 / 50 fps
 ```
+
+A recorded field as `hqdvr_to_mp4.py --bob` shows it: the JPEG exactly as the
+RTL wrote it to the simulated card (the colour test scene through the receive
+chain at 13 dB C/N, quality 60), line doubled to 720x480:
+
+![HQ DVR field](docs/hqdvr_frame.png)
+
+The HQ build's screen while recording:
+
+![HQ DVR live view](docs/osd_hq_rec.png)
 
 The LCD and HDMI cannot run at the same time on the Tang Nano 20K: the HDMI
 pairs (pins 33-40) are the LCD's green and red pins. The DVR uses its own
@@ -289,7 +319,9 @@ them in the menu means loading the other bitstream.
 
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
 `run_link_tx_tb.py`, `run_chroma_tb.py` (colour, bit-exact),
-`run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`),
+`run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`; `--hq` the HQ build's screen),
+`run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
+`run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).

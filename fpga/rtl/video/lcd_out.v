@@ -102,11 +102,19 @@ module lcd_out (
     reg [23:0] glyph;
     reg [9:0]  sr, sg, sb;
     // column map, read one pixel ahead: hq is the map of x
+    wire [9:0] xn = x + 10'd1;
+`ifdef TRI_HQDVR
+    // HQ DVR build: full width or 4:3 only, computed (the map's BSRAM goes to the DVR)
+    wire [9:0]  xb = xn - 10'd80;
+    wire [11:0] xb5 = {xb, 2'b0} + {2'b0, xb};
+    wire [10:0] hcalc = hmode == 2'd1 ? ((xn >= 10'd80 && xn < 10'd720) ? {1'b1, xb5[11:2]} : 11'd0) : {1'b1, xn};
+`else
     reg [10:0] hmap [0:4095];
 `include "hmap.vh"
+    wire [10:0] hcalc = hmap[{hmode, xn}];
+`endif
     reg [10:0] hq;
     reg        hv1, hv2;
-    wire [9:0] xn = x + 10'd1;
     // palette
     function [23:0] pal8; input [2:0] i;
         case (i)
@@ -125,7 +133,7 @@ module lcd_out (
     mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mg (.a({8'd0, sg}), .b(18'd171), .y(m_g));
     mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mb (.a({8'd0, sb}), .b(18'd171), .y(m_b));
     always @(posedge clk) begin
-        hq <= hmap[{hmode, xn}];
+        hq <= hcalc;
         lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
         hv1 <= hq[10]; hv2 <= hv1;
         osd_addr <= rbase + {4'd0, cx};

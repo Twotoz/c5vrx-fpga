@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Triversity DVR: create TRIDVR.BIN on a TF card for the FPGA (fpga/rtl/dvr.v).
+"""Triversity DVR: create TRIDVR.BIN on a TF card for the FPGA (fpga/rtl/io/dvr_hq.v, dvr.v).
 
 The FPGA finds TRIDVR.BIN by its first sector ("TRIDVR-FILE-0001" and the
 number of sectors after it), searching the first 64 MB of the card, and
@@ -9,8 +9,8 @@ card needs a FAT32 tool) and run this before copying anything else onto it.
 The script writes the file in large blocks and checks on Linux (filefrag)
 that it is contiguous when it can.
 
-One minute of recording is about 87 MB (NTSC, 30 frames of 48640 bytes per
-second); the default 3900 MB holds about 44 minutes, then the oldest part is
+One minute of recording is about 88 MB (HQ DVR, ~1.5 MB/s; the grey DVR
+87 MB); the default 3900 MB holds about 44 minutes, then the oldest part is
 overwritten.
 
     python fpga/tools/make_dvr_file.py /media/TF            [size in MB, default 3900]

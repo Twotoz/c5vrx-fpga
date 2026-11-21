@@ -36,8 +36,12 @@ jobs:
       - name: Colour decoder, bit-exact (NTSC and PAL)
         run: python fpga/sim/run_chroma_tb.py NTSC && python fpga/sim/run_chroma_tb.py PAL
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
-      - name: OSD, pixel for pixel
-        run: python fpga/sim/run_osd_tb.py
+      - name: OSD, pixel for pixel (menu build and HQ DVR build)
+        run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hq
+      - name: JPEG encoder, byte-exact with the model (NTSC, PAL, stalled output)
+        run: python fpga/sim/run_jpeg_tb.py 3 && python fpga/sim/run_jpeg_tb.py 0 --pal && python fpga/sim/run_jpeg_tb.py 7 --stall
+      - name: HQ DVR to the card, byte-exact
+        run: python fpga/sim/run_dvr_hq_tb.py 3
       - name: Aspect signalling (CGMS-A, WSS)
         run: python fpga/sim/run_aspect_tb.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
@@ -60,3 +64,19 @@ jobs:
         with:
           name: triversity-fpga-bitstream
           path: fpga/build/triversity.fs
+
+  bitstream-hqdvr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tools
+        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - name: Build (HQ DVR)
+        run: HQDVR=1 fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triversity-fpga-bitstream-hqdvr
+          path: fpga/build/triversity_hqdvr.fs
