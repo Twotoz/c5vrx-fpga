@@ -48,7 +48,7 @@ jobs:
       - name: JPEG encoder, byte-exact with the model (NTSC, PAL, stalled output)
         run: python fpga/sim/run_jpeg_tb.py 3 && python fpga/sim/run_jpeg_tb.py 0 --pal && python fpga/sim/run_jpeg_tb.py 7 --stall
       - name: HQ DVR to the card, byte-exact
-        run: python fpga/sim/run_dvr_hq_tb.py 3
+        run: python fpga/sim/run_dvr_hq_tb.py 3 && python fpga/sim/run_dvr_hq_tb.py 3 --log
       - name: Aspect signalling (CGMS-A, WSS)
         run: python fpga/sim/run_aspect_tb.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }

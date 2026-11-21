@@ -16,12 +16,20 @@
 //  - TARGET: ~1.47 MB/s (24 KB x 59.94, 29 KB x 50), what SPI mode at 20 MHz
 //    sustains; the quality index follows the field sizes (down above
 //    TARGET + 1/8, up below 3/4 TARGET), from 3 (quality 60)
-// fpga/tools: tools/hqdvr_to_mp4.py turns the file into a video.
+//  - link log (menu Record: On = video + log, Log = log only): every sixth
+//    field (10 / 8.3 Hz) a 25-byte record "TRIL", log number, the video's
+//    field number, then lg_data (17 bytes, tri_top.v), in the same stream
+//    between two JPEG records (the encoder waits for it)
+// fpga/tools: tools/hqdvr_to_mp4.py turns the file into a video,
+// tools/trilog.py the log into CSV.
 `default_nettype none
-module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
+module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696,
+                parameter [2:0] LOG_FIELDS = 3'd6) (   // a log record every sixth field
     input  wire        clk,
     input  wire        rst,
-    input  wire        rec,             // record (other domain)
+    input  wire        rec,             // record video (other domain)
+    input  wire        lg,              // write the link log (other domain)
+    input  wire [135:0] lg_data,        // the log record's 17 data bytes, byte k at [8k +: 8]
     input  wire        d_valid,
     input  wire [9:0]  d_x,
     input  wire [8:0]  d_line,
@@ -42,7 +50,8 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
     output wire [3:0]  O_sdram_dqm,
     inout  wire [31:0] IO_sdram_dq
 );
-    reg [1:0] rs; always @(posedge clk) rs <= {rs[0], rec};
+    reg [1:0] rs, ls; always @(posedge clk) begin rs <= {rs[0], rec}; ls <= {ls[0], lg}; end
+    reg         lg_pend, lg_act;          // a log record is due / being written
     wire recording = rs[1] && state == 2'd2;
     // ================= slots =================
     reg  [1:0] shead, scnt;              // the oldest field being / to be encoded, fields queued (<= 3)
@@ -183,7 +192,7 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
             in_field <= 1'b0; ending <= 1'b0; r_want <= 1'b0; fph <= 3'd0; seq <= 16'd0; qi <= 3'd3; fields <= 16'd0;
         end else begin
             if (!in_field && !ending) begin
-                if (scnt != 2'd0 && !enc_done && !e_busy && !e_start) begin   // (scnt drops the clock after enc_done)
+                if (scnt != 2'd0 && !enc_done && !e_busy && !e_start && !lg_pend && !lg_act) begin   // (scnt drops the clock after enc_done; a log record first)
                     in_field <= 1'b1; e_start <= 1'b1; seq <= seq + 16'd1;
                     my <= 5'd0; mx <= 6'd0; blk <= 3'd0; ys <= 16'd0; cs <= 16'd0; fph <= 3'd0;
                 end
@@ -229,16 +238,41 @@ module dvr_hq #(parameter [17:0] TARGET_N = 18'd24576, TARGET_P = 18'd29696) (
     reg  [7:0]  rb_rd;
     assign used = wp - rp;
     assign ring_ready = used < 16'd8192;
-    wire idle = !e_busy && scnt == 2'd0 && !cap && !in_field && !ending && fw == fr;
+    wire idle = !e_busy && scnt == 2'd0 && !cap && !in_field && !ending && fw == fr && !lg_pend && !lg_act;
     // after the last record: zeros up to a whole sector, so it reaches the card
-    wire pad = !rs[1] && idle && wp[8:0] != 9'd0 && state == 2'd2;
+    wire pad = !rs[1] && !ls[1] && idle && wp[8:0] != 9'd0 && state == 2'd2;
+    // ---- link log: a record every 0.1 s while writing, between JPEG records ----
+    reg  [2:0]  lt;
+    reg  [5:0]  lb;
+    reg  [15:0] lseq;
+    wire [199:0] lrec = {lg_data, seq, lseq, "LIRT"};   // byte 0 'T' ... ("TRIL", little-endian numbers)
+    // the byte at lb: as a mux tree (a part select by lb would become a shifter)
+    reg  [7:0]  lbyte; integer lk;
+    always @* begin lbyte = 8'd0; for (lk = 0; lk < 25; lk = lk + 1) if (lb == lk) lbyte = lrec[8 * lk +: 8]; end
+    always @(posedge clk) begin
+        if (rst) begin lt <= 3'd0; lg_pend <= 1'b0; lg_act <= 1'b0; lseq <= 16'd0; lb <= 6'd0; end
+        else begin
+            if (d_fstart) begin
+                if (lt == LOG_FIELDS - 3'd1) begin lt <= 3'd0; if (ls[1] && state == 2'd2) lg_pend <= 1'b1; end
+                else lt <= lt + 3'd1;
+            end
+            if (lg_pend && !lg_act && !in_field && !ending && !e_busy && !e_start && !e_valid) begin
+                lg_act <= 1'b1; lg_pend <= 1'b0; lb <= 6'd0;
+            end
+            if (lg_act && ring_ready) begin
+                lb <= lb + 6'd1;
+                if (lb == 6'd24) begin lg_act <= 1'b0; lseq <= lseq + 16'd1; end
+            end
+        end
+    end
     always @(posedge clk) begin
         if (rst) wp <= 16'd0;
         else if (e_valid && ring_ready) begin ring[wp[12:0]] <= e_data; wp <= wp + 16'd1; end
+        else if (lg_act && ring_ready) begin ring[wp[12:0]] <= lbyte; wp <= wp + 16'd1; end
         else if (pad && ring_ready) begin ring[wp[12:0]] <= 8'd0; wp <= wp + 16'd1; end
         rb_rd <= ring[rp[12:0]];
     end
-    sd_ring u_sd (.clk(clk), .rst(rst), .rec_on(rs[1]), .src_idle(idle && wp[8:0] == 9'd0),
+    sd_ring u_sd (.clk(clk), .rst(rst), .rec_on(rs[1] | ls[1]), .src_idle(idle && wp[8:0] == 9'd0),
                   .wp(wp), .used(used), .rb_rd(rb_rd), .rp(rp), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
                   .sd_miso(sd_miso), .state(state));
 endmodule

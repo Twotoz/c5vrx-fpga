@@ -32,6 +32,7 @@ module vid_sync (
     input  wire        keep_lock,     // menu Signal: hold the picture through sync dropouts (~0.5 s)
     input  wire        adapt,         // menu Signal: steadier line phase once locked (e/8 instead of e/4)
     input  wire        ans,           // menu Signal: adaptive noise suppression on the luma
+    output wire [1:0]  ans_lev,       // logger: the noise level 0..3 (the filter's strength when on)
     output reg         wr_en,
     output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
     output reg  [15:0] wr_data,       // RGB565
@@ -123,6 +124,7 @@ module vid_sync (
     reg  [21:0] nacc = 22'd0;
     reg  [5:0]  nln = 6'd0;
     reg  [1:0]  nlev = 2'd0;
+    assign ans_lev = nlev;
     reg  [12:0] yacc = 13'd0;
     wire signed [13:0] ydel = $signed({1'b0, cy8u, 3'd0}) - $signed({1'b0, yacc});
     wire signed [13:0] ystep = ydel >>> nlev;

@@ -4,7 +4,7 @@ Triversity receiver as built, per Signal page switch.
 Signal: one NTSC frame per case through the C5 channel model (model/eval3.py:
 own LO per C5, independent noise, optional Rayleigh fading at 300 Hz, 250 us
 AGC), three C5s with 3-bit I/Q. Receiver: model/mrc3_model.py (combiner,
-tracker, weights, discriminator, Weak branch, Anti-fold, Spike filter;
+tracker, weights, discriminator, Weak branch, Anti-fold;
 bit-exact with rtl/rx/mrc3_core.v, sim/run_tb3.py) and for the Noise filter
 the luma path of chroma.v + vid_sync.v (model/chroma_model.py hw_decode and
 ans, bit-exact with the RTL: run_chroma_tb.py, run_ans_tb.py).
@@ -33,8 +33,7 @@ import eval3  # noqa: E402
 import mrc3_model  # noqa: E402
 
 E = eval3.E
-SW = {'off': {}, 'weak': dict(wbranch=True), 'afold': dict(afold=True), 'spike': dict(spike=True),
-      'all': dict(wbranch=True, afold=True, spike=True)}
+SW = {'off': {}, 'weak': dict(wbranch=True), 'afold': dict(afold=True), 'both': dict(wbranch=True, afold=True)}
 CASES = ('equal', 'C dead', 'C weak', 'C fold')
 
 
@@ -67,9 +66,8 @@ def table1(args):
     clean = [mrc3_model.to_raw3(y[1]) for y in ys]
     c = dict(truth=sg.sosfilt(E.sim.GOGGLE, ire), region=region, standard='NTSC')
     out = {'1 C5': E.sim.measure(c, mrc3_model.run(raws[:1], disc=True), mrc3_model.run(clean[:1], disc=True))}
-    cc = mrc3_model.run(clean, disc=True)
-    for name, kw in SW.items():
-        out[name] = E.sim.measure(c, mrc3_model.run(raws, disc=True, **kw), cc)
+    for name, kw in SW.items():   # calibrated on the clean signal through the same receiver (delay, gain)
+        out[name] = E.sim.measure(c, mrc3_model.run(raws, disc=True, **kw), mrc3_model.run(clean, disc=True, **kw))
     return args, {k: (v['picture'], v['sinad']) for k, v in out.items()}
 
 

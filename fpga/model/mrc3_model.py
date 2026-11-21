@@ -136,10 +136,8 @@ DISC_WL, DISC_WH = -312, 384
 
 
 @njit(cache=True)
-def disc50(phis, out, spike=False):
+def disc50(phis, out):
     n = len(phis)
-    c1 = 25
-    c2 = 25
     s = ((phis[0] + 32768) >> 6) & 1023
     for k in range(0, n - 3, 2):
         t = ((phis[k] + 32768) >> 6) & 1023
@@ -147,19 +145,12 @@ def disc50(phis, out, spike=False):
         step = d if (d >= DISC_WL and d <= DISC_WH) else (d * 179) >> 8
         c = (105 * step + 32896) // 1280
         c = 0 if c < 0 else (63 if c > 63 else c)
-        o = c
-        if spike:
-            lo = min(c, c1)
-            hi = max(c, c1)
-            o = lo if c2 < lo else (hi if c2 > hi else c2)
-        c2 = c1
-        c1 = c
-        out[k + 2] = o
-        out[k + 3] = o
+        out[k + 2] = c
+        out[k + 3] = c
         s = (s + step) & 1023
 
 
-def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None, wbranch=False, afold=False, spike=False):
+def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None, wbranch=False, afold=False):
     """raws: list of 1..3 arrays of 6-bit samples {I2..I0, Q2..Q0}, C5 A first.
     return_phi: also return the combined angle per sample (2^-16 turn)."""
     raw = np.zeros((3, len(raws[0])), np.int64)
@@ -172,7 +163,7 @@ def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=Non
     _run(raw, en, v, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold)
     if disc:
         out = np.zeros(raw.shape[1], np.int64)
-        disc50(phis, out, spike)
+        disc50(phis, out)
     return (out.astype(np.uint8), phis) if return_phi else out.astype(np.uint8)
 
 

@@ -110,28 +110,31 @@ module tri_top (
         mk_src <= ev_a ? 2'd0 : ev_b ? 2'd1 : 2'd2;
         mk_pl  <= ev_a ? pl_a : ev_b ? pl_b : pl_c;
     end
-    // ---- Signal page switches (menu, LCD clock) into the IQ clock: {noise filter, wbranch, spike, adapt, anti-fold, keep lock} ----
+    // ---- Signal page switches (menu, LCD clock) into the IQ clock: {noise filter, wbranch, -, adapt, anti-fold, keep lock} ----
     wire [5:0] sg_l; reg [5:0] sg_m, sg_a;
+    assign sg_l[3] = 1'b0;
     always @(posedge a_clk) begin sg_m <= sg_l; sg_a <= sg_m; end
     // ---- combine and demodulate ----
-    wire       dvr_l;
+    wire       dvr_l, lg_l;
     wire [1:0] mode_l;                     // 0 Single (A), 1 Diversity (A+B), 2 Triversity (menu)
     reg  [3:0] mode_s;
     always @(posedge a_clk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
+    wire [23:0] lg_w; wire [1:0] lg_f; wire [1:0] ans_lev;
 `ifdef TRI_NO_C
     mrc3_core #(.HAS_C(0)) u_core (
 `else
     mrc3_core u_core (
 `endif
                       .clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
-                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .wbranch(sg_a[4]), .afold(sg_a[1]), .spike(sg_a[3]), .code(code));
+                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .wbranch(sg_a[4]), .afold(sg_a[1]), .code(code),
+                      .wts(lg_w), .folded(lg_f));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
-    vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
+    vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
@@ -139,7 +142,26 @@ module tri_top (
 `ifdef TRI_HQDVR
     // HQ DVR: every field as a 720-wide colour JPEG (dvr_hq.v, HQDVR=1 fpga/build.sh)
     localparam HAS_DVR = 1;
-    dvr_hq u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
+    // link log (menu Record: On / Log): the newest marker values per C5 (C/N,
+    // flags bits 0..3, signal; fpga_link.h types 3, 4, 6) and the receiver's state
+    reg [23:0] mkv [0:2];                  // per C5 {signal 8, flags 4, C/N 12}
+    integer mi; initial for (mi = 0; mi < 3; mi = mi + 1) mkv[mi] = 24'd0;
+    wire [2:0]  mk_ev = {ev_c, ev_b, ev_a};
+    wire [15:0] mk_p [0:2]; assign mk_p[0] = pl_a; assign mk_p[1] = pl_b; assign mk_p[2] = pl_c;
+    always @(posedge a_clk) for (mi = 0; mi < 3; mi = mi + 1) if (mk_ev[mi]) case (mk_p[mi][15:12])
+        4'd3: mkv[mi][11:0]  <= mk_p[mi][11:0];
+        4'd4: mkv[mi][15:12] <= mk_p[mi][3:0];
+        4'd6: mkv[mi][23:16] <= mk_p[mi][7:0];
+        default: ;
+    endcase
+    reg [5:0] ch_m, ch_a; always @(posedge a_clk) begin ch_m <= channel; ch_a <= ch_m; end
+    wire [135:0] lg_data = {mkv[2], mkv[1], mkv[0],                            // bytes 8 .. 16
+                            mode_s[3:2], sg_a,                                 // 7: mode, Signal switches
+                            ans_lev, ch_a,                                     // 6: noise level, channel
+                            sync_q,                                            // 4, 5
+                            lg_f, c_alive, b_alive, en_c, en_b, locked, pal,  // 3: flags
+                            lg_w};                                             // 0 .. 2: weights A, B, C
+    dvr_hq u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .lg(lg_l), .lg_data(lg_data), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
                   .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
                   .sd_miso(sd_miso), .state(dvr_state), .qi(), .fields(), .dropped(),
                   .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
@@ -173,8 +195,8 @@ module tri_top (
                  .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-                 .dvr(dvr_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
-                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .wbranch(sg_l[4]), .afold(sg_l[1]), .spike(sg_l[3]), .nfilt(sg_l[5]),
+                 .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .wbranch(sg_l[4]), .afold(sg_l[1]), .nfilt(sg_l[5]),
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));

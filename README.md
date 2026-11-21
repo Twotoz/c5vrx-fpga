@@ -105,7 +105,13 @@ receiver's own.
   or Triversity (A + B + C, IQ fusion). C5s left out keep running and show
   Idle; the live view greys them out.
 - **Scan**: every channel 0.5 s, picks the one with the best sync.
-- **Record**: DVR on / off; No card, Ready, the recording time, Card err.
+- **Record**: Off -> On (video + link log) -> Log (link log only) -> Off;
+  No card, Ready, the recording time, Log, Card err. The link log: every
+  sixth field (0.1 s) a record with per C5 the C/N, signal and AFC / video
+  flags, the combining weights, which branch Weak branch or Anti-fold left
+  out, sync lock and quality, channel, mode, the Signal switches, the Noise
+  filter's level and the DVR's field number (so it lines up with the video).
+  `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
 - **Signal** (each On / Off, all Off after power-up):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
@@ -120,11 +126,16 @@ receiver's own.
     (low-passed over ~128 samples). When it turns clearly negative (the branch
     adds out of phase and would cancel picture) that branch is left out,
     whatever its weight, and comes back once it is in phase again. With
-    healthy signals it never trips (bit-identical to the reference model down
-    to -2 dB C/N).
+    healthy signals it never trips (identical to off on full frames down to
+    -4 dB C/N, with fading).
   - *Spike filter*: the median of the last three demodulator codes (50 ns
     apart) removes single-sample white / black dots; edges and detail of two
     samples and wider pass unchanged.
+  - *Noise filter*: adaptive noise suppression on the luma. The noise on the
+    back porch (64 lines) picks a level 0..3; the luma then runs through a
+    one-pole low-pass of that strength (`y += (x - y) >> level`). Level 0
+    above ~13 dB C/N, so a good picture keeps all its detail; +2.4 to +3.9
+    dB luma SINAD between 3 and 9 dB C/N (`sim/perf_vrx.py`).
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
   brightness, calibrate (filter and DC on every C5).
 - **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
@@ -313,6 +324,7 @@ fpga/build.sh                                    # the bitstream (or triversity.
 python tools/make_dvr_file.py /media/TF          # once, on a freshly formatted FAT32 card
 python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4          # 720x480 at 29.97 fps (PAL 720x576, 25)
 python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4 --bob    # every field, 59.94 / 50 fps
+python tools/trilog.py /media/TF/TRIDVR.BIN log.csv --plot log.png # the link log (Record On or Log)
 ```
 
 A recorded field as `hqdvr_to_mp4.py --bob` shows it: the JPEG exactly as the
@@ -339,7 +351,8 @@ Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`
 `run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`; `--hq` the HQ build's screen),
 `run_align_tb.py` (the shared B/C alignment against two separate engines on FM-modulated video),
 `run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
-`run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`),
+`run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`; `--log` with the link log, read back with `tools/trilog.py`),
+`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance per Signal switch and scenario),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).

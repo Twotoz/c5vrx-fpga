@@ -88,8 +88,9 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     input  wire       va, vb, vc,   // per sample, with raw_*
     input  wire       wbranch,         // weak branch: B / C under 1/8 of the strongest weight are left out (A, the phase reference, never)
     input  wire       afold,        // anti-fold: B / C out of phase with A after rotation are left out (fold guard)
-    input  wire       spike,        // spike filter: median of the last three codes
-    output reg  [5:0] code
+    output reg  [5:0] code,
+    output wire [23:0] wts,         // logger: the weights in use {C, B, A} (0: left out by Weak branch)
+    output wire [1:0]  folded       // logger: {C, B} left out by Anti-fold
 );
     reg [7:0] g_rom   [0:255];
     reg [7:0] isq_rom [0:511];
@@ -270,6 +271,7 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
         end
     end
     wire       out_b = afold && fold_b < -10'sd16, out_c = afold && fold_c < -10'sd16;
+    assign wts = {w_use[2], w_use[1], w_use[0]}; assign folded = {out_c, out_b};
     wire [7:0] wb_eff = en_b && v3[1] && !out_b ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] && !out_c ? w_use[2] : 8'd0;
     wire [17:0] a_i, a_q;
     wire [35:0] b_i, b_q, c_i, c_q;
@@ -313,22 +315,17 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg [15:0] disc [0:1023];
 `include "disc_rom.vh"
     reg [15:0] dq; reg dv;
-    reg [5:0]  c1, c2;                               // the two codes before (spike filter)
-    function [5:0] med3; input [5:0] a, b, c; reg [5:0] lo, hi;
-        begin lo = a < b ? a : b; hi = a < b ? b : a; med3 = c < lo ? lo : c > hi ? hi : c; end
-    endfunction
     always @(posedge clk) begin
         dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
         dv <= 1'b0;
-        if (rst) begin st_ok <= 1'b0; code <= 6'd25; c1 <= 6'd25; c2 <= 6'd25; end
+        if (rst) begin st_ok <= 1'b0; code <= 6'd25; end
         else begin
             if (ev_phi) begin
                 if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; code <= 6'd25; end
                 else dv <= 1'b1;
             end
             if (dv) begin
-                st_s <= st_s + dq[15:6]; c1 <= dq[5:0]; c2 <= c1;
-                code <= spike ? med3(dq[5:0], c1, c2) : dq[5:0];
+                st_s <= st_s + dq[15:6]; code <= dq[5:0];
             end
         end
     end

@@ -5,13 +5,15 @@
 // image goes to sd_out.hex at the end.
 `timescale 1ns/1ps
 module tb_dvr_hq #(parameter SECTORS = 4096, parameter BUSY = 40);
-    reg clk = 0, rst = 1, rec = 0;
+    reg clk = 0, rst = 1, rec = 0, lg = 0;
+    reg [135:0] lgd = 136'd0;
     always #12.5 clk = ~clk;
     reg [23:0] pic [0:172799];
     reg d_valid = 0, d_fstart = 0, d_parity = 0; reg [9:0] d_x = 0; reg [8:0] d_line = 0; reg [7:0] d_y = 0, d_cb = 0, d_cr = 0;
     wire sdclk, sdcke, sdcs, sdras, sdcas, sdwe; wire [10:0] sda; wire [1:0] sdba; wire [3:0] sddqm; wire [31:0] sddq;
     wire cs, sck, mosi, miso; wire [1:0] state; wire [2:0] qi; wire [15:0] fields, dropped;
-    dvr_hq u (.clk(clk), .rst(rst), .rec(rec), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr),
+    integer logm = 0;
+    dvr_hq #(.LOG_FIELDS(3'd1)) u (.clk(clk), .rst(rst), .rec(rec), .lg(lg), .lg_data(lgd), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr),
               .d_fstart(d_fstart), .d_parity(d_parity), .pal(1'b0), .sd_cs(cs), .sd_sck(sck), .sd_mosi(mosi), .sd_miso(miso),
               .state(state), .qi(qi), .fields(fields), .dropped(dropped),
               .O_sdram_clk(sdclk), .O_sdram_cke(sdcke), .O_sdram_cs_n(sdcs), .O_sdram_ras_n(sdras), .O_sdram_cas_n(sdcas),
@@ -26,7 +28,9 @@ module tb_dvr_hq #(parameter SECTORS = 4096, parameter BUSY = 40);
         #200 rst = 0;
         wait (state == 2'd1);
         $display("card ready at %0t", $time);
-        rec = 1;
+        if ($value$plusargs("log=%d", logm)) ;
+        for (x = 0; x < 17; x = x + 1) lgd[8 * x +: 8] = 8'h40 + x;
+        rec = 1; lg = logm != 0;
         repeat (50) @(posedge clk);
         for (fld = 0; fld < nf; fld = fld + 1) begin
             @(posedge clk) begin d_fstart <= 1; d_parity <= fld[0]; end
@@ -46,6 +50,10 @@ module tb_dvr_hq #(parameter SECTORS = 4096, parameter BUSY = 40);
             $display("field %0d sent: fields %0d dropped %0d qi %0d ring %0d", fld, fields, dropped, qi, u.used);
         end
         rec = 0;
+        if (lg) begin   // log only: four more fields
+            repeat (4) begin @(posedge clk) d_fstart <= 1; @(posedge clk) d_fstart <= 0; repeat (66000) @(posedge clk); end
+            lg = 0;
+        end
         wait (state == 2'd1);
         $display("stopped: fields %0d dropped %0d qi %0d blocks %0d sdram_errors %0d", fields, dropped, qi, u_sd.blocks, u_ram.errors);
         $writememh("sd_out.hex", u_sd.mem);

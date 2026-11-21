@@ -8,7 +8,10 @@ tools/hqdvr_to_mp4.py must find the same records in the file. --docs saves
 the first recorded field (the RTL's JPEG) as the tool's --bob frame (line
 doubled to 720 x 480) in docs/hqdvr_frame.png.
 
-    python fpga/sim/run_dvr_hq_tb.py [fields] [card busy bytes per block] [--docs]
+With --log the link log is on too (and four fields log only after the video):
+tools/trilog.py must find every record, numbered without a gap, as sent.
+
+    python fpga/sim/run_dvr_hq_tb.py [fields] [card busy bytes per block] [--docs] [--log]
 """
 import io, struct, subprocess, sys, tempfile
 from pathlib import Path
@@ -20,6 +23,7 @@ import rtl as rtl_  # noqa: E402
 import jpeg_model as J  # noqa: E402
 sys.path.insert(0, str(HERE.parent.parent / 'tools'))
 import hqdvr_to_mp4 as T  # noqa: E402
+import trilog  # noqa: E402
 
 SECTORS, PART, RSVD, FATSZ, SPC, FILE_SECT = 4096, 64, 32, 8, 8, 1600
 
@@ -75,7 +79,7 @@ def main():
         subprocess.run(['iverilog', '-g2012', f'-Ptb_dvr_hq.BUSY={busy}', *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_dvr_hq.v'), str(HERE / 'sd_model.v'), *rtl_.src('dvr_hq.v', 'jpeg_enc.v', 'sd_ring.v', 'sdram.v', 'mul_dsp.v', 'addsub.v'), str(HERE / 'sdram_model.v')],
                        check=True)
-        rr = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={nf}'], cwd=t, capture_output=True, text=True)  # noqa
+        rr = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={nf}', f'+log={int("--log" in sys.argv)}'], cwd=t, capture_output=True, text=True)  # noqa
         print(rr.stdout[-1500:])
         words = [x for ln in (t / 'sd_out.hex').read_text().splitlines() for x in ln.split('//')[0].split()]
         out = bytes(int(x, 16) for x in words)
@@ -97,6 +101,17 @@ def main():
     if '--docs' in sys.argv and recs:
         Image.fromarray(np.repeat(T.fields(tool)[0][0], 2, 0)).save(HERE.parent.parent / 'docs' / 'hqdvr_frame.png')
     ok = ok and good == len(recs) and len(recs) >= 2 and tool_ok
+    if '--log' in sys.argv:      # link log: a record every field (LOG_FIELDS 1 in the testbench) through video and four fields log only
+        lrows = trilog.records(out[file_off:end])
+        raw = out[file_off:end]
+        bodies = {raw[i + 8:i + 25] for i in range(len(raw)) if raw[i:i + 4] == b'TRIL'}
+        nums = [r['log'] for r in lrows]
+        log_ok = (len(lrows) >= 6 and nums == list(range(nums[0], nums[0] + len(nums)))
+                  and bodies == {bytes(0x40 + k for k in range(17))} and lrows[0]['A_weight'] == 0x40
+                  and max(r['video_field'] for r in lrows) == len(recs))
+        print(f'link log: {len(lrows)} records, numbers {nums[0]}..{nums[-1]}, video fields up to '
+              f'{max(r["video_field"] for r in lrows)}, payload as sent: {log_ok}')
+        ok = ok and log_ok
     print('PASS' if ok else 'FAIL', f'{good}/{len(recs)} records identical, nothing outside TRIDVR.BIN: {out[:file_off] == bytes(img[:file_off])}')
     sys.exit(0 if ok else 1)
 

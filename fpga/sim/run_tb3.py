@@ -68,10 +68,10 @@ def main():
         ok = True
         cases = [(5, 3, 300, (1, 1, 1)), (6, 12, 0, (1, 1, 1)), (7, -2, 0, (1, 1, 1)),
                  (8, 6, 300, (1, 1, 0)), (9, 6, 300, (1, 0, 1)), (10, 4, 0, (1, 0, 0)), (11, None, 0, (1, 1, 1))]
-        # the Signal page switches on ({spike, anti-fold, weak branch}): a dead C, random words, single switches
-        cases = [c + (0,) for c in cases] + [(5, 3, 300, (1, 1, 1), 7), (12, 'deadC', 0, (1, 1, 1), 7),
-                                             (11, None, 0, (1, 1, 1), 7), (13, -2, 300, (1, 1, 1), 1),
-                                             (14, 'deadC', 0, (1, 1, 1), 2), (15, 4, 0, (1, 1, 1), 4)]
+        # the Signal page switches on ({anti-fold, weak branch}): a dead C, random words, single switches
+        cases = [c + (0,) for c in cases] + [(5, 3, 300, (1, 1, 1), 3), (12, 'deadC', 0, (1, 1, 1), 3),
+                                             (11, None, 0, (1, 1, 1), 3), (13, -2, 300, (1, 1, 1), 1),
+                                             (14, 'deadC', 0, (1, 1, 1), 2)]
         for seed, cn, fd, en, flags in cases:
             n = 6000
             if cn == 'deadC':   # C5 C without signal: random words on C only
@@ -84,7 +84,7 @@ def main():
             raws, valid = markers(raws, seed, n, 0 if seed == 6 else 6)
             hw = run(raws, en, work, valid, flags)
             ref = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid,
-                                 wbranch=bool(flags & 1), afold=bool(flags & 2), spike=bool(flags & 4)).astype(np.int64)
+                                 wbranch=bool(flags & 1), afold=bool(flags & 2)).astype(np.int64)
             best = None
             for lat in range(5, 40):
                 m = np.count_nonzero(hw[lat + WARMUP:lat + len(ref)] != ref[WARMUP:len(hw) - lat])
