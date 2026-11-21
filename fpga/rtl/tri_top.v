@@ -11,12 +11,9 @@
 // Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
 `default_nettype none
-// TRI_HQDVR: the HQ DVR builds; TRI_NO_C: without C5 C (HQ DVR Diversity build)
-`ifdef TRI_HQDVR
-`ifndef TRI_TRIDVR
-`define TRI_NO_C
-`endif
-`endif
+// Build options (fpga/build.sh sets them): TRI_HQDVR the HQ DVR, TRI_NO_C without
+// C5 C, TRI_LIVEUI the live-view OSD (hq_ui.v) instead of the menu, TRI_SEGFONT
+// 7-segment glyphs from logic, TRI_HMAPCALC the aspect column map computed
 module tri_top (
     input  wire       xtal,          // 27 MHz
     input  wire       s1_n,          // reset
@@ -138,7 +135,7 @@ module tri_top (
     // ---- menu and link ----
     wire [1:0] hmode;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
-`ifdef TRI_HQDVR
+`ifdef TRI_LIVEUI
     hq_ui u_menu (
 `else
     menu #(.HAS_DVR(HAS_DVR)) u_menu (

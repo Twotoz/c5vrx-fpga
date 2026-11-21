@@ -60,7 +60,7 @@ def main():
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
-        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR'] if hq else []), *(['-DTRI_TRIDVR'] if tri else []), *rtl_.inc(), '-o', str(t / 'tb'),
+        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR', '-DTRI_LIVEUI', '-DTRI_HMAPCALC'] if hq else []), *(['-DTRI_TRIDVR', '-DTRI_SEGFONT'] if tri else []), *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_osd.v'), *rtl_.src('hq_ui.v' if hq else 'menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
         print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-2000:])

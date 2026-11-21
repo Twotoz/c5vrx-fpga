@@ -43,7 +43,7 @@ module tb_osd;
     initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;
     always @(posedge clk) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire dvr; wire [1:0] mode;
-`ifdef TRI_HQDVR
+`ifdef TRI_LIVEUI
     hq_ui u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
 `else
     menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
@@ -71,7 +71,7 @@ module tb_osd;
         de_p = de; vs_p = vs;
     end
     // ---- scenario (run_osd_tb.py HQ_SHOTS has the expected states) ----
-`ifdef TRI_HQDVR
+`ifdef TRI_LIVEUI
     initial begin
         $readmemh("video.hex", pic);
         #100 rst = 0;

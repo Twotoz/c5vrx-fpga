@@ -91,7 +91,7 @@ module lcd_out (
     // grid: at hc = HBP + X0 the counters read cell 0, pixel 0)
     // ---- pipeline: addresses end of n, RAM data in n+2, glyph row in n+3,
     //      blend sums end of n+3, pixel registers end of n+4 (shown in n+5) ----
-`ifdef TRI_TRIDVR
+`ifdef TRI_SEGFONT
     // Triversity DVR build: 7-segment glyphs from logic instead of the font ROM
     // (gen_osd.seg_glyphs() is the reference; coverage 0 / 1 / 3)
 `include "osd_seg.vh"
@@ -109,7 +109,7 @@ module lcd_out (
     reg [9:0]  sr, sg, sb;
     // column map, read one pixel ahead: hq is the map of x
     wire [9:0] xn = x + 10'd1;
-`ifdef TRI_HQDVR
+`ifdef TRI_HMAPCALC
     // HQ DVR build: full width or 4:3 only, computed (the map's BSRAM goes to the DVR)
     wire [9:0]  xb = xn - 10'd80;
     wire [11:0] xb5 = {xb, 2'b0} + {2'b0, xb};
@@ -134,10 +134,7 @@ module lcd_out (
         p = {s, 7'd0} + {2'd0, s, 5'd0} + {4'd0, s, 3'd0} + {6'd0, s, 1'b0} + {8'd0, s};   // s * 171
         mul171s9 = {1'b0, p[17:9]};
     end endfunction
-    wire [35:0] m_r, m_g, m_b;
-    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mr (.a({8'd0, sr}), .b(18'd171), .y(m_r));
-    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mg (.a({8'd0, sg}), .b(18'd171), .y(m_g));
-    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_mb (.a({8'd0, sb}), .b(18'd171), .y(m_b));
+    // x 171 >> 9 as shift-adds on carry chains (the DSP blocks go to the receive path)
     always @(posedge clk) begin
         hq <= hcalc;
         lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
@@ -151,7 +148,7 @@ module lcd_out (
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
         cell3 <= osd_cell; v3 <= (locked && hv2) ? lb_data : 16'd0;
-`ifdef TRI_TRIDVR
+`ifdef TRI_SEGFONT
         glyph <= seg_row(osd_cell[6:0], ry2);
 `else
         glyph <= font[{osd_cell[6:0], ry2}];
@@ -176,7 +173,7 @@ module lcd_out (
         // n+4: / 3 (x 171 >> 9 on DSP blocks), out
         begin : px
             reg [9:0] r8, g8, b8;
-            r8 = m_r[18:9]; g8 = m_g[18:9]; b8 = m_b[18:9];
+            r8 = mul171s9(sr); g8 = mul171s9(sg); b8 = mul171s9(sb);
             if (!de_d[3]) begin lcd_r <= 5'd0; lcd_g <= 6'd0; lcd_b <= 5'd0; end
             else begin lcd_r <= r8[7:3]; lcd_g <= g8[7:2]; lcd_b <= b8[7:3]; end
         end
