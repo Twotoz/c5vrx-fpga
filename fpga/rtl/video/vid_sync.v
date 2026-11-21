@@ -1,5 +1,5 @@
 // Triversity: video timing and line capture from the demodulated codes
-// (40 MHz domain of C5 A). Monochrome first version.
+// (40 MHz domain of C5 A), in colour (chroma.v).
 //  - luma: moving sum of 8 codes (200 ns; also takes most of the chroma)
 //  - sync slicer halfway between the measured sync tip and back porch
 //  - H flywheel: a line counter that a qualified sync edge (low >= 2 us)
@@ -10,8 +10,12 @@
 //    count before a PAL field ends)
 //  - auto levels: gray = (y - porch) * 102 / (porch - tip), white at
 //    +100 IRE for a sync of -40 IRE, whatever the VTX deviation
+//  - colour: chroma.v gives luma, U and V; each pixel is
+//    Y = (luma - porch) x k8 / 256 and the shift-add YUV -> RGB matrix,
+//    U and V averaged with the line above (stored for every line): PAL's
+//    delay line, and on NTSC half the chroma noise
 //  - each active line (NTSC 240, PAL 288 with one in six dropped: 240) as
-//    800 gray pixels into line buffer half orow[0]; at the next line start
+//    800 RGB565 pixels into line buffer half orow[0] (wr_gray: luma, for the DVR); at the next line start
 //    the LCD domain gets a toggle with the line's row (lcd_out.v shows it twice)
 //  - aspect signalling for the menu's Aspect Auto: CGMS-A (IEC 61880, NTSC
 //    lines 20/283: start bits 1 0, 14 data bits with bit 1 = 16:9, CRC-6
@@ -27,7 +31,8 @@ module vid_sync (
     input  wire [5:0]  code,          // 40 MS/s (20 MS/s unique) demodulator codes
     output reg         wr_en,
     output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
-    output reg  [7:0]  wr_data,
+    output reg  [15:0] wr_data,       // RGB565
+    output reg  [7:0]  wr_gray,       // luma 0..255
     output reg         line_tog,      // toggles at each line start
     output reg  [8:0]  line_info,     // {show, orow[7:0]} of the line just written; stable after line_tog
     output reg         field_tog,
@@ -87,12 +92,33 @@ module vid_sync (
 
     wire signed [12:0] e = (hc_cross > (HT >> 1)) ? $signed({1'b0, hc_cross}) - $signed({1'b0, HT}) : $signed({1'b0, hc_cross});
     wire inwin = e >= -13'sd40 && e <= 13'sd40;
-    wire signed [9:0] yd = $signed({1'b0, y}) - $signed({1'b0, porch});
-    wire signed [26:0] gm = yd * $signed({1'b0, k8});
-    wire [7:0] g8 = gm[26] ? 8'd0 : (|gm[25:16]) ? 8'd255 : gm[15:8];
+    // ---- colour (chroma.v) and the pixel stage ----
+    wire [9:0] cy8u; wire signed [9:0] cug, cvg;
+    chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg));
+    reg        p_tick, p_show, p_row0;
+    reg  [9:0] p_px, p_y;
+    reg  signed [9:0] p_u, p_v;
+    reg  [19:0] uvp [0:1023];                // U, V of the line above
+    integer ui; initial for (ui = 0; ui < 1024; ui = ui + 1) uvp[ui] = 20'd0;
+    reg  [19:0] uvq;
+    wire signed [10:0] yd = $signed({1'b0, p_y}) - $signed({2'b0, porch});
+    wire signed [27:0] gm = yd * $signed({1'b0, k8});
+    wire signed [19:0] gy = gm >>> 8;
+    wire signed [10:0] yg = gy > 20'sd511 ? 11'sd511 : gy < -20'sd256 ? -11'sd256 : gy[10:0];
+    wire signed [9:0]  uq = uvq[19:10], vq = uvq[9:0];
+    // with the line above: PAL's delay line, and half the chroma noise on NTSC too
+    // ($signed: a concatenation is unsigned and >>> would shift in zeros)
+    wire signed [10:0] usum = $signed({p_u[9], p_u}) + $signed({uq[9], uq});
+    wire signed [10:0] vsum = $signed({p_v[9], p_v}) + $signed({vq[9], vq});
+    wire signed [10:0] uo = usum >>> 1;
+    wire signed [10:0] vo = vsum >>> 1;
+    wire signed [12:0] rr = yg + vo + (vo >>> 3) + (vo >>> 6);
+    wire signed [12:0] gg = yg - ((uo >>> 2) + (uo >>> 3) + (uo >>> 6)) - ((vo >>> 1) + (vo >>> 4) + (vo >>> 6));
+    wire signed [12:0] bb = yg + (uo <<< 1) + (uo >>> 5);
+    function [7:0] cl8; input signed [12:0] v; cl8 = v < 0 ? 8'd0 : v > 13'sd255 ? 8'd255 : v[7:0]; endfunction
 
     always @(posedge clk) begin
-        wr_en <= 1'b0;
+        p_tick <= 1'b0;
         if (rst) begin
             hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
@@ -164,7 +190,8 @@ module vid_sync (
             if (act && hc >= HSTART && px < 10'd800) begin
                 if (dda + 12'd800 >= ACT) begin
                     dda <= dda + 12'd800 - ACT;
-                    wr_en <= show_cur; wr_addr <= {orow_cur[0], px}; wr_data <= g8;
+                    p_tick <= 1'b1; p_show <= show_cur; p_row0 <= orow_cur[0]; p_px <= px;
+                    p_y <= cy8u; p_u <= cug; p_v <= cvg;
                     px <= px + 10'd1;
                 end else dda <= dda + 12'd800;
             end
@@ -186,6 +213,18 @@ module vid_sync (
             // ---- sync quality: in-window edges per 100 ms ----
             if (qtim == 23'd3999999) begin qtim <= 23'd0; sync_q <= qcnt; qcnt <= 16'd0; end
             else qtim <= qtim + 23'd1;
+        end
+    end
+    // pixel stage, one clock after the tick: PAL average, matrix, line buffer
+    wire [7:0] r8 = cl8(rr), g8 = cl8(gg), b8 = cl8(bb), y8 = cl8({{2{yg[10]}}, yg});
+    always @(posedge clk) begin
+        uvq <= uvp[px];                // at the tick px is the tick's pixel: uvq holds its line-above U, V next clock
+        wr_en <= p_tick && p_show;
+        if (p_tick) begin
+            uvp[p_px] <= {p_u, p_v};
+            wr_addr <= {p_row0, p_px};
+            wr_data <= {r8[7:3], g8[7:2], b8[7:3]};
+            wr_gray <= y8;
         end
     end
     // ---- aspect signalling ----------------------------------------------------------

@@ -7,7 +7,8 @@
 // OSD: 66 x 20 cells of 12 x 24 pixels from 4 px in (fpga/gen/gen_osd.py);
 // each cell {bg, fg, glyph} from the cell RAM, glyphs with 2-bit coverage:
 //   pixel = (bg * (3 - a) + fg * a) / 3     (a = coverage 0..3, x 171 >> 9)
-// bg: video, panel (video / 4 + a blue-grey), accent, dark; fg: the palette or
+// bg: video (RGB565 widened to 8 bits a channel), panel (video / 4 + a
+// blue-grey), accent, dark; fg: the palette or
 // the panel. gen_osd.render() is the reference, pixel for pixel.
 // Aspect: hmode picks the column map (hmap.vh, gen_osd.hmaps()): full width,
 // 4:3 in the middle 640 columns (black bars), or Stretch.
@@ -22,7 +23,7 @@ module lcd_out (
     input  wire        pal_a,
     input  wire [1:0]  hmode,          // 0 full width, 1 4:3, 2 Stretch (menu, this domain)
     output reg  [10:0] lb_addr,        // line buffer read
-    input  wire [7:0]  lb_data,
+    input  wire [15:0] lb_data,        // RGB565
     output reg  [10:0] osd_addr,       // cell RAM read
     input  wire [11:0] osd_cell,
     output wire        lcd_de,
@@ -96,7 +97,7 @@ module lcd_out (
     reg [3:0]  sx1, sx2, sx3;
     reg        g1, g2, g3;
     reg [4:0]  ry1, ry2;
-    reg [7:0]  v3;
+    reg [15:0] v3;
     reg [11:0] cell3;
     reg [23:0] glyph;
     reg [9:0]  sr, sg, sb;
@@ -131,16 +132,16 @@ module lcd_out (
         g1 <= ing; g2 <= g1; g3 <= g2;
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
-        cell3 <= osd_cell; v3 <= (locked && hv2) ? lb_data : 8'd0;
+        cell3 <= osd_cell; v3 <= (locked && hv2) ? lb_data : 16'd0;
         glyph <= font[{osd_cell[6:0], ry2}];
         // n+3: blend sums
         begin : blend
-            reg [1:0] a; reg [7:0] v; reg [23:0] bgc, fgc, pnl;
-            v = v3;
+            reg [1:0] a; reg [7:0] vr, vg, vb; reg [23:0] bgc, fgc, pnl;
+            vr = {v3[15:11], v3[15:13]}; vg = {v3[10:5], v3[10:9]}; vb = {v3[4:0], v3[4:2]};
             a = g3 ? glyph[{sx3, 1'b0} +: 2] : 2'd0;
-            pnl = {{2'b0, v[7:2]} + 8'd14, {2'b0, v[7:2]} + 8'd16, {2'b0, v[7:2]} + 8'd22};
+            pnl = {{2'b0, vr[7:2]} + 8'd14, {2'b0, vg[7:2]} + 8'd16, {2'b0, vb[7:2]} + 8'd22};
             case (g3 ? cell3[11:10] : 2'd0)
-                2'd0: bgc = {v, v, v};
+                2'd0: bgc = {vr, vg, vb};
                 2'd1: bgc = pnl;
                 2'd2: bgc = pal8(3'd2);
                 default: bgc = pal8(3'd6);

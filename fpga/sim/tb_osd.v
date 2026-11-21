@@ -1,5 +1,5 @@
 // Triversity: OSD testbench. menu.v + cell RAM + lcd_out.v with a synthetic
-// genlocked video (picture from video.hex, 240 rows of 800 pixels, every row
+// genlocked video (RGB565 picture from video.hex, 240 rows of 800 pixels, every row
 // shown twice) and C5 markers / buttons as the C5s send them. At each shot
 // one whole LCD frame goes to shot_<n>.hex (RGB565 per pixel, 800 x 480);
 // run_osd_tb.py compares it with fpga/gen/gen_osd.py's render().
@@ -9,8 +9,8 @@ module tb_osd;
     reg clk = 0, rst = 1;
     always #14.815 clk = ~clk;                 // 33.75 MHz
     // ---- video source (as vid_sync + linebuf would deliver it) ----
-    reg [7:0] pic [0:191999];
-    reg [7:0] lb [0:2047];
+    reg [15:0] pic [0:191999];
+    reg [15:0] lb [0:2047];
     reg       line_tog = 0, field_tog = 0, locked = 1, pal = 0;
     reg [8:0] line_info = 0;
     reg [1:0] dvr_state = 2'd1;
@@ -28,7 +28,7 @@ module tb_osd;
         end else vcnt <= vcnt + 1;
     end
     // orow parity = (vline - 18)[0] = vline[0]: the half lcd_out reads
-    wire [10:0] lb_raddr; reg [7:0] lb_rdata;
+    wire [10:0] lb_raddr; reg [15:0] lb_rdata;
     always @(posedge clk) lb_rdata <= lb[lb_raddr];
     // ---- markers ----
     reg mk_tog = 0; reg [1:0] mk_src = 2'd3; reg [15:0] mk_pl = 0;

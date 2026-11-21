@@ -2,7 +2,7 @@
 // Three XIAO ESP32-C5 with c5/ send the top three bits of their I and Q
 // plus their 40 MHz PARLIO RX clock (D0..D6, README wiring table); the FPGA
 // aligns them, combines them before demodulation (mrc3_core.v), demodulates,
-// and shows the picture on the 800x480 RGB LCD with an OSD menu.
+// and shows the picture in colour on the 800x480 RGB LCD with an OSD menu.
 // Clock domains: the IQ/video path on C5 A's clock (clk_a, 40 MHz), the LCD,
 // menu and link on a PLL clock from the 27 MHz crystal (33.75 MHz), so the
 // menu and screen keep running without C5 A.
@@ -83,15 +83,15 @@ module tri_top (
                       .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .code(code));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
-    wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
-    vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
+    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
+    vid_sync u_vs (.clk(a_clk), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
-    dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_data),
+    dvr u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .px_we(wr_en), .px_addr(wr_addr), .px_data(wr_gray),
                .field_tog(field_tog), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi), .sd_miso(sd_miso),
                .state(dvr_state), .frames(), .dropped());
-    wire [10:0] lb_raddr; wire [7:0] lb_rdata;
+    wire [10:0] lb_raddr; wire [15:0] lb_rdata;
     linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
     // ---- OSD cell RAM {bg, fg, glyph} (menu writes, lcd_out reads) ----
     reg  [11:0] osd [0:2047];

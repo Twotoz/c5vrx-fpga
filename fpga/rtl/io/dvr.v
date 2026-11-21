@@ -10,9 +10,11 @@
 //    starts only while the ring is nearly empty (a field is ~16 ms of
 //    2.9 MB/s, the card drains ~2 MB/s), else it is dropped whole.
 //  - the card: SPI init (CMD0, CMD8, ACMD41, CMD58; SDSC and SDHC/SDXC), then
-//    the FAT32 lookup of TRIDVR.BIN in the first cluster of the root directory
-//    (MBR or superfloppy). The FPGA follows no FAT chain: the file must be
-//    contiguous (fpga/tools/make_dvr_file.py on a freshly formatted card).
+//    a search of the first 64 MB, sector by sector, for TRIDVR.BIN's header
+//    sector ("TRIDVR-FILE-0001", the sector count after it), which
+//    tools/make_dvr_file.py writes (a few seconds after power-up; no FAT
+//    parsing, which cost ~1500 LUTs). The file must be contiguous: made on
+//    a freshly formatted card.
 //    Recording writes the file as a ring with CMD25 multi-block writes; the
 //    player finds frames by their header, so a stop or wrap can sit anywhere.
 //  - rec: record (the menu's DVR mode, other clock domain).
@@ -136,19 +138,19 @@ module dvr (
     reg [15:0] tries, acmd_n;
     reg        ccs;
     reg [9:0]  bi;
-    reg [31:0] lba, part_lba, data_lba, file_lba, file_sect, pos;
-    reg [15:0] rsvd; reg [7:0] spc, nfats; reg [31:0] fatsz, rootclus, fclus, fsize;
-    reg [1:0]  rd_what;              // 0 sector 0, 1 boot sector, 2 root directory
-    reg        nombr, grab, found;
-    reg [7:0]  rd_sect;
-    reg [87:0] name;
+    reg [31:0] lba, file_lba, file_sect, pos;
+    reg        mok;                  // the sector being read starts with the magic so far
     reg [23:0] tmo;
-    reg [2:0]  sh;                   // log2(sectors per cluster)
     reg [9:0]  j; reg [7:0] b;
-    function [47:0] mk; input [5:0] c; input [31:0] arg; input [7:0] crc; mk = {2'b01, c, arg, crc}; endfunction
-    function [2:0] lg; input [7:0] v;
-        lg = v[7] ? 3'd7 : v[6] ? 3'd6 : v[5] ? 3'd5 : v[4] ? 3'd4 : v[3] ? 3'd3 : v[2] ? 3'd2 : v[1] ? 3'd1 : 3'd0;
+    localparam [31:0] SCAN_MAX = 32'd131071;             // search the first 64 MB
+    function [7:0] magic; input [3:0] i;                 // "TRIDVR-FILE-0001"
+        case (i)
+            0: magic = "T"; 1: magic = "R"; 2: magic = "I"; 3: magic = "D"; 4: magic = "V"; 5: magic = "R"; 6: magic = "-";
+            7: magic = "F"; 8: magic = "I"; 9: magic = "L"; 10: magic = "E"; 11: magic = "-"; 12: magic = "0"; 13: magic = "0";
+            14: magic = "0"; default: magic = "1";
+        endcase
     endfunction
+    function [47:0] mk; input [5:0] c; input [31:0] arg; input [7:0] crc; mk = {2'b01, c, arg, crc}; endfunction
     wire [31:0] addr = ccs ? lba : {lba[22:0], 9'd0};
     always @(posedge clk) begin
         sp_go <= 1'b0;
@@ -167,7 +169,7 @@ module dvr (
                     3'd2: cmd <= mk(6'd55, 32'd0, 8'h65);
                     3'd3: cmd <= mk(6'd41, 32'h40000000, 8'h77);
                     3'd4: begin cmd <= mk(6'd58, 32'd0, 8'hfd); extra <= 3'd4; end
-                    default: begin slow <= 1'b0; lba <= 32'd0; rd_what <= 2'd0; st <= S_RD17; end
+                    default: begin slow <= 1'b0; lba <= 32'd0; st <= S_RD17; end
                 endcase
             end
             S_RD17: begin cmd <= mk(6'd17, addr, 8'hff); ci <= 4'd0; extra <= 3'd0; step <= 3'd5; st <= S_CMD; end
@@ -200,62 +202,24 @@ module dvr (
                 endcase
             end
             S_RDTOK: begin                                      // data token 0xFE
-                if (ci == 4'hf && sp_rx == 8'hfe) begin st <= S_RDDATA; bi <= 10'd0; grab <= 1'b0; end
+                if (ci == 4'hf && sp_rx == 8'hfe) begin st <= S_RDDATA; bi <= 10'd0; mok <= 1'b1; end
                 else if (tries == 16'd50000) st <= S_ERROR;
                 else begin tries <= tries + 16'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'hf; end
             end
-            S_RDDATA: begin                                     // 512 bytes + CRC, parsed on the fly
+            S_RDDATA: begin                                     // 512 bytes + CRC: is this the file's header?
                 if (bi != 10'd0 && bi <= 10'd512) begin
                     j = bi - 10'd1; b = sp_rx;
-                    case (rd_what)
-                        2'd0: begin
-                            if (j == 10'd450) nombr <= !(b == 8'h0b || b == 8'h0c);
-                            if (j >= 10'd454 && j < 10'd458) part_lba <= {b, part_lba[31:8]};
-                        end
-                        2'd1: begin
-                            if (j == 10'd13) spc <= b;
-                            if (j == 10'd14) rsvd[7:0] <= b;
-                            if (j == 10'd15) rsvd[15:8] <= b;
-                            if (j == 10'd16) nfats <= b;
-                            if (j >= 10'd36 && j < 10'd40) fatsz <= {b, fatsz[31:8]};
-                            if (j >= 10'd44 && j < 10'd48) rootclus <= {b, rootclus[31:8]};
-                        end
-                        default: begin
-                            if (j[4:0] < 5'd11) name <= {name[79:0], b};
-                            if (j[4:0] == 5'd11) grab <= !found && name == "TRIDVR  BIN";
-                            if (grab) begin
-                                if (j[4:0] == 5'd20) fclus[23:16] <= b;
-                                if (j[4:0] == 5'd21) fclus[31:24] <= {4'd0, b[3:0]};
-                                if (j[4:0] == 5'd26) fclus[7:0] <= b;
-                                if (j[4:0] == 5'd27) fclus[15:8] <= b;
-                                if (j[4:0] >= 5'd28) fsize <= {b, fsize[31:8]};
-                                if (j[4:0] == 5'd31) begin grab <= 1'b0; found <= 1'b1; end
-                            end
-                        end
-                    endcase
+                    if (j < 10'd16 && b != magic(j[3:0])) mok <= 1'b0;
+                    if (j >= 10'd16 && j < 10'd20) file_sect <= {b, file_sect[31:8]};
                 end
                 if (bi == 10'd515) begin                        // sector done (2 CRC bytes read)
-                    case (rd_what)
-                        2'd0: begin
-                            rd_what <= 2'd1; st <= S_RD17;
-                            if (nombr) begin part_lba <= 32'd0; lba <= 32'd0; end else lba <= part_lba;
-                        end
-                        2'd1: begin
-                            data_lba <= part_lba + rsvd + (nfats == 8'd2 ? {fatsz[30:0], 1'b0} : fatsz);
-                            sh <= lg(spc); rd_what <= 2'd2; rd_sect <= 8'd0; found <= 1'b0; st <= S_ROOT;
-                        end
-                        default: begin
-                            if (found) begin
-                                file_lba <= data_lba + ((fclus - 32'd2) << sh);
-                                file_sect <= fsize >> 9; pos <= 32'd0;
-                                st <= (fsize >> 9) >= 32'd95 ? S_READY : S_ERROR;
-                            end else if (rd_sect + 8'd1 == spc) st <= S_ERROR;
-                            else begin rd_sect <= rd_sect + 8'd1; lba <= lba + 32'd1; st <= S_RD17; end
-                        end
-                    endcase
+                    if (mok) begin
+                        file_lba <= lba + 32'd1; pos <= 32'd0;
+                        st <= file_sect >= 32'd95 ? S_READY : S_ERROR;
+                    end else if (lba == SCAN_MAX) st <= S_ERROR;
+                    else begin lba <= lba + 32'd1; st <= S_RD17; end
                 end else begin sp_tx <= 8'hff; sp_go <= 1'b1; bi <= bi + 10'd1; end
             end
-            S_ROOT: begin lba <= data_lba + ((rootclus - 32'd2) << sh); st <= S_RD17; end
             S_READY: begin
                 state <= 2'd1; rp <= wp;
                 if (rs[1]) begin state <= 2'd2; lba <= file_lba + pos; st <= S_WR25; end

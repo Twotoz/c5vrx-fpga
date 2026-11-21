@@ -33,6 +33,9 @@ jobs:
         run: python fpga/sim/run_link_tx_tb.py
       - name: DVR (fast and slow card)
         run: python fpga/sim/run_dvr_tb.py 12 && python fpga/sim/run_dvr_tb.py 12 400
+      - name: Colour decoder, bit-exact (NTSC and PAL)
+        run: python fpga/sim/run_chroma_tb.py NTSC && python fpga/sim/run_chroma_tb.py PAL
+        env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel
         run: python fpga/sim/run_osd_tb.py
       - name: Aspect signalling (CGMS-A, WSS)

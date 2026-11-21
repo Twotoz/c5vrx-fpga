@@ -2,7 +2,7 @@
   <img src="docs/logo.png" alt="C5VRX Triversity" width="600" />
 
   <p><strong>Three ESP32-C5 receivers, one FPGA, true diversity with IQ fusion</strong></p>
-  <p>Three Seeed Studio XIAO ESP32-C5 receive the same 5.8 GHz FPV channel on their own antennas; a Sipeed Tang Nano 20K fuses their IQ before demodulation and drives an 800x480 screen with a menu and a DVR.</p>
+  <p>Three Seeed Studio XIAO ESP32-C5 receive the same 5.8 GHz FPV channel on their own antennas; a Sipeed Tang Nano 20K fuses their IQ before demodulation and drives an 800x480 screen in colour, with a menu and a DVR.</p>
 
   <p>
     <a href="https://twotoz.github.io/C5VRX/"><img src="https://img.shields.io/badge/C5VRX-Website-1f6feb?style=flat" alt="C5VRX website" /></a>
@@ -34,6 +34,7 @@ demodulates once and shows the picture with an on-screen menu.
   settings over one shared wire.
 - All three C5s run the same firmware; the wiring decides which is A, B or C.
 - Three buttons on C5 A (Up, Select, Down) drive the menu.
+- Colour (NTSC and PAL), 60 / 50 pictures a second on the screen.
 - DVR to the Tang's TF card.
 
 > [!NOTE]
@@ -95,6 +96,23 @@ receiver's own.
 
 The OSD is made for the 5" 800x480 screen: 12 x 24 pixel characters, a
 monospace font that stays sharp at that size, no thin lines.
+
+## Colour
+
+The FPGA decodes the colour itself, from the same demodulated signal: burst
+PLL, U / V demodulation, saturation from the burst, luma with the chroma
+subtracted. Both pictures below are the source next to what the RTL
+(`vid_sync.v` with `chroma.v`) makes of it after three C5s at 20 dB C/N.
+
+| NTSC | PAL |
+|---|---|
+| ![NTSC](docs/colour_ntsc.png) | ![PAL](docs/colour_pal.png) |
+
+FM noise rises with frequency and the colour sits at 3.6 / 4.4 MHz, so the
+colour gets more noise than the brightness. Two measures halve its noise power
+(measured on colour bars at 13 and 20 dB C/N): a narrower chroma filter (two
+subcarrier periods) and U / V averaged with the line above (PAL's delay line,
+used on NTSC too). Colour turns off when the burst is too weak.
 
 ## Why IQ fusion
 
@@ -220,15 +238,18 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
   samples), pre-detection MRC and the click-suppressed 50 ns discriminator
   (`rtl/rx/mrc3_core.v`, bit-exact with `model/mrc3_model.py`).
 - Video: sync slicer with H/V flywheel, PAL/NTSC detection, automatic black
-  and white levels, 800-pixel lines into a line buffer. Monochrome for now; colour decoding (NTSC/PAL chroma) is next.
+  and white levels, colour (`rtl/video/chroma.v`, bit-exact with
+  `model/chroma_model.py`), 800 RGB565 pixels a line into a line buffer.
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
   video line shown twice (480 lines, genlocked, no frame buffer). OSD: 66 x 20
   cells of 12 x 24 pixels, anti-aliased glyphs, panels that dim the video.
 - DVR (`rtl/io/dvr.v`): 400x240 in 16 grey levels at 30 fps (NTSC) or 25 fps
   (PAL): every second field, every second pixel of the line. To
-  `TRIDVR.BIN` on the TF card (SPI mode, FAT32, written as a ring: the oldest
-  part is overwritten). About 87 MB a minute; a slow card drops whole frames,
-  never half ones.
+  `TRIDVR.BIN` on the TF card (SPI mode; found by its header sector, written
+  as a ring: the oldest part is overwritten). About 87 MB a minute; a slow
+  card drops whole frames, never half ones. A colour DVR at full resolution
+  needs ~15 MB/s or compression: more than the SPI slot (~2.5 MB/s) and the
+  logic left on this FPGA.
 - Fit: 79 % LUT4, 37 of 46 BSRAM (16 for the DVR buffer, 6 glyphs, 6 page
   templates, 3 aspect maps), 45 MULT9 + 4 MULT18; 59 MHz on the 40 MHz IQ
   clock, 78 MHz on the 33.75 MHz LCD clock, no hold violations.
@@ -249,8 +270,8 @@ fixed in a bitstream (LVCMOS for the LCD, LVDS for HDMI), so switching between
 them in the menu means loading the other bitstream.
 
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
-`run_link_tx_tb.py`, `run_dvr_tb.py` (SD card model with a FAT32 image, fast
-and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`),
+`run_link_tx_tb.py`, `run_chroma_tb.py` (colour, bit-exact),
+`run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).

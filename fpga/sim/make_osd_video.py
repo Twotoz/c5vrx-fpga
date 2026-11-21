@@ -1,5 +1,5 @@
 """Triversity: the video behind the OSD screenshots, through the real receive
-chain. A scene (sky, tree line, fields, a track) as NTSC, the C5 channel
+chain. A colour scene (sky, tree line, fields, a track) as NTSC with chroma, the C5 channel
 model of C5VRX's research/sim.py for three C5s at 13 dB C/N (12 dB: vid_sync does not lock yet), the combiner
 and discriminator model (bit-exact with the RTL) and the RTL vid_sync; one
 field of its line writes (240 x 800, 8-bit) goes to data/osd_video.png, the
@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parent / 'model'))
 import rtl as rtl_  # noqa: E402
 import eval_model as E   # noqa: E402
 import eval3, mrc3_model  # noqa: E402
+import chroma_model as CM  # noqa: E402
 
 
 def scene():
@@ -37,23 +38,31 @@ def scene():
     return np.clip(gaussian_filter(img, 0.7), 0, 100)
 
 
+def scene_rgb():
+    """The scene in colour: blue sky, dark green trees, green and yellow fields, a sandy track."""
+    rng = np.random.default_rng(11)
+    y, x = np.mgrid[0:240, 0:800].astype(float)
+    ire = scene()
+    hor = 92 + 6 * np.sin(x / 150) + 3 * np.sin(x / 41)
+    sky = y < hor - 16
+    trees = (y < hor) & ~sky & (ire < 40)
+    d = np.clip((y - hor) / (240 - hor), 0, 1)
+    track = np.abs(x - (400 + 60 - 380 * d)) < 6 + 70 * d
+    crop = (x - 400) * (0.15 + d) > 120 * d
+    l = ire / 100
+    rgb = np.stack([l * .55, l * .95, l * .45], -1)                          # grass
+    rgb = np.where(((y >= hor) & crop)[..., None], np.stack([l * 1.15, l * 1.0, l * .35], -1), rgb)   # yellow crop
+    rgb = np.where(((y >= hor) & track)[..., None], np.stack([l * 1.05, l * .9, l * .7], -1), rgb)
+    rgb = np.where(trees[..., None], np.stack([l * .5, l * .9, l * .5], -1), rgb)
+    rgb = np.where(sky[..., None], np.stack([.18 + .3 * y / 100, .42 + .25 * y / 100, .85 + .1 * y / 100], -1)
+                   + .03 * rng.normal(0, 1, (240, 800, 1)), rgb)
+    return np.clip(rgb, 0, 1)
+
+
 def main():
     cn = float(sys.argv[1]) if len(sys.argv) > 1 else 13.0
-    fields = 8
-    ire, region = E.sim.raster('NTSC', 5, fields)
-    k = np.arange(len(ire))
-    line = (k / 2542.2).astype(int)
-    x = ((k - line * 2542.2) - 376) * 800 / 2104                   # vid_sync's HSTART / ACT
-    v = line % 263 - 18
-    sc = scene()
-    pic = sc[np.clip(v, 0, 239), np.clip(x.astype(int), 0, 799)]
-    ire = np.where(region == 1, pic, ire)
-    src = sg.lfilter(sg.firwin(81, 4.2e6, fs=80e6), 1, np.repeat(ire, 2))
-    z80 = sg.sosfilt(E.sim.CHAN, np.exp(2j * np.pi * np.cumsum(E.sim.PORCH_HZ + 0.7 * src / 140 * E.sim.DEV_PP) / 80e6))
-    z80 /= np.sqrt(np.mean(abs(z80) ** 2))
-    rng = np.random.default_rng(7)
-    ys = [eval3.branch_y(z80, cn, rng, 0) for _ in range(3)]
-    codes = mrc3_model.run([mrc3_model.to_raw3(y[0]) for y in ys], disc=True)
+    ire, region = CM.source('NTSC', scene_rgb(), fields=6)
+    codes = CM.chain('NTSC', ire, cn)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'code.hex').write_text('\n'.join(f'{c:02x}' for c in codes) + '\n')
@@ -65,8 +74,10 @@ def main():
     fld = sorted(set(a[:, 0]))
     best = max(fld[:-1], key=lambda f: (a[:, 0] == f).sum())       # the fullest complete field
     w = a[a[:, 0] == best]
-    img = np.zeros((240, 800), np.uint8)
-    img[w[:, 1], w[:, 2]] = w[:, 3]
+    img = np.zeros((240, 800, 3), np.uint8)
+    p565 = w[:, 3]
+    r, g, b = p565 >> 11, (p565 >> 5) & 63, p565 & 31
+    img[w[:, 1], w[:, 2]] = np.stack([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)], 1)
     print('field', best, 'writes', len(w), 'of', 240 * 800)
     Image.fromarray(img).save(HERE / 'data' / 'osd_video.png')
     print('wrote', HERE / 'data' / 'osd_video.png')

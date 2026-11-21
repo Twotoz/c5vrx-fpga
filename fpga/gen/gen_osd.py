@@ -372,19 +372,21 @@ def resolve(w, ch, fg, bg, sel, edit):
 
 
 def render(g, cells, video):
-    """cells -> 800 x 480 RGB image (8 bit), the RTL's pixel rule exactly."""
+    """cells -> 800 x 480 RGB image (8 bit), the RTL's pixel rule exactly;
+    video pixels gray or (r, g, b)."""
     img = Image.new('RGB', (800, 480))
     px = img.load()
     for y in range(480):
         for x in range(800):
             v = video[y][x]
+            vr, vg, vb = v if isinstance(v, tuple) else (v, v, v)
             ch, fg, bg = 0, WHITE, BG_VIDEO
             xc = x - X0
             if 0 <= xc < COLS * CW:
                 ch, fg, bg = cells[y // CH][xc // CW]
             a = g[ch][y % CH][xc % CW] if 0 <= xc < COLS * CW else 0
-            panel = (v // 4 + 14, v // 4 + 16, v // 4 + 22)
-            b = [(v, v, v), panel, PAL[ACCENT], DARK][bg]
+            panel = (vr // 4 + 14, vg // 4 + 16, vb // 4 + 22)
+            b = [(vr, vg, vb), panel, PAL[ACCENT], DARK][bg]
             f = panel if fg == PANEL else PAL[fg]
             px[x, y] = tuple(((b[i] * (3 - a) + f[i] * a) * 171) >> 9 for i in range(3))
     return img

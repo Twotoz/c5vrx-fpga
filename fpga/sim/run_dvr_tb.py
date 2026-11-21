@@ -1,7 +1,7 @@
 """Triversity: DVR end to end in simulation. A small FAT32 card image (MBR,
 partition, two FATs, TRIDVR.BIN contiguous, 300 sectors so the ring wraps
 off a frame boundary) -> sd_model; tb_dvr streams synthetic fields into
-rtl/io/dvr.v; the written file is decoded with tools/dvr_to_mp4.frames and every
+rtl/io/dvr.v (which finds the file by its header sector); the written file is decoded with tools/dvr_to_mp4.frames and every
 frame is checked pixel for pixel.
 
     python fpga/sim/run_dvr_tb.py [fields] [busy bytes per block]
@@ -46,7 +46,10 @@ def image():
     img[e:e + 11] = b'TRIDVR  BIN'; img[e + 11] = 0x20
     struct.pack_into('<H', img, e + 20, 0); struct.pack_into('<H', img, e + 26, 3)
     struct.pack_into('<I', img, e + 28, FILE_SECT * 512)
-    return img, (data + SPC) * 512
+    hdr = (data + SPC) * 512                         # tools/make_dvr_file.py: the header sector
+    img[hdr:hdr + 16] = b'TRIDVR-FILE-0001'
+    struct.pack_into('<I', img, hdr + 16, FILE_SECT - 1)
+    return img, hdr + 512
 
 
 def main():
@@ -64,9 +67,10 @@ def main():
         bad = [i for i, x in enumerate(words) if 'x' in x or 'z' in x]
         assert not bad, f'undefined bytes written: {len(bad)} from {bad[:4]}'
         out = bytes(int(x, 16) for x in words)
-    fdata = out[file_off:file_off + FILE_SECT * 512]
-    assert out[:file_off] == bytes(img[:file_off]), 'DVR wrote outside the file'
-    assert out[file_off + FILE_SECT * 512:] == bytes(img[file_off + FILE_SECT * 512:]), 'DVR wrote past the file'
+    end = file_off + (FILE_SECT - 1) * 512
+    fdata = out[file_off:end]
+    assert out[:file_off] == bytes(img[:file_off]), 'DVR wrote outside the file (or over its header)'
+    assert out[end:] == bytes(img[end:]), 'DVR wrote past the file'
     fr = D.frames(fdata)
     ok = 0
     x = np.arange(D.W) * 2

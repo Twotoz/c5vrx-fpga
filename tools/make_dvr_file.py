@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Triversity DVR: create TRIDVR.BIN on a TF card for the FPGA (fpga/rtl/dvr.v).
 
-The FPGA finds TRIDVR.BIN in the root directory of a FAT32 card and records
-into it as a ring, without following the FAT: the file must be one contiguous
-run of clusters. Format the card FAT32 first (cards up to 32 GB; a larger
+The FPGA finds TRIDVR.BIN by its first sector ("TRIDVR-FILE-0001" and the
+number of sectors after it), searching the first 64 MB of the card, and
+records into the rest as a ring, without reading the FAT: the file must be
+one contiguous run of clusters. Format the card FAT32 first (cards up to 32 GB; a larger
 card needs a FAT32 tool) and run this before copying anything else onto it.
 The script writes the file in large blocks and checks on Linux (filefrag)
 that it is contiguous when it can.
@@ -14,7 +15,7 @@ overwritten.
 
     python fpga/tools/make_dvr_file.py /media/TF            [size in MB, default 3900]
 """
-import os, subprocess, sys
+import os, struct, subprocess, sys
 from pathlib import Path
 
 FRAME = 95 * 512
@@ -32,6 +33,7 @@ def main():
         print(f'warning: {root} is not empty ({", ".join(others[:5])}); on a fresh card the file is contiguous for sure')
     block = b'\0' * (8 * 1024 * 1024)
     with open(path, 'wb') as f:
+        f.write((b'TRIDVR-FILE-0001' + struct.pack('<I', size // 512)).ljust(512, b'\0'))   # header sector
         left = size
         while left:
             n = min(left, len(block))
@@ -40,7 +42,7 @@ def main():
             print(f'\r{(size - left) >> 20} / {size >> 20} MB', end='', flush=True)
         f.flush()
         os.fsync(f.fileno())
-    print(f'\n{path}: {size} bytes, {size // FRAME} frames, about {size // FRAME / 29.97 / 60:.0f} min NTSC')
+    print(f'\n{path}: {size + 512} bytes, {size // FRAME} frames, about {size // FRAME / 29.97 / 60:.0f} min NTSC')
     try:
         out = subprocess.run(['filefrag', str(path)], capture_output=True, text=True, check=True).stdout
         n = int(out.split(':')[1].split()[0])

@@ -7,12 +7,12 @@ module tb_video;
     reg clk_a = 0, clk_l = 0, rst = 1;
     always #12.5 clk_a = ~clk_a;
     always #14.815 clk_l = ~clk_l;          // 33.75 MHz
-    reg [5:0] mem [0:4000000];
+    reg [5:0] mem [0:6000000];
     reg [5:0] code = 0;
-    wire wr_en, line_tog, field_tog, pal, locked; wire [10:0] wr_addr; wire [7:0] wr_data; wire [8:0] line_info; wire [15:0] sync_q;
-    vid_sync u_vs (.clk(clk_a), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
+    wire wr_en, line_tog, field_tog, pal, locked; wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q;
+    vid_sync u_vs (.clk(clk_a), .rst(rst), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q));
-    wire [10:0] lb_raddr; wire [7:0] lb_rdata;
+    wire [10:0] lb_raddr; wire [15:0] lb_rdata;
     linebuf u_lb (.wclk(clk_a), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_l), .raddr(lb_raddr), .rdata(lb_rdata));
     reg [11:0] osd [0:2047]; wire osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     integer i; initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;

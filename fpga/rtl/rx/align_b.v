@@ -80,15 +80,20 @@ module align_b (
 
     // ---- read side ---------------------------------------------------------------
     reg  [5:0] rp = 6'd0;
-    reg  [7:0] bm = 8'd0, b0 = 8'd0, bp = 8'd0;   // lags -1, 0, +1 (pointer rp-1, rp, rp+1)
+    // lags -1, 0, +1 (pointer rp-1, rp, rp+1): one read port at rp + 1 and a
+    // shift register; the pointer advances one entry a clock, so the older
+    // reads are the lower lags (two clocks after a pointer step they are off
+    // by one entry, which the 2048-sample windows do not notice). Triversity:
+    // four read ports of the 64-entry buffer cost ~500 LUTs per C5.
+    reg  [7:0] bm = 8'd0, b0 = 8'd0, bp = 8'd0;
     always @(posedge clk_a) begin
-        bm    <= mem[rp - 6'd1];
-        b0    <= mem[rp];
-        bp    <= mem[rp + 6'd1];
-        raw_b <= mem[rp];
+        bp <= mem[rp + 6'd1];
+        b0 <= bp;
+        bm <= b0;
     end
+    always @(*) raw_b = b0;
     reg [7:0] a1;
-    always @(posedge clk_a) a1 <= raw_a;     // pairs with bm/b0/bp (one register)
+    always @(posedge clk_a) a1 <= raw_a;     // pairs with bm/b0/bp (b0 = the entry at rp, as before)
     always @(*) raw_a_d = a1;
 
     function automatic signed [4:0] cv;      // 2 v + 1

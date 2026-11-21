@@ -29,8 +29,15 @@ DOCS = ['menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_asp
 
 
 def picture():
-    """240 x 800: data/osd_video.png, a field through the real receive chain (make_osd_video.py)."""
-    return np.asarray(Image.open(HERE / 'data' / 'osd_video.png').convert('L')).astype(int)
+    """240 x 800 RGB565: data/osd_video.png, a field through the real receive chain (make_osd_video.py)."""
+    a = np.asarray(Image.open(HERE / 'data' / 'osd_video.png').convert('RGB')).astype(int)
+    return (a[..., 0] >> 3) << 11 | (a[..., 1] >> 2) << 5 | a[..., 2] >> 3
+
+
+def widen(p):
+    """RGB565 -> 8 bits a channel, as lcd_out."""
+    r, g, b = p >> 11, (p >> 5) & 63, p & 31
+    return ((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2))
 
 
 def main():
@@ -40,7 +47,7 @@ def main():
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
-        (t / 'video.hex').write_text('\n'.join(f'{v:02x}' for v in pic.ravel()) + '\n')
+        (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
         subprocess.run(['iverilog', '-g2012', *rtl_.inc(), '-o', str(t / 'tb'), str(HERE / 'tb_osd.v'),
                         *rtl_.src('menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
@@ -50,7 +57,8 @@ def main():
     for (name, d), fr in zip(SHOTS, frames):
         st = dict(BASE, **d)
         hm = G.hmaps()[G.hmode(st)]
-        video = [[pic[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]
+        wid = [[widen(int(v)) for v in row] for row in pic]
+        video = [[wid[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]
         want = np.asarray(G.render(g, G.fill(ps, st), video)).astype(int)
         want565 = (want[..., 0] >> 3) << 11 | (want[..., 1] >> 2) << 5 | want[..., 2] >> 3
         got = fr.reshape(480, 800) if fr.size == 480 * 800 else None
