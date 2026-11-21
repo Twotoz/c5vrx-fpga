@@ -33,6 +33,7 @@ import mrc_model as m2model
 
 M_SHIFT, X_SHIFT, W_PERIOD, W_APPLY, TH_BLOCK = 6, 7, 128, 127, 16
 Z_SHIFT, X_SHIFT_TH = 6, 4
+FOLD_OUT = -16   # anti-fold: sign agreement with A (-128..128), branch out below this
 G, ISQ, COS, SIN, ATAN = m2model.G, m2model.ISQ, m2model.COS, m2model.SIN, m2model.ATAN
 cordic_angle = m2model.cordic_angle
 
@@ -45,7 +46,7 @@ def _cell(v3):
 
 
 @njit(cache=True)
-def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
+def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold):
     nb, n = raw.shape
     m2 = np.zeros(3, np.int64)
     m4 = np.zeros(3, np.int64)
@@ -57,6 +58,7 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
     th_cur = np.zeros(3, np.int64)
     th_pend = np.zeros(3, np.int64)
     phi_prev = 0
+    fold = np.zeros(3, np.int64)
     ci = np.zeros(3, np.int64)
     cq = np.zeros(3, np.int64)
     for k in range(n):
@@ -68,11 +70,14 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
         zi = wa * ci[0] * 64
         zq = wa * cq[0] * 64
         for b in range(1, 3):
-            wb = w[b] if (en[b] and valid[b, k]) else 0
             c = COS[th_cur[b]]
             s = SIN[th_cur[b]]
             ri = ci[b] * c - cq[b] * s
             rq_ = ci[b] * s + cq[b] * c
+            out_b = afold and fold[b] < FOLD_OUT
+            wb = w[b] if (en[b] and valid[b, k] and not out_b) else 0
+            if valid[0, k] and valid[b, k]:
+                fold[b] += int((ci[0] < 0) == (ri < 0)) + int((cq[0] < 0) == (rq_ < 0)) - 1 - (fold[b] >> 7)
             zi += wb * ri
             zq += wb * rq_
         phi = cordic_angle(zi >> Z_SHIFT, zq >> Z_SHIFT, ATAN)
@@ -102,8 +107,9 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
                 th_cur[b] = th_pend[b]
                 th_pend[b] = (cordic_angle(xr[b] >> X_SHIFT_TH, xi[b] >> X_SHIFT_TH, ATAN) + 128) >> 8 & 255
         if (k & (W_PERIOD - 1)) == W_APPLY and have_pend:
+            wfloor = max(pend[0], pend[1], pend[2]) >> 3
             for b in range(3):
-                w[b] = pend[b]
+                w[b] = 0 if (wbranch and b != 0 and pend[b] < wfloor) else pend[b]
         if (k & (W_PERIOD - 1)) == W_PERIOD - 1:
             have_pend = True
             for b in range(3):
@@ -130,8 +136,10 @@ DISC_WL, DISC_WH = -312, 384
 
 
 @njit(cache=True)
-def disc50(phis, out):
+def disc50(phis, out, spike=False):
     n = len(phis)
+    c1 = 25
+    c2 = 25
     s = ((phis[0] + 32768) >> 6) & 1023
     for k in range(0, n - 3, 2):
         t = ((phis[k] + 32768) >> 6) & 1023
@@ -139,12 +147,19 @@ def disc50(phis, out):
         step = d if (d >= DISC_WL and d <= DISC_WH) else (d * 179) >> 8
         c = (105 * step + 32896) // 1280
         c = 0 if c < 0 else (63 if c > 63 else c)
-        out[k + 2] = c
-        out[k + 3] = c
+        o = c
+        if spike:
+            lo = min(c, c1)
+            hi = max(c, c1)
+            o = lo if c2 < lo else (hi if c2 > hi else c2)
+        c2 = c1
+        c1 = c
+        out[k + 2] = o
+        out[k + 3] = o
         s = (s + step) & 1023
 
 
-def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None):
+def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None, wbranch=False, afold=False, spike=False):
     """raws: list of 1..3 arrays of 6-bit samples {I2..I0, Q2..Q0}, C5 A first.
     return_phi: also return the combined angle per sample (2^-16 turn)."""
     raw = np.zeros((3, len(raws[0])), np.int64)
@@ -154,10 +169,10 @@ def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=Non
     out = np.zeros(raw.shape[1], np.int64)
     phis = np.zeros(raw.shape[1], np.int64)
     v = np.ones((3, raw.shape[1]), np.int64) if valid is None else np.asarray(valid, np.int64)
-    _run(raw, en, v, G, ISQ, COS, SIN, ATAN, out, phis)
+    _run(raw, en, v, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold)
     if disc:
         out = np.zeros(raw.shape[1], np.int64)
-        disc50(phis, out)
+        disc50(phis, out, spike)
     return (out.astype(np.uint8), phis) if return_phi else out.astype(np.uint8)
 
 

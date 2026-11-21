@@ -31,6 +31,7 @@ module vid_sync (
     input  wire [5:0]  code,          // 40 MS/s (20 MS/s unique) demodulator codes
     input  wire        keep_lock,     // menu Signal: hold the picture through sync dropouts (~0.5 s)
     input  wire        adapt,         // menu Signal: steadier line phase once locked (e/8 instead of e/4)
+    input  wire        ans,           // menu Signal: adaptive noise suppression on the luma
     output reg         wr_en,
     output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
     output reg  [15:0] wr_data,       // RGB565
@@ -110,6 +111,39 @@ module vid_sync (
     // ---- colour (chroma.v) and the pixel stage ----
     wire [9:0] cy8u; wire signed [9:0] cug, cvg;
     chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg));
+    // ---- adaptive noise suppression (menu Signal: Noise filter) ----
+    // noise: the sum of |Y - Y four clocks before| over hc 320..367 (the flat
+    // back porch) of 64 lines; level 0..3 from it (one step per 64 lines);
+    // the luma runs through a one-pole low-pass at a
+    // fixed scale (acc = 8 y): acc += (8 x - acc) >> level, y = acc / 8.
+    // Levels from sim/perf_vrx.py: 0 above ~13 dB C/N, 1 ~7..13, 2 ~1..7, 3 below.
+    reg  [9:0]  yd1, yd2, yd3, yd4;
+    wire [10:0] ydd = {1'b0, cy8u} - {1'b0, yd4};
+    wire [9:0]  ydf = ydd[10] ? ~ydd[9:0] : ydd[9:0];   // |difference| (one less when negative)
+    reg  [21:0] nacc = 22'd0;
+    reg  [5:0]  nln = 6'd0;
+    reg  [1:0]  nlev = 2'd0;
+    reg  [12:0] yacc = 13'd0;
+    wire signed [13:0] ydel = $signed({1'b0, cy8u, 3'd0}) - $signed({1'b0, yacc});
+    wire signed [13:0] ystep = ydel >>> nlev;
+    wire [9:0]  ny = ans ? yacc[12:3] : cy8u;
+    wire [8:0]  nhi = nacc[21:13];            // the noise sum in units of 8192 (mean |dY| x 2.67)
+    wire [1:0]  ntgt = nhi >= 9'd12 ? 2'd3 : nhi >= 9'd5 ? 2'd2 : nhi >= 9'd3 ? 2'd1 : 2'd0;
+    wire        nwin = hc[11:6] == 6'd5 && hc[5:4] != 2'd3;   // hc 320..367
+    always @(posedge clk) begin
+        yd1 <= cy8u; yd2 <= yd1; yd3 <= yd2; yd4 <= yd3;
+        yacc <= hc == 12'd401 ? {cy8u, 3'd0} : yacc + ystep[12:0];   // restarted on the porch each line
+        if (nwin) nacc <= nacc + {12'd0, ydf};
+        if (hc == 12'd400) begin
+            nln <= nln + 6'd1;
+            if (nln == 6'd63) begin
+                nacc <= 22'd0;
+                // one step toward the level of the noise
+                if (ntgt > nlev) nlev <= nlev + 2'd1; else if (ntgt < nlev) nlev <= nlev - 2'd1;
+            end
+        end
+        if (rst) begin nacc <= 22'd0; nln <= 6'd0; nlev <= 2'd0; end
+    end
     reg        p_tick, p_show, p_row0;
     reg  [9:0] p_px, p_y;
     reg  signed [9:0] p_u, p_v;
@@ -219,7 +253,7 @@ module vid_sync (
                 if (dda + {2'd0, PXN} >= ACT) begin
                     dda <= dda + {2'd0, PXN} - ACT;
                     p_tick <= 1'b1; p_show <= show_cur; p_row0 <= orow_cur[0]; p_px <= px;
-                    p_y <= cy8u; p_u <= cug; p_v <= cvg;
+                    p_y <= ny; p_u <= cug; p_v <= cvg;
                     px <= px + 10'd1;
                 end else dda <= dda + {2'd0, PXN};
             end
@@ -298,7 +332,7 @@ module vid_sync (
         if (d_act && hc >= HSTART && d_px < 10'd720) begin
             if (d_dda + 12'd720 >= ACT) begin
                 d_dda <= d_dda + 12'd720 - ACT;
-                q_tick <= 1'b1; q_x <= d_px; q_ln <= d_ln; q_y <= cy8u; q_u <= cug; q_v <= cvg;
+                q_tick <= 1'b1; q_x <= d_px; q_ln <= d_ln; q_y <= ny; q_u <= cug; q_v <= cvg;
                 d_px <= d_px + 10'd1;
             end else d_dda <= d_dda + 12'd720;
         end

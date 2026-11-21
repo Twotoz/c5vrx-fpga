@@ -38,6 +38,9 @@ jobs:
       - name: Colour decoder, bit-exact (NTSC and PAL)
         run: python fpga/sim/run_chroma_tb.py NTSC && python fpga/sim/run_chroma_tb.py PAL
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+      - name: Noise filter (adaptive noise suppression), bit-exact
+        run: python fpga/sim/run_ans_tb.py
+        env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
         run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hdmi && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
       - name: TMDS encoder (HDMI), against the model

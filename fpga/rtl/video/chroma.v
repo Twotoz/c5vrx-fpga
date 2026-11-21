@@ -31,12 +31,12 @@ module chroma (
     // ---- NCO and table ----
     reg  [31:0] ph = 32'd0;
     reg  signed [20:0] fadj = 21'sd0;
-    reg  signed [7:0] sin_t [0:255];
-    reg  signed [7:0] cos_t [0:255];
+    (* ram_style = "block" *) reg [15:0] sc_t [0:255];   // {sin, cos}: in a block RAM (in logic ~250 LUT)
 `include "chroma_tab.vh"
-    reg  signed [7:0] s, co;                 // table at ph (read with the next phase)
+    reg  [15:0] sc;                          // table at ph (read with the next phase)
+    wire signed [7:0] s = sc[15:8], co = sc[7:0];
     reg  [31:0] ph_n;
-    always @(posedge clk) begin s <= sin_t[ph_n[31:24]]; co <= cos_t[ph_n[31:24]]; end
+    always @(posedge clk) sc <= sc_t[ph_n[31:24]];
     // ---- mixing ----
     wire signed [6:0] c = {1'b0, code} - 7'sd32;
     wire [17:0] mu, mv;

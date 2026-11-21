@@ -14,7 +14,8 @@ module tb_mrc3_core;
     reg en_b, en_c;
     wire [5:0] code;
     integer n, k, f;
-    mrc3_core dut (.wbranch(1'b0), .afold(1'b0), .spike(1'b0), .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
+    reg fw = 0, fa = 0, fs = 0;
+    mrc3_core dut (.wbranch(fw), .afold(fa), .spike(fs), .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
                    .en_b(en_b), .en_c(en_c),
                    .va(vv[0]), .vb(vv[1]), .vc(vv[2]), .code(code));
     always #12.5 clk = ~clk;
@@ -24,6 +25,7 @@ module tb_mrc3_core;
         en_b = k;
         if (!$value$plusargs("en_c=%d", k)) k = 1;
         en_c = k;
+        if ($value$plusargs("flags=%d", k)) {fs, fa, fw} = k;
         $readmemh("raw_a.hex", mem_a);
         $readmemh("raw_b.hex", mem_b);
         $readmemh("raw_c.hex", mem_c);
