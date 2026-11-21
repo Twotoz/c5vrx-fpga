@@ -10,8 +10,8 @@
 // B -> C and C -> D buffers are BSRAM (registered reads).
 // A field: f_start (quality index, PAL height, field number, parity) sends
 // the 8-byte record prefix and the JPEG header; the parent writes blocks
-// (64 samples, row-major) into the input buffer while in_rdy and commits
-// each; f_end after the last block: the bits are padded with ones, EOI
+// (64 samples, row-major, four a word) into the input buffer while in_rdy
+// and commits each; f_end after the last block: the bits are padded with ones, EOI
 // follows, f_done pulses with the field's byte count.
 `default_nettype none
 module jpeg_enc (
@@ -28,8 +28,8 @@ module jpeg_enc (
     output reg  [17:0] f_bytes,
     output wire        in_rdy,          // an input bank is free
     input  wire        in_we,
-    input  wire [5:0]  in_addr,         // r * 8 + k
-    input  wire [7:0]  in_data,
+    input  wire [3:0]  in_addr,         // {r, h}: samples k = 4h .. 4h + 3 of row r
+    input  wire [31:0] in_data,         // sample 4h + j in bits 8j + 7 .. 8j
     input  wire [1:0]  in_comp,         // 0 Y, 1 Cb, 2 Cr (with the commit)
     input  wire        in_commit,
     output reg         o_valid,
@@ -53,7 +53,7 @@ module jpeg_enc (
     genvar g;
     generate for (g = 0; g < 8; g = g + 1) begin : ibk
         reg [7:0] m [0:15];
-        always @(posedge clk) if (in_we && in_addr[2:0] == g) m[{ibw, in_addr[5:3]}] <= in_data;
+        always @(posedge clk) if (in_we && in_addr[0] == g[2]) m[{ibw, in_addr[3:1]}] <= in_data[8 * (g % 4) +: 8];
         assign ibx[g] = m[{ibr, a_r}];
     end endgenerate
 

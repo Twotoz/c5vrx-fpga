@@ -7,7 +7,7 @@ module tb_jpeg;
     reg [7:0] mem [0:400000];
     reg f_start = 0, f_end = 0, in_we = 0, in_commit = 0, pal = 0, parity = 0;
     reg [2:0] qi = 0; reg [15:0] seq = 0;
-    reg [5:0] in_addr = 0; reg [7:0] in_data = 0; reg [1:0] in_comp = 0;
+    reg [3:0] in_addr = 0; reg [31:0] in_data = 0; reg [1:0] in_comp = 0;
     wire busy, f_done, in_rdy, o_valid; wire [7:0] o_data; wire [17:0] f_bytes;
     reg o_ready = 1;
     jpeg_enc u (.clk(clk), .rst(rst), .f_start(f_start), .qi(qi), .pal(pal), .parity(parity), .seq(seq), .f_end(f_end),
@@ -32,8 +32,9 @@ module tb_jpeg;
         p = 0;
         for (b = 0; b < nb; b = b + 1) begin
             while (!in_rdy) @(posedge clk);
-            for (k = 0; k < 64; k = k + 1) begin
-                @(posedge clk) begin in_we <= 1; in_addr <= k; in_data <= mem[p + 1 + k]; end
+            for (k = 0; k < 64; k = k + 4) begin           // four samples a word
+                @(posedge clk) begin in_we <= 1; in_addr <= k / 4;
+                    in_data <= {mem[p + 4 + k], mem[p + 3 + k], mem[p + 2 + k], mem[p + 1 + k]}; end
             end
             @(posedge clk) begin in_we <= 0; in_comp <= mem[p][1:0]; in_commit <= 1; end
             @(posedge clk) in_commit <= 0;

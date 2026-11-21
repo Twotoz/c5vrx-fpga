@@ -73,7 +73,7 @@ def main():
         (t / 'sd.hex').write_text('\n'.join(f'{x:02x}' for x in img) + '\n')
         (t / 'field.hex').write_text('\n'.join(f'{a:02x}{b_:02x}{c:02x}' for a, b_, c in ycc.reshape(-1, 3)) + '\n')
         subprocess.run(['iverilog', '-g2012', f'-Ptb_dvr_hq.BUSY={busy}', *rtl_.inc(), '-o', str(t / 'tb'),
-                        str(HERE / 'tb_dvr_hq.v'), str(HERE / 'sd_model.v'), *rtl_.src('dvr_hq.v', 'jpeg_enc.v', 'sd_ring.v', 'mul_dsp.v')],
+                        str(HERE / 'tb_dvr_hq.v'), str(HERE / 'sd_model.v'), *rtl_.src('dvr_hq.v', 'jpeg_enc.v', 'sd_ring.v', 'sdram.v', 'mul_dsp.v', 'addsub.v'), str(HERE / 'sdram_model.v')],
                        check=True)
         rr = subprocess.run(['vvp', '-n', str(t / 'tb'), f'+fields={nf}'], cwd=t, capture_output=True, text=True)
         print(rr.stdout[-1500:])
