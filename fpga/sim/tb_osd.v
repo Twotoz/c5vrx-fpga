@@ -117,13 +117,15 @@ module tb_osd;
         shot;                                                        // 3 scanning
         u_menu.scanning = 1'b0;
         press(5'b00100); press(5'b00100); press(5'b00010); shot;     // 4 receivers
-        press(5'b00010); press(5'b00100); press(5'b00010);           // Back, Settings
+        press(5'b00010); press(5'b00100); press(5'b00100); press(5'b00010);   // Back, (Signal,) Settings
         press(5'b00100); press(5'b00100); shot;                      // 5 settings, Aspect
         press(5'b00010); press(5'b00100); shot;                      // 6 editing Aspect: Stretch
         press(5'b00010);                                             // done
-        press(5'b10010); shot;                                       // 7 closed: live view
-        press(5'b00001); shot;                                       // 8 next channel (pill lit)
-        locked = 0; repeat (20000) @(posedge clk); shot;             // 9 no signal
+        press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Back
+        press(5'b00001); press(5'b00010); press(5'b00010); shot;     // 7 Signal page, Keep lock on
+        press(5'b10010); shot;                                       // 8 closed: live view
+        press(5'b00001); shot;                                       // 9 next channel (pill lit)
+        locked = 0; repeat (20000) @(posedge clk); shot;             // 10 no signal
         $display("shots %0d", nshot);
         $finish;
     end

@@ -86,6 +86,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     input  wire       en_b,
     input  wire       en_c,
     input  wire       va, vb, vc,   // per sample, with raw_*
+    input  wire       afold,        // anti-fold: a C5 under 1/8 of the strongest weight is left out
+    input  wire       spike,        // spike filter: median of the last three codes
     output reg  [5:0] code
 );
     reg [7:0] g_rom   [0:255];
@@ -186,6 +188,9 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     // well before the hand-over at idx3 == 127 of the next period.
     reg  [7:0]  w_use [0:2];
     reg  [7:0]  pend  [0:2];
+    // anti-fold: the strongest pending weight / 8 (weights below it would add more noise than signal)
+    wire [7:0]  wmax01 = pend[0] > pend[1] ? pend[0] : pend[1];
+    wire [7:0]  wfloor = (wmax01 > pend[2] ? wmax01 : pend[2]) >> 3;
     reg         have_pend;
     reg  [3:0]  st;
     reg  [1:0]  wj;
@@ -263,7 +268,7 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;
         end else if (run3 && idx3 == 7'd127 && have_pend) begin
-            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= pend[ku];
+            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= (afold && pend[ku] < wfloor) ? 8'd0 : pend[ku];
         end
         zi4 <= $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
         zq4 <= $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
@@ -289,6 +294,10 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg [15:0] disc [0:1023];
 `include "disc_rom.vh"
     reg [15:0] dq; reg dv;
+    reg [5:0]  c1, c2;                               // the two codes before (spike filter)
+    function [5:0] med3; input [5:0] a, b, c; reg [5:0] lo, hi;
+        begin lo = a < b ? a : b; hi = a < b ? b : a; med3 = c < lo ? lo : c > hi ? hi : c; end
+    endfunction
     always @(posedge clk) begin
         dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
         dv <= 1'b0;
@@ -298,7 +307,10 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
                 if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; code <= 6'd25; end
                 else dv <= 1'b1;
             end
-            if (dv) begin st_s <= st_s + dq[15:6]; code <= dq[5:0]; end
+            if (dv) begin
+                st_s <= st_s + dq[15:6]; c1 <= dq[5:0]; c2 <= c1;
+                code <= spike ? med3(dq[5:0], c1, c2) : dq[5:0];
+            end
         end
     end
 endmodule

@@ -22,7 +22,8 @@ BASE = dict(open=True, page=1, cursor=0, edit=False, toast=False, channel=8, loc
             aspect=3, wide=False, logo=True)
 SHOTS = [('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
          ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
-         ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)), ('live', dict(open=False, aspect=2)),
+         ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)),
+         ('signal', dict(page=4, cursor=0, aspect=2, klock=True)), ('live', dict(open=False, aspect=2)),
          ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
          ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]
 # the HQ DVR build's screen (hq_ui.v, --hq): the live view only
@@ -34,7 +35,7 @@ HQ_SHOTS = [('hq_live', {}), ('hq_nocard', dict(dvr=True)), ('hq_rec', dict(dvr=
 # the Triversity DVR build (--tridvr): hq_ui.v with 7-segment glyphs, Triversity first, no logo
 TRI_BASE = dict(HQ_BASE, mode=2, logo=False)
 TRI_SHOTS = [(n.replace('hq_', 'tri_').replace('single', 'diversity'), dict(d, mode=1) if 'mode' in d else d) for n, d in HQ_SHOTS]
-DOCS = ['hq_rec', 'tri_rec', 'menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
+DOCS = ['hq_rec', 'tri_rec', 'signal', 'menu', 'menu_edit', 'menu_mode', 'receivers', 'settings', 'settings_aspect', 'live']
 
 
 def picture():

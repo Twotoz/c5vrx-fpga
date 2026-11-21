@@ -64,8 +64,7 @@ Both: three C5s fused (Single, Diversity or Triversity), colour, the full menu
 and the HQ DVR at the same time. The DVR
 buffers the fields in the Tang's built-in 8 MB SDRAM (block order, up to
 four fields), so recording never takes block RAM or time from the picture.
-Fit: 84 % LUT4, 43 of 46 BSRAM; 68 MHz on the 40 MHz IQ clock, 93 MHz on the
-LCD clock.
+Fit: 82 % (LCD) / 83 % (HDMI) LUT4, 44 / 41 of 46 BSRAM, timing met with room.
 
 ## Experimental hardware — flight safety warning
 
@@ -93,6 +92,7 @@ receiver's own.
 |---|---|
 | ![Editing the channel](docs/osd_menu_edit.png) | ![Editing the mode](docs/osd_menu_mode.png) |
 | ![Receivers](docs/osd_receivers.png) | ![Aspect: Stretch](docs/osd_settings_aspect.png) |
+| ![Signal](docs/osd_signal.png) | |
 
 | | live view | menu | editing a value |
 |---|---|---|---|
@@ -105,9 +105,19 @@ receiver's own.
   or Triversity (A + B + C, IQ fusion). C5s left out keep running and show
   Idle; the live view greys them out.
 - **Scan**: every channel 0.5 s, picks the one with the best sync.
-- **Record**: DVR on / off; No card, Ready, the recording time, Card err
-  (No DVR in the default build).
+- **Record**: DVR on / off; No card, Ready, the recording time, Card err.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
+- **Signal** (each On / Off, all Off after power-up):
+  - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
+    is lost (8000 lines) instead of going to the black free-run screen.
+  - *Adaptive sync*: once the line lock is full the line phase is pulled in
+    by e/8 instead of e/4: less horizontal jitter on a noisy signal; while
+    locking it stays e/4.
+  - *Anti-fold*: a C5 whose combining weight is below 1/8 of the strongest
+    is left out of the fusion: at that level it adds more noise than picture.
+  - *Spike filter*: the median of the last three demodulator codes (50 ns
+    apart) removes single-sample white / black dots; edges and detail of two
+    samples and wider pass unchanged.
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
   brightness, calibrate (filter and DC on every C5).
 - **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
@@ -283,8 +293,9 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
   lag up to three fields behind the camera.
 - Grey DVR (`rtl/io/dvr.v`, `DVR=1 fpga/build.sh`, kept for reference: with the
   colour decoder and the menu it does not place): 400x240 in 16 grey levels at 30 fps.
-- Fit: 84 % LUT4, 43 of 46 BSRAM, 21 MULT18 + 35 MULT9; 68 MHz on the 40 MHz
-  IQ clock, 93 MHz on the LCD clock. The DSP blocks are kept at or below
+- Fit (LCD): 82 % LUT4, 44 of 46 BSRAM, 21 MULT18 + 35 MULT9; 73 MHz on the
+  40 MHz IQ clock, 79 MHz on the LCD clock. HDMI: 83 % LUT4, 60 MHz IQ clock,
+  51 MHz pixel clock (27 needed). The DSP blocks are kept at or below
   38.5 MULT18 equivalents (MULT18 + MULT9 / 2): above that nextpnr's placer
   does not finish. `fpga/tools/fit.py` shows the resources per module.
 

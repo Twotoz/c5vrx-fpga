@@ -42,6 +42,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg  [1:0]  gain_model,       // 0 LEVEL, 1 KEEL, 2 RSSI
     output reg         afc,
     output reg  [7:0]  f_seq,
+    output reg         klock, async_on, afold, spike,   // Signal page: keep lock, adaptive sync, anti-fold, spike filter
     output reg         bl_pwm
 );
     // ---- glyphs, colours, fields (gen_osd.py) ------------------------------------
@@ -53,7 +54,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     localparam [5:0] F_CAPL = 1, F_CAPR = 2, F_LIVECH = 3, F_REC = 4, F_NOSIG = 5, F_RXBAR = 6, F_VSTD = 7, F_CHVAL = 8,
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
-                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22;
+                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_AFOLDV = 25, F_SPIKEV = 26;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -117,7 +118,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     end
     // ---- menu state -------------------------------------------------------------------
     reg        open, edit, scanning;
-    reg [1:0]  page;                      // 1 menu, 2 receivers, 3 settings (while open)
+    reg [2:0]  page;                      // 1 menu, 2 receivers, 3 settings, 4 signal (while open)
     reg [2:0]  cursor;
     reg [2:0]  bright;
     reg [1:0]  aspect;                    // 0 4:3, 1 16:9, 2 Stretch, 3 Auto
@@ -134,10 +135,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     wire [5:0] ch_next = channel == 6'd47 ? 6'd0 : channel + 6'd1;
     wire [5:0] ch_prev = channel == 6'd0 ? 6'd47 : channel - 6'd1;
-    wire [2:0] n_items = page == 2'd2 ? 3'd1 : page == 2'd1 ? 3'd6 : 3'd7;
+    wire [2:0] n_items = page == 3'd2 ? 3'd1 : page == 3'd4 ? 3'd5 : 3'd7;
     always @(posedge clk) begin
         if (rst) begin
-            open <= 1'b0; edit <= 1'b0; page <= 2'd1; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; mode <= 2'd2; channel <= 6'd8;
+            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; afold <= 1'b0; spike <= 1'b0; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rec_m <= 7'd0; rec_s <= 6'd0;
         end else begin
@@ -168,14 +169,14 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             if (ev) begin
                 link_on <= 1'b1;
                 if (!open) begin
-                    if (sel) begin open <= 1'b1; page <= 2'd1; cursor <= 3'd0; edit <= 1'b0; end
+                    if (sel) begin open <= 1'b1; page <= 3'd1; cursor <= 3'd0; edit <= 1'b0; end
                     else if (up && !scanning) begin channel <= ch_next; toast_ms <= 11'd2000; end
                     else if (dn && !scanning) begin channel <= ch_prev; toast_ms <= 11'd2000; end
                 end else if (hold) begin open <= 1'b0; edit <= 1'b0; end
                 else if (edit) begin                                   // change the value live
                     if (sel) edit <= 1'b0;
-                    else if (page == 2'd1 && cursor == 3'd0) channel <= up ? ch_next : dn ? ch_prev : channel;
-                    else if (page == 2'd1) begin
+                    else if (page == 3'd1 && cursor == 3'd0) channel <= up ? ch_next : dn ? ch_prev : channel;
+                    else if (page == 3'd1) begin
                         if (up) mode <= mode == 2'd2 ? 2'd0 : mode + 2'd1;
                         if (dn) mode <= mode == 2'd0 ? 2'd2 : mode - 2'd1;
                     end
@@ -193,22 +194,30 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 end else if (up) cursor <= cursor == 3'd0 ? n_items - 3'd1 : cursor - 3'd1;
                 else if (dn) cursor <= cursor == n_items - 3'd1 ? 3'd0 : cursor + 3'd1;
                 else if (sel) case (page)
-                    2'd1: case (cursor)
+                    3'd1: case (cursor)
                         3'd0: if (!scanning) edit <= 1'b1;
                         3'd1: edit <= 1'b1;
                         3'd2: if (scanning) begin scanning <= 1'b0; channel <= orig_ch; end
                               else begin scanning <= 1'b1; scan_ch <= 6'd0; channel <= 6'd0; orig_ch <= channel; best_q <= 16'd0; scan_ms <= 10'd0; end
                         3'd3: if (HAS_DVR != 0) dvr <= ~dvr;
-                        3'd4: begin page <= 2'd2; cursor <= 3'd0; end
-                        default: begin page <= 2'd3; cursor <= 3'd0; end
+                        3'd4: begin page <= 3'd2; cursor <= 3'd0; end
+                        3'd5: begin page <= 3'd4; cursor <= 3'd0; end
+                        default: begin page <= 3'd3; cursor <= 3'd0; end
                     endcase
-                    2'd2: begin page <= 2'd1; cursor <= 3'd4; end
+                    3'd2: begin page <= 3'd1; cursor <= 3'd4; end
+                    3'd4: case (cursor)
+                        3'd0: klock <= ~klock;
+                        3'd1: async_on <= ~async_on;
+                        3'd2: afold <= ~afold;
+                        3'd3: spike <= ~spike;
+                        default: begin page <= 3'd1; cursor <= 3'd5; end
+                    endcase
                     default: case (cursor)
                         3'd0, 3'd2, 3'd4: edit <= 1'b1;
                         3'd1: begin afc <= ~afc; a_set <= 1'b1; end
                         3'd3: logo <= ~logo;
                         3'd5: begin f_seq <= f_seq + 8'd1; cal_ms <= 12'd3000; end
-                        default: begin page <= 2'd1; cursor <= 3'd5; end
+                        default: begin page <= 3'd1; cursor <= 3'd6; end
                     endcase
                 endcase
             end
@@ -219,17 +228,17 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [10:0] pw;
     always @(posedge clk) begin pw <= pw == 11'd1279 ? 11'd0 : pw + 11'd1; bl_pwm <= pw < {bright, 8'd0} + 11'd160 + {3'd0, bright, 5'd0}; end
     // ---- renderer: template -> fields -> cell RAM --------------------------------------
-    reg [17:0] tmpl [0:5279];
+    reg [17:0] tmpl [0:6599];
     reg [15:0] freq [0:47];
 `include "osd_pages.vh"
     reg [10:0] ra; reg [6:0] rc; reg [4:0] rr;      // cell address, column, row
     reg [12:0] pbase;                               // page * 1320
     reg [17:0] tw; reg [10:0] wa1; reg [4:0] rr1;
     reg [15:0] fq;
-    wire [1:0] pg = open ? page : 2'd0;
+    wire [2:0] pg = open ? page : 3'd0;
     always @(posedge clk) begin
         ra <= (rst || ra == 11'd1319) ? 11'd0 : ra + 11'd1;
-        if (rst || ra == 11'd1319) begin rc <= 7'd0; rr <= 5'd0; pbase <= pg == 2'd0 ? 13'd0 : pg == 2'd1 ? 13'd1320 : pg == 2'd2 ? 13'd2640 : 13'd3960; end
+        if (rst || ra == 11'd1319) begin rc <= 7'd0; rr <= 5'd0; pbase <= pg == 3'd0 ? 13'd0 : pg == 3'd1 ? 13'd1320 : pg == 3'd2 ? 13'd2640 : pg == 3'd3 ? 13'd3960 : 13'd5280; end
         else if (rc == 7'd65) begin rc <= 7'd0; rr <= rr + 5'd1; end else rc <= rc + 7'd1;
         tw <= tmpl[pbase + {2'b0, ra}]; wa1 <= ra; rr1 <= rr; fq <= freq[channel];
     end
@@ -257,7 +266,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     endfunction
     wire [5:0] fid = tw[12:7];
     wire [6:0] fi  = tw[6:0];
-    wire [4:0] sel_row = open ? (page == 2'd2 ? ITEM0 + 5'd4 : ITEM0 + {2'b0, cursor}) : (toast_ms != 11'd0 ? 5'd1 : 5'd31);
+    wire [4:0] sel_row = open ? (page == 3'd2 ? ITEM0 + 5'd4 : ITEM0 + {2'b0, cursor}) : (toast_ms != 11'd0 ? 5'd1 : 5'd31);
     wire       is_sel = rr1 == sel_row;
     wire       is_edit = is_sel && edit && open;
     wire [1:0] nact = {1'b0, fresh[0]} + {1'b0, fresh[1]} + {1'b0, fresh[2]};
@@ -337,6 +346,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             F_RXCNT: fch = fi == 7'd0 ? digit({2'b0, nact}) : fi == 7'd1 ? "/" : "3";
             F_GAINV: fch = str(5'd7 + {3'd0, gain_model}, fi[3:0] + 4'd4);
             F_AFCV:  fch = str(afc ? 5'd10 : 5'd11, fi[3:0] + 4'd6);
+            F_KLOCKV, F_ASYNCV, F_AFOLDV, F_SPIKEV:
+                     fch = str((fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : fid == F_AFOLDV ? afold : spike) ? 5'd10 : 5'd11, fi[3:0] + 4'd6);
             F_BRIGHTV: begin fch = fi[2:0] <= bright ? G_SEGON : G_SEGOFF; if (is_sel || is_edit) begin fgv = 1'b1; ffg = WHITE; end end
             F_CALV: begin
                 if (cal_ms == 12'd0) fch = SP;

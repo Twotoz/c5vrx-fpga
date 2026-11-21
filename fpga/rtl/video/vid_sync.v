@@ -29,6 +29,8 @@ module vid_sync (
     input  wire        clk,
     input  wire        rst,
     input  wire [5:0]  code,          // 40 MS/s (20 MS/s unique) demodulator codes
+    input  wire        keep_lock,     // menu Signal: hold the picture through sync dropouts (~0.5 s)
+    input  wire        adapt,         // menu Signal: steadier line phase once locked (e/8 instead of e/4)
     output reg         wr_en,
     output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
     output reg  [15:0] wr_data,       // RGB565
@@ -63,6 +65,7 @@ module vid_sync (
     wire [11:0] HT = pal ? 12'd2560 : 12'd2542;
     reg  [11:0] hc;
     reg  [3:0]  lock;
+    reg  [12:0] khold;                       // keep lock: lines left
     // ---- levels (per line, smoothed) ------------------------------------------
     reg [15:0] tip_acc, porch_acc;          // sums of 64 / 128 samples
     reg [8:0]  tip, porch;                  // smoothed levels (y units)
@@ -137,7 +140,7 @@ module vid_sync (
             hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
             linemin <= 9'h1ff; minprev <= 9'd100;
-            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0;
+            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
@@ -150,7 +153,8 @@ module vid_sync (
             else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
                 if (lock != 4'd0 && inwin) begin
-                    hc <= hc + 12'd1 - {e[12], e[12:2]};              // pull in by e/4
+                    // pull in by e/4 (e/8 with adaptive sync once the lock is full: less jitter)
+                    hc <= hc + 12'd1 - (adapt && lock == 4'd15 ? {{2{e[12]}}, e[12:3]} : {e[12], e[12:2]});
                     seen <= 1'b1;
                     qcnt <= qcnt + 16'd1;
                 end else if (lock == 4'd0) begin
@@ -185,7 +189,9 @@ module vid_sync (
                 else if (lock != 4'd0) lock <= lock - 4'd1;
                 seen <= 1'b0;
                 minprev <= linemin; linemin <= 9'h1ff;
-                locked <= lock >= 4'd8;
+                // keep lock: still "locked" for ~0.5 s (8000 lines) after the sync was lost
+                if (lock >= 4'd8) khold <= 13'd8000; else if (khold != 13'd0) khold <= khold - 13'd1;
+                locked <= lock >= 4'd8 || (keep_lock && khold != 13'd0);
                 if (vguard != 10'd0) vguard <= vguard - 10'd1;
                 if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
                 if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; end

@@ -53,10 +53,12 @@ module sd_ring (
     reg [7:0]  r1;
     reg [2:0]  extra;
     reg [31:0] ocr;
-    reg [15:0] tries, acmd_n;
+    reg [15:0] tries; reg [12:0] acmd_n;
     reg        ccs;
     reg [9:0]  bi;
-    reg [31:0] lba, file_lba, file_sect, pos;
+    // the file lies inside the first 64 MB (header search) and is at most 4 GB (FAT32):
+    // sector numbers fit 24 bits, the file's sector count and position 23
+    reg [23:0] lba, file_lba; reg [22:0] file_sect, pos;
     reg        mok;                  // the sector being read starts with the magic so far
     reg [23:0] tmo;
     reg [9:0]  j; reg [7:0] b;
@@ -69,12 +71,12 @@ module sd_ring (
         endcase
     endfunction
     function [47:0] mk; input [5:0] c; input [31:0] arg; input [7:0] crc; mk = {2'b01, c, arg, crc}; endfunction
-    wire [31:0] addr = ccs ? lba : {lba[22:0], 9'd0};
+    wire [31:0] addr = ccs ? {8'd0, lba} : {lba[22:0], 9'd0};
     always @(posedge clk) begin
         sp_go <= 1'b0;
         if (rst) begin st <= S_RESET; state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; rp <= 16'd0; tmo <= 24'd0; end
         else if (!sp_busy && !sp_go) case (st)
-            S_RESET: begin state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; ci <= 4'd0; acmd_n <= 16'd0; rp <= wp; st <= S_PWR; end
+            S_RESET: begin state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; ci <= 4'd0; acmd_n <= 13'd0; rp <= wp; st <= S_PWR; end
             S_PWR: begin                                        // 96 clocks with CS high
                 sp_tx <= 8'hff; sp_go <= 1'b1; ci <= ci + 4'd1;
                 if (ci == 4'd11) begin sd_cs <= 1'b0; step <= 3'd0; st <= S_NEXT; end
@@ -87,7 +89,7 @@ module sd_ring (
                     3'd2: cmd <= mk(6'd55, 32'd0, 8'h65);
                     3'd3: cmd <= mk(6'd41, 32'h40000000, 8'h77);
                     3'd4: begin cmd <= mk(6'd58, 32'd0, 8'hfd); extra <= 3'd4; end
-                    default: begin slow <= 1'b0; lba <= 32'd0; st <= S_RD17; end
+                    default: begin slow <= 1'b0; lba <= 24'd0; st <= S_RD17; end
                 endcase
             end
             S_RD17: begin cmd <= mk(6'd17, addr, 8'hff); ci <= 4'd0; extra <= 3'd0; step <= 3'd5; st <= S_CMD; end
@@ -113,8 +115,8 @@ module sd_ring (
                     3'd1: step <= 3'd2;                         // an R7, or "illegal" from a v1 card
                     3'd2: step <= 3'd3;
                     3'd3: if (r1 == 8'h00) step <= 3'd4;
-                          else if (acmd_n == 16'd8000) st <= S_ERROR;
-                          else begin acmd_n <= acmd_n + 16'd1; step <= 3'd2; end
+                          else if (acmd_n == 13'd8000) st <= S_ERROR;
+                          else begin acmd_n <= acmd_n + 13'd1; step <= 3'd2; end
                     3'd4: begin ccs <= ocr[30]; step <= 3'd5; end
                     default: if (r1 == 8'h00) begin st <= S_RDTOK; tries <= 16'd0; ci <= 4'd0; end else st <= S_ERROR;
                 endcase
@@ -128,19 +130,19 @@ module sd_ring (
                 if (bi != 10'd0 && bi <= 10'd512) begin
                     j = bi - 10'd1; b = sp_rx;
                     if (j < 10'd16 && b != magic(j[3:0])) mok <= 1'b0;
-                    if (j >= 10'd16 && j < 10'd20) file_sect <= {b, file_sect[31:8]};
+                    if (j >= 10'd16 && j < 10'd19) file_sect <= {b[6:0], file_sect[22:8]};   // the count's low 23 bits
                 end
                 if (bi == 10'd515) begin                        // sector done (2 CRC bytes read)
                     if (mok) begin
-                        file_lba <= lba + 32'd1; pos <= 32'd0;
-                        st <= file_sect >= 32'd95 ? S_READY : S_ERROR;
+                        file_lba <= lba + 24'd1; pos <= 23'd0;
+                        st <= file_sect >= 23'd95 ? S_READY : S_ERROR;
                     end else if (lba == SCAN_MAX) st <= S_ERROR;
-                    else begin lba <= lba + 32'd1; st <= S_RD17; end
+                    else begin lba <= lba + 24'd1; st <= S_RD17; end
                 end else begin sp_tx <= 8'hff; sp_go <= 1'b1; bi <= bi + 10'd1; end
             end
             S_READY: begin
                 state <= 2'd1; rp <= wp;
-                if (rec_on) begin state <= 2'd2; lba <= file_lba + pos; st <= S_WR25; end
+                if (rec_on) begin state <= 2'd2; lba <= file_lba + {1'b0, pos}; st <= S_WR25; end
             end
             S_WR25: begin cmd <= mk(6'd25, addr, 8'hff); ci <= 4'd0; st <= S_WRWAIT; end
             S_WRWAIT: begin                                     // CMD25, its R1, one gap byte
@@ -164,14 +166,14 @@ module sd_ring (
             end
             S_BUSY: begin                                       // MISO low while the card programs
                 if (ci == 4'he && sp_rx == 8'hff) begin
-                    if (pos + 32'd1 == file_sect) begin pos <= 32'd0; st <= S_STOP; end
-                    else begin pos <= pos + 32'd1; st <= S_WRTOK; end
+                    if (pos + 23'd1 == file_sect) begin pos <= 23'd0; st <= S_STOP; end
+                    else begin pos <= pos + 23'd1; st <= S_WRTOK; end
                 end else if (tmo == 24'hffffff) st <= S_ERROR;
                 else begin tmo <= tmo + 24'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'he; end
             end
             S_STOP: begin sp_tx <= 8'hfd; sp_go <= 1'b1; st <= S_STOPBUSY; ci <= 4'd0; tmo <= 24'd0; end
             S_STOPBUSY: begin                                   // one byte, then busy until 0xFF
-                if (ci == 4'he && sp_rx == 8'hff) st <= (pos == 32'd0 && rec_on) ? S_WR25 : S_READY;
+                if (ci == 4'he && sp_rx == 8'hff) st <= (pos == 23'd0 && rec_on) ? S_WR25 : S_READY;
                 else if (tmo == 24'hffffff) st <= S_ERROR;
                 else begin tmo <= tmo + 24'd1; sp_tx <= 8'hff; sp_go <= 1'b1; ci <= ci == 4'd0 ? 4'd1 : 4'he; end
             end

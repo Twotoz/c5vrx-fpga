@@ -205,7 +205,8 @@ module jpeg_enc (
                     dmag[5] ? 4'd6 : dmag[4] ? 4'd5 : dmag[3] ? 4'd4 : dmag[2] ? 4'd3 : dmag[1] ? 4'd2 : dmag[0] ? 4'd1 : 4'd0;
     wire [13:0] dev = dval < 0 ? dval - 14'sd1 : dval;          // ones' complement for negatives
     // packer
-    reg  [47:0] acc; reg [6:0] cnt;               // the low cnt bits: issue needs cnt + in-flight <= 21, + the new (<= 27) <= 48
+    reg  [47:0] acc; reg [6:0] cnt; reg pad_done;               // the top cnt bits (left-aligned): the next byte is always acc[47:40];
+                                                  // issue needs cnt + in-flight <= 21, + the new (<= 27) <= 48
     reg         iv; reg [3:0] in_n; reg [11:0] iev;           // the symbol in the Huffman ROM read
     reg  [20:0] hq;
     wire [4:0]  ilen_code = hq[20:16];
@@ -299,15 +300,24 @@ module jpeg_enc (
             // the entropy put (D's symbol, its code from the ROM now)
             begin : pack
                 reg [47:0] a; reg [6:0] c;
-                a = acc; c = cnt;
-                if (can_out && os == O_DATA || can_out && os == O_DRAIN) begin
+                a = acc; c = cnt; pad_done = 1'b0;
+                if (can_out && (os == O_DATA || os == O_PAD || os == O_DRAIN)) begin
                     if (stuff) begin o_valid <= 1'b1; o_data <= 8'h00; stuff <= 1'b0; f_bytes <= f_bytes + 18'd1; end
                     else if (c >= 7'd8) begin
-                        o_valid <= 1'b1; o_data <= a[c - 7'd1 -: 8]; stuff <= a[c - 7'd1 -: 8] == 8'hff;
-                        c = c - 7'd8; f_bytes <= f_bytes + 18'd1;
+                        o_valid <= 1'b1; o_data <= a[47:40]; stuff <= a[47:40] == 8'hff;
+                        a = a << 8; c = c - 7'd8; f_bytes <= f_bytes + 18'd1;
                     end
                 end
-                if (ent_put) begin a = (a << ({1'b0, ilen_code} + {2'b0, in_n})) | {20'd0, ent_val}; c = c + {2'b0, ilen_code} + {3'b0, in_n}; end
+                // the symbol's bits go right below the ones waiting: its LSB at 48 - c - len
+                if (ent_put) begin
+                    a = a | ({20'd0, ent_val} << (7'd48 - c - {2'b0, ilen_code} - {3'b0, in_n}));
+                    c = c + {2'b0, ilen_code} + {3'b0, in_n};
+                end
+                // padding to a byte with ones (python Bits.flush), once fewer than 8 bits wait
+                if (os == O_PAD && c < 7'd8 && !stuff) begin
+                    if (c != 7'd0) begin a = a | {8'hff >> c[2:0], 40'd0}; c = 7'd8; end
+                    pad_done = 1'b1;
+                end
                 acc <= a; cnt <= c;
             end
             case (os)
@@ -321,13 +331,7 @@ module jpeg_enc (
                     if (hj == 10'd8 + HDR_LEN - 1) begin os <= O_DATA; hdr_done <= 1'b1; end
                 end
                 O_DATA: if (fend_seen && pipe_empty && !iv) os <= O_PAD;
-                O_PAD: begin                              // pad to a byte with ones (python Bits.flush)
-                    if (cnt[2:0] != 3'd0) begin
-                        acc <= (acc << (4'd8 - cnt[2:0])) | ((48'd1 << (4'd8 - cnt[2:0])) - 48'd1);
-                        cnt <= cnt + (7'd8 - cnt[2:0]);
-                    end
-                    os <= O_DRAIN;
-                end
+                O_PAD: if (pad_done) os <= O_DRAIN;      // (the pack block pads)
                 O_DRAIN: if (cnt == 7'd0 && !stuff && can_out) begin
                     o_valid <= 1'b1; o_data <= 8'hff; f_bytes <= f_bytes + 18'd1; os <= O_EOI;
                 end

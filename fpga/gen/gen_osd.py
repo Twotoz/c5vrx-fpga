@@ -51,18 +51,22 @@ FREQS = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917, 5865, 5845, 5825, 5805,
 BANDS = 'RABEFL'
 
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
-          'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO']
+          'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
+          'KLOCKV', 'ASYNCV', 'AFOLDV', 'SPIKEV']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
 P0, P1 = 16, 49            # panel columns (inclusive)
 TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
-MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'), ('Settings', None)]
+MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
+              ('Signal', None), ('Settings', None)]
+SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Anti-fold', 'AFOLDV'), ('Spike filter', 'SPIKEV'),
+             ('Back', None)]
 SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
-W_VAL = dict(ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
-N_ITEMS = [0, 6, 1, 7]     # selectable rows per page (receivers: Back only, row ITEM0 + 4)
+W_VAL = dict(KLOCKV=3, ASYNCV=3, AFOLDV=3, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
+N_ITEMS = [0, 7, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
 def glyphs_vh():
@@ -284,7 +288,7 @@ def pages():
     main = Page()
     menu_frame(main, None, ('VSTD', 8))
     for k, (label, val) in enumerate(MAIN_ITEMS):
-        main.item(ITEM0 + k, label, val, chevron=label in ('Receivers', 'Settings'))
+        main.item(ITEM0 + k, label, val, chevron=label in ('Receivers', 'Signal', 'Settings'))
 
     rx = Page()
     menu_frame(rx, 'Receivers')
@@ -300,7 +304,11 @@ def pages():
     menu_frame(st, 'Settings')
     for k, (label, val) in enumerate(SET_ITEMS):
         st.item(ITEM0 + k, label, val, chevron=False)
-    return [live, main, rx, st]
+    sg = Page()
+    menu_frame(sg, 'Signal')
+    for k, (label, val) in enumerate(SIG_ITEMS):
+        sg.item(ITEM0 + k, label, val, chevron=False)
+    return [live, main, rx, st, sg]
 
 
 # ---- reference field logic (rtl/ui/menu.v does the same) -----------------------------
@@ -373,6 +381,9 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['Level', 'Keel', 'RSSI'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
+    if name in ('KLOCKV', 'ASYNCV', 'AFOLDV', 'SPIKEV'):
+        key = dict(KLOCKV='klock', ASYNCV='async', AFOLDV='afold', SPIKEV='spike')[name]
+        return K(rjust('On' if st.get(key, False) else 'Off', w))
     if name == 'BRIGHTV':
         return K([SEG_ON if k <= st['bright'] else SEG_OFF for k in range(8)], fg=WHITE if sel or edit else None)
     if name == 'CALV':

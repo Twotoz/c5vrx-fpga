@@ -14,7 +14,7 @@ module tb_mrc3_core;
     reg en_b, en_c;
     wire [5:0] code;
     integer n, k, f;
-    mrc3_core dut (.clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
+    mrc3_core dut (.afold(1'b0), .spike(1'b0), .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
                    .en_b(en_b), .en_c(en_c),
                    .va(vv[0]), .vb(vv[1]), .vc(vv[2]), .code(code));
     always #12.5 clk = ~clk;
