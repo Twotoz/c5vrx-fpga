@@ -21,10 +21,14 @@ module tri_top (
     input  wire       a_clk, b_clk, c_clk,
     input  wire [6:1] a_d, b_d, c_d, // XIAO pads D1..D6
     output wire       link_tx,       // to D10 of all three C5s (inverted UART)
+`ifdef TRI_HDMI
+    output wire       tmds_clk_p, tmds_clk_n, tmds_d0_p, tmds_d0_n, tmds_d1_p, tmds_d1_n, tmds_d2_p, tmds_d2_n,
+`else
     output wire       lcd_clk, lcd_de, lcd_hs, lcd_vs, lcd_bl,
     output wire [4:0] lcd_r,
     output wire [5:0] lcd_g,
     output wire [4:0] lcd_b,
+`endif
     output wire       sd_cs, sd_sck, sd_mosi,   // TF card, SPI mode (DVR)
     input  wire       sd_miso
 `ifdef TRI_HQDVR
@@ -41,9 +45,20 @@ module tri_top (
     function [7:0] nib; input [5:0] r; nib = {r[5:3], 1'b0, r[2:0], 1'b0}; endfunction   // align_b's nibbles
     // ---- LCD clock: 27 MHz * 5 / 4 = 33.75 MHz (VCO 540 MHz) ----
     wire clk_lcd, pll_lock;
+`ifdef TRI_HDMI
+    // HDMI: 27 MHz * 5 = 135 MHz TMDS bit clock (both edges: 270 Mbit/s), / 5 = the 27 MHz pixel clock
+    localparam UI_HZ = 27000000;
+    wire clk_tmds;
+    rPLL #(.FCLKIN("27"), .IDIV_SEL(0), .FBDIV_SEL(4), .ODIV_SEL(4), .DEVICE("GW2AR-18C")) u_pll (
+        .CLKIN(xtal), .CLKFB(1'b0), .RESET(1'b0), .RESET_P(1'b0), .FBDSEL(6'd0), .IDSEL(6'd0), .ODSEL(6'd0),
+        .PSDA(4'd0), .DUTYDA(4'd0), .FDLY(4'd0), .CLKOUT(clk_tmds), .LOCK(pll_lock), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3());
+    CLKDIV #(.DIV_MODE("5")) u_pdiv (.CLKOUT(clk_lcd), .HCLKIN(clk_tmds), .RESETN(pll_lock), .CALIB(1'b0));
+`else
+    localparam UI_HZ = 33750000;
     rPLL #(.FCLKIN("27"), .IDIV_SEL(3), .FBDIV_SEL(4), .ODIV_SEL(16), .DEVICE("GW2AR-18C")) u_pll (
         .CLKIN(xtal), .CLKFB(1'b0), .RESET(1'b0), .RESET_P(1'b0), .FBDSEL(6'd0), .IDSEL(6'd0), .ODSEL(6'd0),
         .PSDA(4'd0), .DUTYDA(4'd0), .FDLY(4'd0), .CLKOUT(clk_lcd), .LOCK(pll_lock), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3());
+`endif
     // ---- capture on each C5's own clock ----
     reg [5:0] cap_a, cap_b, cap_c, ra;
     always @(posedge a_clk) cap_a <= word(a_d);
@@ -144,25 +159,39 @@ module tri_top (
     wire        osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     // ---- menu and link ----
+    wire o_de, o_hs, o_vs; wire [4:0] o_r, o_b; wire [5:0] o_g; wire [7:0] px_r, px_g, px_b; wire bl_pwm;
     wire [1:0] hmode;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
 `ifdef TRI_LIVEUI
-    hq_ui u_menu (
+    hq_ui #(.CLK_HZ(UI_HZ)) u_menu (
 `else
-    menu #(.HAS_DVR(HAS_DVR)) u_menu (
+    menu #(.HAS_DVR(HAS_DVR), .CLK_HZ(UI_HZ)) u_menu (
 `endif
                  .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
-                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(lcd_bl));
-    link_tx u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .bl_pwm(bl_pwm));
+    link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
                    .locked_a(locked), .pal_a(pal), .hmode(hmode), .lb_addr(lb_raddr), .lb_data(lb_rdata),
                    .osd_addr(osd_raddr), .osd_cell(osd_rdata),
-                   .lcd_de(lcd_de), .lcd_hs(lcd_hs), .lcd_vs(lcd_vs), .lcd_r(lcd_r), .lcd_g(lcd_g), .lcd_b(lcd_b));
-    assign lcd_clk = clk_lcd;
+                   .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
+                   .px_r(px_r), .px_g(px_g), .px_b(px_b));
+`ifdef TRI_HDMI
+    // ---- HDMI: TMDS (blue carries the syncs, active low) and the serialisers ----
+    wire [9:0] s0, s1, s2;
+    tmds_enc u_t0 (.clk(clk_lcd), .de(o_de), .d(px_b), .c({o_vs, o_hs}), .q(s0));
+    tmds_enc u_t1 (.clk(clk_lcd), .de(o_de), .d(px_g), .c(2'b00), .q(s1));
+    tmds_enc u_t2 (.clk(clk_lcd), .de(o_de), .d(px_r), .c(2'b00), .q(s2));
+    hdmi_phy u_phy (.pclk(clk_lcd), .fclk(clk_tmds), .rst(rst_l), .s0(s0), .s1(s1), .s2(s2),
+                    .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n), .tmds_d0_p(tmds_d0_p), .tmds_d0_n(tmds_d0_n),
+                    .tmds_d1_p(tmds_d1_p), .tmds_d1_n(tmds_d1_n), .tmds_d2_p(tmds_d2_p), .tmds_d2_n(tmds_d2_n));
+`else
+    assign lcd_clk = clk_lcd; assign lcd_de = o_de; assign lcd_hs = o_hs; assign lcd_vs = o_vs;
+    assign lcd_r = o_r; assign lcd_g = o_g; assign lcd_b = o_b; assign lcd_bl = bl_pwm;
+`endif
 endmodule
 `default_nettype wire

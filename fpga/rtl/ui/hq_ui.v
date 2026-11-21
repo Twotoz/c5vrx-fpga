@@ -155,9 +155,9 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
     reg [6:0] fi; reg [1:0] bk;
     always @(*) begin
         ch = 7'd0; fg = WHITE; bg = BG_VIDEO; fi = 7'd0; bk = 2'd0;
-        if (r1 == 5'd1 && c1 >= 7'd1 && c1 <= 7'd11) begin                  // channel pill
-            fi = c1 - 7'd2;
-            if (c1 == 7'd1 || c1 == 7'd11) begin ch = c1 == 7'd1 ? G_CAPL : G_CAPR; fg = toast ? ACCENT : PANELFG; end
+        if (r1 == 5'd1 && c1 >= 7'd3 && c1 <= 7'd13) begin                  // channel pill
+            fi = c1 - 7'd4;
+            if (c1 == 7'd3 || c1 == 7'd13) begin ch = c1 == 7'd3 ? G_CAPL : G_CAPR; fg = toast ? ACCENT : PANELFG; end
             else begin
                 bg = toast ? BG_BAR : BG_PANEL;
                 case (fi)
@@ -169,8 +169,8 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                     default: ch = SP;
                 endcase
             end
-        end else if (r1 == 5'd1 && c1 >= 7'd52 && c1 <= 7'd64 && (rec_on || rec_err)) begin   // REC pill
-            fi = c1 - 7'd52; bg = BG_PANEL;
+        end else if (r1 == 5'd1 && c1 >= 7'd50 && c1 <= 7'd62 && (rec_on || rec_err)) begin   // REC pill
+            fi = c1 - 7'd50; bg = BG_PANEL;
             case (fi)
                 7'd0: begin ch = G_CAPL; fg = PANELFG; bg = BG_VIDEO; end
                 7'd1: begin ch = G_DOT; fg = RED; end
@@ -193,8 +193,8 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                 7'd2: ch = "N"; 7'd3: ch = "O"; 7'd5: ch = "S"; 7'd6: ch = "I"; 7'd7: ch = "G"; 7'd8: ch = "N"; 7'd9: ch = "A"; 7'd10: ch = "L";
                 default: ch = SP;
             endcase
-        end else if (r1 == 5'd18 && c1 >= 7'd1 && c1 <= 7'd14) begin                       // receiver bar
-            fi = c1 - 7'd1; bg = BG_PANEL;
+        end else if (r1 == 5'd18 && c1 >= 7'd3 && c1 <= 7'd16) begin                       // receiver bar
+            fi = c1 - 7'd3; bg = BG_PANEL;
             bk = fi < 7'd5 ? 2'd0 : fi < 7'd9 ? 2'd1 : 2'd2;
             if (fi == 7'd0 || fi == 7'd13) begin ch = fi == 7'd0 ? G_CAPL : G_CAPR; fg = PANELFG; bg = BG_VIDEO; end
             else if (fi == 7'd2 || fi == 7'd6 || fi == 7'd10) begin
@@ -205,8 +205,8 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                      st_sig[bk] >= 7'd38 ? G_BARS + 7'd2 : st_sig[bk] >= 7'd13 ? G_BARS + 7'd1 : G_BARS;
             end else ch = SP;
 `ifndef TRI_TRIDVR
-        end else if (r1 == 5'd18 && c1 >= 7'd53 && c1 <= 7'd64) begin                      // logo
-            fi = c1 - 7'd53;
+        end else if (r1 == 5'd18 && c1 >= 7'd51 && c1 <= 7'd62) begin                      // logo
+            fi = c1 - 7'd51;
             if (fi == 7'd0 || fi == 7'd11) begin ch = fi == 7'd0 ? G_CAPL : G_CAPR; fg = PANELFG; end
             else begin ch = G_LOGO0 + fi - 7'd1; fg = fi <= 7'd4 ? ACCENT : WHITE; bg = BG_PANEL; end
 `endif

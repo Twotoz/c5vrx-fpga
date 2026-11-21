@@ -7,7 +7,13 @@
 module tb_osd;
     wire [1:0] hm;
     reg clk = 0, rst = 1;
+`ifdef TRI_HDMI
+    always #18.519 clk = ~clk;                 // 27 MHz (HDMI pixel clock)
+    localparam integer LINE = 1716, PXN = 720, PX0 = 40;   // 720 of the 800 test pixels (x 40..759)
+`else
     always #14.815 clk = ~clk;                 // 33.75 MHz
+    localparam integer LINE = 2145, PXN = 800, PX0 = 0;
+`endif
     // ---- video source (as vid_sync + linebuf would deliver it) ----
     reg [15:0] pic [0:191999];
     reg [15:0] lb [0:2047];
@@ -16,12 +22,12 @@ module tb_osd;
     reg [1:0] dvr_state = 2'd1;
     integer   vline = 0, vcnt = 0, i;
     always @(posedge clk) begin
-        if (vcnt == 2144) begin
+        if (vcnt == LINE - 1) begin
             vcnt <= 0;
             vline = vline == 261 ? 0 : vline + 1;
             if (vline == 0) field_tog <= ~field_tog;
             if (vline >= 18 && vline < 258) begin
-                for (i = 0; i < 800; i = i + 1) lb[{vline[0] ^ 1'b0, 10'd0} + i] = pic[(vline - 18) * 800 + i];
+                for (i = 0; i < PXN; i = i + 1) lb[{vline[0] ^ 1'b0, 10'd0} + i] = pic[(vline - 18) * 800 + PX0 + i];
                 line_info <= {1'b1, 8'(vline - 18)};
             end else line_info <= 9'd0;
             line_tog <= ~line_tog;

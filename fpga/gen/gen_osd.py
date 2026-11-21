@@ -273,13 +273,13 @@ def menu_frame(p, title, right=None):
 
 
 def pages():
-    live = Page()
-    live.bar(1, 1, 11, BG_VIDEO)                    # channel pill, accent after a change
-    live.field(1, 2, 'LIVECH', 9, fg=WHITE, bg=BG_BAR)
-    live.field(1, 52, 'REC', 13, fg=WHITE, bg=BG_PANEL)
+    live = Page()                                   # inside columns 3..62: the HDMI build shows those (720 px)
+    live.bar(1, 3, 13, BG_VIDEO)                    # channel pill, accent after a change
+    live.field(1, 4, 'LIVECH', 9, fg=WHITE, bg=BG_BAR)
+    live.field(1, 50, 'REC', 13, fg=WHITE, bg=BG_PANEL)
     live.field(9, 26, 'NOSIG', 13, fg=WHITE, bg=BG_PANEL)
-    live.field(18, 1, 'RXBAR', 14, fg=WHITE, bg=BG_PANEL)
-    live.field(18, 53, 'LOGO', 12, fg=WHITE, bg=BG_PANEL)
+    live.field(18, 3, 'RXBAR', 14, fg=WHITE, bg=BG_PANEL)
+    live.field(18, 51, 'LOGO', 12, fg=WHITE, bg=BG_PANEL)
 
     main = Page()
     menu_frame(main, None, ('VSTD', 8))

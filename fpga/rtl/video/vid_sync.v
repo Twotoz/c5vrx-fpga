@@ -79,6 +79,11 @@ module vid_sync (
     reg [9:0]  vline, vguard, field_lines, bpl;
     wire [9:0] VSTART = pal ? 10'd20 : 10'd18;
     wire [9:0] VROWS  = pal ? 10'd288 : 10'd240;
+`ifdef TRI_HDMI
+    localparam [9:0] PXN = 10'd720;                      // pixels a line (HDMI: 720, the LCD 800)
+`else
+    localparam [9:0] PXN = 10'd800;
+`endif
     wire [9:0] VMAX   = pal ? 10'd313 : 10'd263;
     // ---- active line ----------------------------------------------------------------
     wire [11:0] HSTART = pal ? 12'd420 : 12'd376;
@@ -188,21 +193,29 @@ module vid_sync (
                 // the line that starts now: active?
                 if (vline + 10'd1 >= VSTART && vline + 10'd1 < VSTART + VROWS) begin
                     act <= 1'b1; dda <= 12'd0; px <= 10'd0;
+`ifdef TRI_HDMI
+                    show_cur <= 1'b1;                     // HDMI 576p shows all 288 PAL lines
+`else
                     show_cur <= !(pal && m6 == 3'd5);
+`endif
                     orow_cur <= orow_n;
+`ifdef TRI_HDMI
+                    orow_n <= orow_n + 8'd1;
+`else
                     if (!(pal && m6 == 3'd5)) orow_n <= orow_n + 8'd1;
+`endif
                     m6 <= m6 == 3'd5 ? 3'd0 : m6 + 3'd1;
                     aidx <= aidx + 10'd1;
                 end else act <= 1'b0;
             end
             // ---- active pixels ----
-            if (act && hc >= HSTART && px < 10'd800) begin
-                if (dda + 12'd800 >= ACT) begin
-                    dda <= dda + 12'd800 - ACT;
+            if (act && hc >= HSTART && px < PXN) begin
+                if (dda + {2'd0, PXN} >= ACT) begin
+                    dda <= dda + {2'd0, PXN} - ACT;
                     p_tick <= 1'b1; p_show <= show_cur; p_row0 <= orow_cur[0]; p_px <= px;
                     p_y <= cy8u; p_u <= cug; p_v <= cvg;
                     px <= px + 10'd1;
-                end else dda <= dda + 12'd800;
+                end else dda <= dda + {2'd0, PXN};
             end
             // ---- gain once per field: k8 = 26112 / max(porch - tip, 8), restoring division ----
             if (vline == 10'd5 && hc == 12'd0) begin

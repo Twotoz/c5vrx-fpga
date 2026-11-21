@@ -52,6 +52,7 @@ def widen(p):
 def main():
     docs = '--docs' in sys.argv
     tri = '--tridvr' in sys.argv
+    hdmi = '--hdmi' in sys.argv           # the HDMI build's output: 720 x 480, the 800-wide reference cropped at x 40
     hq = '--hq' in sys.argv or tri
     shots, base = (TRI_SHOTS, TRI_BASE) if tri else (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
@@ -60,7 +61,7 @@ def main():
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
-        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR', '-DTRI_LIVEUI', '-DTRI_HMAPCALC'] if hq else []), *(['-DTRI_TRIDVR', '-DTRI_SEGFONT'] if tri else []), *rtl_.inc(), '-o', str(t / 'tb'),
+        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR', '-DTRI_LIVEUI', '-DTRI_HMAPCALC'] if hq else []), *(['-DTRI_TRIDVR', '-DTRI_SEGFONT'] if tri else []), *(['-DTRI_HDMI', '-DTRI_HMAPCALC'] if hdmi else []), *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_osd.v'), *rtl_.src('hq_ui.v' if hq else 'menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
         print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-2000:])
@@ -68,17 +69,20 @@ def main():
     ok = True
     for (name, d), fr in zip(shots, frames):
         st = dict(base, **d)
-        hm = G.hmaps()[G.hmode(st)]
+        hm = G.hmaps()[0 if hdmi else G.hmode(st)]       # HDMI: the 720 samples as they are
         wid = [[widen(int(v)) for v in row] for row in pic]
         video = [[wid[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]
         want = np.asarray(G.render(g, G.fill(ps, st), video)).astype(int)
+        if hdmi:
+            want = want[:, 40:760]
         want565 = (want[..., 0] >> 3) << 11 | (want[..., 1] >> 2) << 5 | want[..., 2] >> 3
-        got = fr.reshape(480, 800) if fr.size == 480 * 800 else None
+        W = 720 if hdmi else 800
+        got = fr.reshape(480, W) if fr.size == 480 * W else None
         rgb = None
         if got is not None:
             rgb = np.stack([(got >> 11 & 31) << 3 | (got >> 13 & 7), (got >> 5 & 63) << 2 | (got >> 9 & 3),
                             (got & 31) << 3 | (got >> 2 & 7)], -1).astype(np.uint8)
-            Image.fromarray(rgb).save(out / f'osd_{name}.png')
+            Image.fromarray(rgb).save(out / f'osd_{"hdmi_" if hdmi else ""}{name}.png')
             if docs and name in DOCS:
                 Image.fromarray(rgb).save(HERE.parent.parent / 'docs' / f'osd_{name}.png')
         bad = -1 if got is None else int((got != want565).sum())

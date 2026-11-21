@@ -31,10 +31,9 @@ module lcd_out (
     output wire        lcd_vs,
     output reg  [4:0]  lcd_r,
     output reg  [5:0]  lcd_g,
-    output reg  [4:0]  lcd_b
+    output reg  [4:0]  lcd_b,
+    output reg  [7:0]  px_r, px_g, px_b   // the same pixel, 8 bits a channel (HDMI)
 );
-    localparam HBP = 11'd56, HACT = 11'd800, HFREE = 11'd1200;
-    localparam X0 = 11'd4, GRIDW = 11'd792;
     // ---- clock-domain crossing ------------------------------------------------
     reg [2:0] lt, ft; reg [1:0] lk, pl;
     always @(posedge clk) begin
@@ -43,13 +42,36 @@ module lcd_out (
     end
     wire line_ev = lt[2] ^ lt[1], field_ev = ft[2] ^ ft[1];
     wire locked = lk[1], pal = pl[1];
-    // ---- timing -------------------------------------------------------------------
+`ifdef TRI_HDMI
+    // HDMI build: 720x480p59.94 / 720x576p50 at 27 MHz, half a line 858 / 864
+    // clocks (twice the analog line rate, genlocked like the LCD); sync 62 / 64,
+    // video from 122 / 132; the OSD grid cropped to columns 3..62
+    wire [10:0] HBP = pal ? 11'd132 : 11'd122;
+    localparam  HACT = 11'd720;
+    wire [10:0] HHALF = pal ? 11'd864 : 11'd858, HFREE = HHALF;
+    wire [10:0] HSYNC = pal ? 11'd64 : 11'd62;
+    wire [10:0] GSTART = HBP - 11'd37;                 // column 3, pixel 0 at x = 0
+    wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
+    wire [9:0]  OSDV = pal ? 10'd48 : 10'd0;          // the 480-line OSD centred in 576
+`else
+    localparam  HBP = 11'd56, HACT = 11'd800, HFREE = 11'd1200;
     wire [10:0] HHALF = pal ? 11'd1080 : 11'd1072;
+    wire [10:0] HSYNC = 11'd10;
+    wire [10:0] GSTART = HBP + 11'd3;                  // X0 = 4: column 0 at x = 4
+    wire [9:0]  VFRAME = 10'd525;
+    wire [9:0]  OSDV = 10'd0;
+`endif
+    // ---- timing -------------------------------------------------------------------
     reg  [10:0] hc;
     reg         half;
     reg  [8:0]  info;             // {show, orow} of the pair being shown
     reg  [9:0]  lv;               // free-running LCD line in the frame
     reg         vs_r;
+    reg  [8:0]  vcnt, vrow;       // HDMI: video lines shown in this field, the one shown now
+    always @(posedge clk) begin
+        if (field_ev) vcnt <= 9'd0;
+        else if (line_ev && locked && line_info_a[8]) begin vrow <= vcnt; vcnt <= vcnt + 9'd1; end
+    end
     always @(posedge clk) begin
         if (rst) begin hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= 10'd0; vs_r <= 1'b0; end
         else begin
@@ -62,26 +84,32 @@ module lcd_out (
             end else if (half && hc == HFREE - 11'd1) begin   // no line toggle: free-run
                 hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= lv + 10'd1;
             end else hc <= hc + 11'd1;
-            if ((field_ev && locked) || (!locked && lv >= 10'd525)) begin lv <= 10'd0; vs_r <= 1'b1; end
+            if ((field_ev && locked) || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
         end
     end
     wire        free_row = !locked && lv >= 10'd23 && lv < 10'd503;
-    wire [8:0]  row = locked ? {info[7:0], half} : lv[8:0] - 9'd23;
+`ifdef TRI_HDMI
+    wire [9:0]  row = locked ? {vrow, half} : lv - 10'd23;
+`else
+    wire [9:0]  row = locked ? {1'b0, info[7:0], half} : lv - 10'd23;
+`endif
+    wire [9:0]  orow_v = row - OSDV;                  // the OSD's line
+    wire        osd_line = orow_v < 10'd480;
     wire        row_on = locked ? info[8] : free_row;
     wire        de0 = row_on && hc >= HBP && hc < HBP + HACT;
     wire [9:0]  x = hc[9:0] - HBP[9:0];
     // ---- cell row of this line: row / 24, row % 24, row / 24 * 66, by subtraction
     //      during the first clocks of the line (row is stable from hc = 0) ----
-    reg [8:0]  rrem; reg [10:0] rbase; reg [4:0] ry;
+    reg [9:0]  rrem; reg [10:0] rbase; reg [4:0] ry;
     always @(posedge clk) begin
-        if (hc == 11'd0) begin rrem <= row; rbase <= 11'd0; end
-        else if (rrem >= 9'd24) begin rrem <= rrem - 9'd24; rbase <= rbase + 11'd66; end
+        if (hc == 11'd0) begin rrem <= orow_v; rbase <= 11'd0; end
+        else if (rrem >= 10'd24) begin rrem <= rrem - 10'd24; rbase <= rbase + 11'd66; end
         ry <= rrem[4:0];
     end
     // ---- cell column: counters along the line ----
     reg [3:0] sx; reg [6:0] cx; reg ing;
     always @(posedge clk) begin
-        if (hc == HBP + X0 - 11'd1) begin sx <= 4'd0; cx <= 7'd0; ing <= 1'b1; end
+        if (hc == GSTART) begin sx <= 4'd0; cx <= 7'd0; ing <= osd_line; end
         else if (ing) begin
             if (sx == 4'd11) begin sx <= 4'd0; cx <= cx + 7'd1; if (cx == 7'd65) ing <= 1'b0; end
             else sx <= sx + 4'd1;
@@ -109,15 +137,20 @@ module lcd_out (
     reg [9:0]  sr, sg, sb;
     // column map, read one pixel ahead: hq is the map of x
     wire [9:0] xn = x + 10'd1;
+`ifdef TRI_HDMI
+    wire [1:0] hm = 2'd0;                              // HDMI: the 720 samples as they are
+`else
+    wire [1:0] hm = hmode;
+`endif
 `ifdef TRI_HMAPCALC
     // HQ DVR build: full width or 4:3 only, computed (the map's BSRAM goes to the DVR)
     wire [9:0]  xb = xn - 10'd80;
     wire [11:0] xb5 = {xb, 2'b0} + {2'b0, xb};
-    wire [10:0] hcalc = hmode == 2'd1 ? ((xn >= 10'd80 && xn < 10'd720) ? {1'b1, xb5[11:2]} : 11'd0) : {1'b1, xn};
+    wire [10:0] hcalc = hm == 2'd1 ? ((xn >= 10'd80 && xn < 10'd720) ? {1'b1, xb5[11:2]} : 11'd0) : {1'b1, xn};
 `else
     reg [10:0] hmap [0:4095];
 `include "hmap.vh"
-    wire [10:0] hcalc = hmap[{hmode, xn}];
+    wire [10:0] hcalc = hmap[{hm, xn}];
 `endif
     reg [10:0] hq;
     reg        hv1, hv2;
@@ -141,8 +174,12 @@ module lcd_out (
         hv1 <= hq[10]; hv2 <= hv1;
         osd_addr <= rbase + {4'd0, cx};
         de_d <= {de_d[3:0], de0};
-        hs_d <= {hs_d[3:0], hc < 11'd10};
+        hs_d <= {hs_d[3:0], hc < HSYNC};
+`ifdef TRI_HDMI
+        vs_d <= {vs_d[3:0], lv < 10'd6};             // six lines of vertical sync
+`else
         vs_d <= {vs_d[3:0], vs_r};
+`endif
         sx1 <= sx; sx2 <= sx1; sx3 <= sx2;
         g1 <= ing; g2 <= g1; g3 <= g2;
         ry1 <= ry; ry2 <= ry1;
@@ -174,8 +211,8 @@ module lcd_out (
         begin : px
             reg [9:0] r8, g8, b8;
             r8 = mul171s9(sr); g8 = mul171s9(sg); b8 = mul171s9(sb);
-            if (!de_d[3]) begin lcd_r <= 5'd0; lcd_g <= 6'd0; lcd_b <= 5'd0; end
-            else begin lcd_r <= r8[7:3]; lcd_g <= g8[7:2]; lcd_b <= b8[7:3]; end
+            if (!de_d[3]) begin lcd_r <= 5'd0; lcd_g <= 6'd0; lcd_b <= 5'd0; px_r <= 8'd0; px_g <= 8'd0; px_b <= 8'd0; end
+            else begin lcd_r <= r8[7:3]; lcd_g <= g8[7:2]; lcd_b <= b8[7:3]; px_r <= r8[7:0]; px_g <= g8[7:0]; px_b <= b8[7:0]; end
         end
     end
     assign lcd_de = de_d[4];
