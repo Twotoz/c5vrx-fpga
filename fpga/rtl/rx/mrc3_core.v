@@ -200,9 +200,10 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     localparam S_IDLE = 0, S_LOAD = 1, S_SQ = 2, S_SH = 3, S_CHK = 4, S_DIV = 5, S_LUT = 6,
                S_LUT2 = 7, S_GM = 8, S_WR = 9, S_NEXT = 10, S_STORE = 11;
     wire [15:0] m2j = snap_m2[wj];
-    wire [35:0] sq_p; wire [17:0] gi_p;            // the weight engine's products on DSP blocks
-    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_sq2 (.a({2'b0, m2j}), .b({2'b0, m2j}), .y(sq_p));
-    mul9  #(.A_SIGNED(0), .B_SIGNED(0)) u_gi (.a({1'b0, g_q}), .b({1'b0, isq_q}), .y(gi_p));
+    // the weight engine's two products share one DSP multiplier (m2^2 in S_SQ, g x isq in S_WR)
+    wire [35:0] sq_p; wire [17:0] gi_p = sq_p[17:0];
+    wire        w_gi = st == S_WR;
+    mul18 #(.A_SIGNED(0), .B_SIGNED(0)) u_sq2 (.a(w_gi ? {10'd0, g_q} : {2'b0, m2j}), .b(w_gi ? {10'd0, isq_q} : {2'b0, m2j}), .y(sq_p));
     wire [24:0] m4j = snap_m4[wj];
     wire [9:0]  rq  = (q > 10'd511) ? 10'd511 : (q < 10'd256) ? 10'd256 : q;
     wire [7:0]  w_new = (mp_acc[15:8] == 8'd0) ? 8'd1 : mp_acc[15:8];
@@ -282,16 +283,16 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg  [9:0]  st_s;
     reg         st_ok;
     wire signed [9:0]  d = tok - st_s;               // wrapped to -512..511
-    wire [35:0] p179, p105; wire [17:0] p205;      // products on DSP blocks (the LUTs are scarce)
-    mul18 u_d179 (.a({{8{d[9]}}, d}), .b(18'd179), .y(p179));
-    wire signed [17:0] d179 = p179[17:0];
+    // constant products as shift-adds on carry chains (the DSP blocks are full)
+    wire signed [17:0] dx = {{8{d[9]}}, d};
+    wire signed [17:0] d179 = (dx <<< 7) + (dx <<< 5) + (dx <<< 4) + (dx <<< 1) + dx;   // x 179
     wire        inwin = d >= -10'sd312 && d <= 10'sd384;
     wire signed [9:0]  step = inwin ? d : d179[17:8];
-    mul18 u_s105 (.a({{8{step[9]}}, step}), .b(18'd105), .y(p105));
-    wire signed [17:0] cx = $signed(p105[17:0]) + 18'sd32896;
+    wire signed [17:0] sx = {{8{step[9]}}, step};
+    wire signed [17:0] cx = (sx <<< 6) + (sx <<< 5) + (sx <<< 3) + sx + 18'sd32896;      // x 105
     wire signed [9:0]  cy = cx[17:8];                // floor(cx / 256)
-    mul9 #(.A_SIGNED(0), .B_SIGNED(0)) u_c205 (.a(cy[8:0]), .b(9'd205), .y(p205));
-    wire [17:0] c5 = p205;                           // floor(cy / 5) for 0 <= cy < 1029
+    wire [17:0] cz = {9'd0, cy[8:0]};
+    wire [17:0] c5 = (cz << 7) + (cz << 6) + (cz << 3) + (cz << 2) + cz;               // x 205: floor(cy / 5) for 0 <= cy < 1029
     wire [7:0]  cq = c5[17:10];
     always @(posedge clk) begin
         if (rst) begin st_ok <= 1'b0; code <= 6'd25; end
