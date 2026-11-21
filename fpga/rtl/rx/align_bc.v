@@ -76,17 +76,13 @@ module align_bc (
     genvar l;
     generate for (l = 0; l < 3; l = l + 1) begin : corr
         wire signed [4:0] bi_ = cv(bsel[l][7:4]), bq_ = cv(bsel[l][3:0]);
-        // two 5 x 5 products per MULT18: (ai + aq * 1024) x b = ai b + aq b * 1024,
-        // |ai b| < 512, so the low 10 bits are ai b (signed) and the rest aq b
-        wire signed [17:0] apk = {{3{aq[4]}}, aq, 10'd0} + {{13{ai[4]}}, ai};
-        wire [35:0] pbi, pbq;
-        mul18 u_pi (.a(apk), .b({{13{bi_[4]}}, bi_}), .y(pbi));
-        mul18 u_pq (.a(apk), .b({{13{bq_[4]}}, bq_}), .y(pbq));
-        wire signed [9:0]  p_ii = pbi[9:0], p_iq = pbq[9:0];
-        wire signed [9:0]  p_qi = $signed(pbi[19:10]) + $signed({9'd0, pbi[9]});
-        wire signed [9:0]  p_qq = $signed(pbq[19:10]) + $signed({9'd0, pbq[9]});
-        wire signed [10:0] pr = p_ii + p_qq;
-        wire signed [10:0] pq = p_qi - p_iq;
+        wire [17:0] p_ii, p_qq, p_qi, p_iq;
+        mul9 u_ii (.a({{4{ai[4]}}, ai}), .b({{4{bi_[4]}}, bi_}), .y(p_ii));
+        mul9 u_qq (.a({{4{aq[4]}}, aq}), .b({{4{bq_[4]}}, bq_}), .y(p_qq));
+        mul9 u_qi (.a({{4{aq[4]}}, aq}), .b({{4{bi_[4]}}, bi_}), .y(p_qi));
+        mul9 u_iq (.a({{4{ai[4]}}, ai}), .b({{4{bq_[4]}}, bq_}), .y(p_iq));
+        wire signed [10:0] pr = $signed(p_ii[10:0]) + $signed(p_qq[10:0]);
+        wire signed [10:0] pq = $signed(p_qi[10:0]) - $signed(p_iq[10:0]);
         always @(posedge clk_a) begin
             if (rst_a) begin xr[l] <= 0; xi[l] <= 0; end
             else begin

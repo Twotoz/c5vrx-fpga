@@ -283,25 +283,22 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     reg  [9:0]  st_s;
     reg         st_ok;
     wire signed [9:0]  d = tok - st_s;               // wrapped to -512..511
-    // constant products as shift-adds on carry chains (the DSP blocks are full)
-    wire signed [17:0] dx = {{8{d[9]}}, d};
-    wire signed [17:0] d179 = (dx <<< 7) + (dx <<< 5) + (dx <<< 4) + (dx <<< 1) + dx;   // x 179
-    wire        inwin = d >= -10'sd312 && d <= 10'sd384;
-    wire signed [9:0]  step = inwin ? d : d179[17:8];
-    wire signed [17:0] sx = {{8{step[9]}}, step};
-    wire signed [17:0] cx = (sx <<< 6) + (sx <<< 5) + (sx <<< 3) + sx + 18'sd32896;      // x 105
-    wire signed [9:0]  cy = cx[17:8];                // floor(cx / 256)
-    wire [17:0] cz = {9'd0, cy[8:0]};
-    wire [17:0] c5 = (cz << 7) + (cz << 6) + (cz << 3) + (cz << 2) + cz;               // x 205: floor(cy / 5) for 0 <= cy < 1029
-    wire [7:0]  cq = c5[17:10];
+    // step and code per d from a table in block RAM (gen_tables.disc_rom: the same
+    // arithmetic as mrc3_model.disc50); read at ev_phi, applied the clock after
+    // (ev_phi comes every other clock, so st_s is updated before the next d)
+    reg [15:0] disc [0:1023];
+`include "disc_rom.vh"
+    reg [15:0] dq; reg dv;
     always @(posedge clk) begin
+        dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
+        dv <= 1'b0;
         if (rst) begin st_ok <= 1'b0; code <= 6'd25; end
-        else if (ev_phi) begin
-            if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; code <= 6'd25; end
-            else begin
-                st_s <= st_s + step;
-                code <= cy[9] ? 6'd0 : (cq > 8'd63) ? 6'd63 : cq[5:0];
+        else begin
+            if (ev_phi) begin
+                if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; code <= 6'd25; end
+                else dv <= 1'b1;
             end
+            if (dv) begin st_s <= st_s + dq[15:6]; code <= dq[5:0]; end
         end
     end
 endmodule

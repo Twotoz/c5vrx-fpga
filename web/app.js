@@ -52,12 +52,6 @@ function showRelease() {
   const fs = asset(rel, 'triversity.fs');
   $('dlFs').href = fs ? assetUrl(fs) : '#';
   $('dlFs').toggleAttribute('aria-disabled', !fs);
-  const tri = asset(rel, 'triversity_dvr.fs');
-  $('dlFsTri').href = tri ? assetUrl(tri) : '#';
-  $('dlFsTri').toggleAttribute('aria-disabled', !tri);
-  const hq = asset(rel, 'triversity_hqdvr.fs');
-  $('dlFsHq').href = hq ? assetUrl(hq) : '#';
-  $('dlFsHq').toggleAttribute('aria-disabled', !hq);
   $('infoName').textContent = rel ? (rel.name || rel.tag) : '-';
   $('infoDate').textContent = rel ? new Date(rel.published_at).toLocaleString() : '-';
   $('infoAssets').textContent = rel ? rel.assets.map(a => a.name).join(', ') : '-';
