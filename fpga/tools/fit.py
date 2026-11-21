@@ -69,7 +69,7 @@ def place(args, out, json_in, seed, beta):
     tag = f's{seed}_b{beta}'
     log, pnr = out / f'pnr_{tag}.log', out / f'pnr_{tag}.json'
     cmd = [NEXTPNR, '-q', '-l', str(log), '--json', str(json_in), '--write', str(pnr), '--device', DEVICE,
-           '--vopt', f'family={FAMILY}', '--vopt', f'cst={HERE / "boards" / "tang_nano_20k.cst"}', '--freq', '40',
+           '--vopt', f'family={FAMILY}', '--vopt', f'cst={HERE / "boards" / ("tang_nano_20k_hdmi.cst" if "TRI_HDMI" in args.flags else "tang_nano_20k.cst")}', '--freq', '40',
            '--timing-allow-fail', '--seed', str(seed), '--placer-heap-beta', str(beta)]
     try:
         r = subprocess.run(cmd, cwd=RTL, capture_output=True, text=True, timeout=args.timeout)
