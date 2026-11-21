@@ -86,7 +86,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     input  wire       en_b,
     input  wire       en_c,
     input  wire       va, vb, vc,   // per sample, with raw_*
-    input  wire       afold,        // anti-fold: a C5 under 1/8 of the strongest weight is left out
+    input  wire       wbranch,         // weak branch: B / C under 1/8 of the strongest weight are left out (A, the phase reference, never)
+    input  wire       afold,        // anti-fold: B / C out of phase with A after rotation are left out (fold guard)
     input  wire       spike,        // spike filter: median of the last three codes
     output reg  [5:0] code
 );
@@ -251,7 +252,27 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     // ---- S4: combine ------------------------------------------------------------------
     reg signed [23:0] zi4, zq4;
     wire [7:0] wa_eff = v3[0] ? w_use[0] : 8'd0;
-    wire [7:0] wb_eff = en_b && v3[1] ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
+    // anti-fold: per branch the sign correlation with A after the rotation,
+    // sign(a_i) r_i + sign(a_q) r_q, low-passed (tau 128); below zero the branch
+    // would add out of phase (a tracker off by more than 90 degrees): it is left
+    // out until it is in phase again, whatever its weight
+    wire [13:0] fb_i, fb_q, fc_i, fc_q;
+    addsub #(14) u_fbi (.a(14'd0), .b({rb_i3[12], rb_i3}), .sub(ca_i3[4]), .y(fb_i));
+    addsub #(14) u_fbq (.a(14'd0), .b({rb_q3[12], rb_q3}), .sub(ca_q3[4]), .y(fb_q));
+    addsub #(14) u_fci (.a(14'd0), .b({rc_i3[12], rc_i3}), .sub(ca_i3[4]), .y(fc_i));
+    addsub #(14) u_fcq (.a(14'd0), .b({rc_q3[12], rc_q3}), .sub(ca_q3[4]), .y(fc_q));
+    reg  signed [21:0] fold_b = 22'sd0, fold_c = 22'sd0;
+    always @(posedge clk) begin
+        if (rst) begin fold_b <= 22'sd0; fold_c <= 22'sd0; end
+        else begin
+            if (v3[0] && v3[1]) fold_b <= fold_b + $signed({{8{fb_i[13]}}, fb_i}) + $signed({{8{fb_q[13]}}, fb_q}) - (fold_b >>> 7);
+            if (v3[0] && v3[2]) fold_c <= fold_c + $signed({{8{fc_i[13]}}, fc_i}) + $signed({{8{fc_q[13]}}, fc_q}) - (fold_c >>> 7);
+        end
+    end
+    // out below -16384 (healthy in-phase branches sit near +100000; the margin
+    // keeps a branch's first samples, while its phase tracker settles, in the sum)
+    wire       out_b = afold && fold_b[21] && !(&fold_b[20:14]), out_c = afold && fold_c[21] && !(&fold_c[20:14]);
+    wire [7:0] wb_eff = en_b && v3[1] && !out_b ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] && !out_c ? w_use[2] : 8'd0;
     wire [17:0] a_i, a_q;
     wire [35:0] b_i, b_q, c_i, c_q;
     mul9  u_ai (.a({1'b0, wa_eff}), .b({{4{ca_i3[4]}}, ca_i3}), .y(a_i));
@@ -268,7 +289,7 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;
         end else if (run3 && idx3 == 7'd127 && have_pend) begin
-            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= (afold && pend[ku] < wfloor) ? 8'd0 : pend[ku];
+            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= (wbranch && ku != 0 && pend[ku] < wfloor) ? 8'd0 : pend[ku];
         end
         zi4 <= $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
         zq4 <= $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);

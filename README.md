@@ -113,8 +113,15 @@ receiver's own.
   - *Adaptive sync*: once the line lock is full the line phase is pulled in
     by e/8 instead of e/4: less horizontal jitter on a noisy signal; while
     locking it stays e/4.
-  - *Anti-fold*: a C5 whose combining weight is below 1/8 of the strongest
-    is left out of the fusion: at that level it adds more noise than picture.
+  - *Weak branch*: C5 B or C, when its combining weight is below 1/8 of the
+    strongest, is left out of the fusion: at that level it adds more noise
+    than picture. C5 A, the phase reference, always stays in.
+  - *Anti-fold*: per branch the sign correlation of the rotated B / C with A
+    (low-passed over ~128 samples). When it turns clearly negative (the branch
+    adds out of phase and would cancel picture) that branch is left out,
+    whatever its weight, and comes back once it is in phase again. With
+    healthy signals it never trips (bit-identical to the reference model down
+    to -2 dB C/N).
   - *Spike filter*: the median of the last three demodulator codes (50 ns
     apart) removes single-sample white / black dots; edges and detail of two
     samples and wider pass unchanged.
