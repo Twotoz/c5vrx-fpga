@@ -34,8 +34,7 @@ async function loadReleases() {
   }
   sel.innerHTML = '';
   if (!releases.length) {
-    sel.innerHTML = '<option>No releases yet</option>';
-    $('releaseInfo').textContent = 'No published build found. Flash a local file below.';
+    sel.innerHTML = '<option>No Triversity builds published yet</option>';
   }
   releases.forEach((rel, i) => {
     const o = document.createElement('option');
@@ -53,7 +52,9 @@ function showRelease() {
   const fs = asset(rel, 'triversity.fs');
   $('dlFs').href = fs ? assetUrl(fs) : '#';
   $('dlFs').toggleAttribute('aria-disabled', !fs);
-  if (rel) $('releaseInfo').textContent = `${rel.name || rel.tag} · ${new Date(rel.published_at).toLocaleString()}`;
+  $('infoName').textContent = rel ? (rel.name || rel.tag) : '-';
+  $('infoDate').textContent = rel ? new Date(rel.published_at).toLocaleString() : '-';
+  $('infoAssets').textContent = rel ? rel.assets.map(a => a.name).join(', ') : '-';
   updateButtons();
 }
 $('release').addEventListener('change', showRelease);
@@ -120,7 +121,7 @@ async function connect() {
     $('status').textContent = `Connecting… waiting for the restart (download key: ${key})`;
     await wait(2000);
     const ports = await navigator.serial.getPorts();
-    if (!ports.includes(port)) throw new Error('The C5 did not come back on the same port: click Connect C5 and select it again.');
+    if (!ports.includes(port)) throw new Error('The C5 did not come back on the same port: click Connect device and select it again.');
     let route = 'download key';
     try {
       await handshake(port, 'no_reset');
@@ -132,7 +133,7 @@ async function connect() {
     }
     log(`Bootloader reached by ${route}.`);
     $('status').textContent = `${esploader.chip ? esploader.chip.CHIP_NAME : 'ESP32-C5'} connected · ready to flash`;
-    $('btnConnect').textContent = 'Disconnect';
+    $('btnConnectText').textContent = 'Disconnect';
   } catch (e) {
     if (e?.name !== 'NotFoundError') {
       log(`Connection failed: ${e.message || e}`, 'err');
@@ -145,21 +146,43 @@ async function connect() {
 async function disconnect(msg = 'No device connected') {
   try { if (transport) await transport.disconnect(); } catch { /* gone */ }
   port = transport = esploader = null;
-  $('btnConnect').textContent = 'Connect C5';
+  $('btnConnectText').textContent = 'Connect device';
   $('status').textContent = msg;
   updateButtons();
 }
 $('btnConnect').addEventListener('click', () => (esploader ? disconnect() : connect()));
 
-// ---- flashing ----
-let localBin = null;
-$('localFile').addEventListener('change', async e => {
-  const f = e.target.files[0];
-  localBin = f ? new Uint8Array(await f.arrayBuffer()) : null;
+// ---- source tabs and the local file ----
+let source = 'release', localBin = null;
+function setSource(which) {
+  source = which;
+  for (const [tab, pane, name] of [['tabRelease', 'paneRelease', 'release'], ['tabLocal', 'paneLocal', 'local']]) {
+    $(tab).classList.toggle('active', which === name);
+    $(tab).setAttribute('aria-pressed', String(which === name));
+    $(pane).classList.toggle('active', which === name);
+  }
   updateButtons();
-});
+}
+$('tabRelease').addEventListener('click', () => setSource('release'));
+$('tabLocal').addEventListener('click', () => setSource('local'));
+async function takeFile(f) {
+  localBin = f ? new Uint8Array(await f.arrayBuffer()) : null;
+  $('localFileDetails').hidden = !f;
+  if (f) $('localFileName').textContent = `${f.name} (${f.size.toLocaleString()} bytes)`;
+  updateButtons();
+}
+$('btnBrowseFile').addEventListener('click', () => $('localFile').click());
+$('localFile').addEventListener('change', e => takeFile(e.target.files[0]));
+const dz = $('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); takeFile(e.dataTransfer.files[0]); });
+$('btnClearLog').addEventListener('click', () => { logEl.textContent = ''; });
+if (!('serial' in navigator)) $('unsupportedWarning').hidden = false;
+
+// ---- flashing ----
 function updateButtons() {
-  const haveFw = localBin || asset(current(), 'triversity_c5.bin');
+  const haveFw = source === 'local' ? localBin : asset(current(), 'triversity_c5.bin');
   $('btnFlash').disabled = busy || !esploader || !haveFw;
   $('btnConnect').disabled = busy;
 }
@@ -170,7 +193,7 @@ async function fetchBin(a) {
   return new Uint8Array(await r.arrayBuffer());
 }
 async function images() {
-  if (localBin) return [{ data: localBin, address: parseInt($('offset').value, 16) }];
+  if (source === 'local') return [{ data: localBin, address: parseInt($('offset').value, 16) }];
   const rel = current();
   // offsets from the build's flasher_args.json
   const args = JSON.parse(new TextDecoder().decode(await fetchBin(asset(rel, 'flasher_args.json'))));
@@ -186,7 +209,8 @@ async function images() {
 function progress(p, text) {
   $('progress').hidden = false;
   $('bar').style.width = `${p}%`;
-  $('pct').textContent = text ? `${p}% · ${text}` : `${p}%`;
+  $('pct').textContent = `${p}%`;
+  if (text) $('progressText').textContent = text;
 }
 $('btnFlash').addEventListener('click', async () => {
   if (!esploader) return;

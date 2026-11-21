@@ -1,80 +1,191 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Triversity Flasher</title>
-  <meta name="description" content="Flash the C5VRX Triversity firmware onto the three XIAO ESP32-C5 receivers and get the Tang Nano 20K bitstream.">
-  <link rel="icon" href="assets/logo.png">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C5VRX Triversity | Three-receiver IQ fusion FPV receiver</title>
+<meta name="description" content="Flash the C5VRX Triversity firmware onto three XIAO ESP32-C5 receivers and get the Tang Nano 20K bitstream: IQ fusion of three receivers, colour video, an on-screen menu.">
+<meta name="author" content="Twotoz and the C5VRX contributors">
+<meta name="theme-color" content="#111315">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/favicon.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Triversity: the wider logo in the header, screenshots in the intro */
+  .logo.tri { width: 190px; }
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 4px; }
+  .shots figure { margin: 0; }
+  .shots img, .wide-figure img { width: 100%; height: auto; display: block; border: 1px solid var(--border, #2a2f36); }
+  .shots figcaption, .wide-figure figcaption { font-size: 12px; color: var(--muted, #8b939e); margin-top: 6px; }
+  .wide-figure { margin: 16px 0; }
+  .bitstream-cmd { margin: 12px 0; min-height: 0; height: auto; resize: none; }
+  a.action { display: inline-flex; align-items: center; min-height: 44px; border: 1px solid var(--line-strong); padding: 10px 16px; white-space: nowrap; text-decoration: none; }
+  a.action.primary, .project-info a.action.primary { background: var(--accent); border-color: var(--accent); color: #fff; text-decoration: none; }
+  a.action.primary:hover { background: var(--accent-hover); }
+  @media (max-width: 640px) { .shots { grid-template-columns: 1fr; } }
+</style>
 </head>
 <body>
-  <header class="top">
-    <img src="assets/logo.png" alt="C5VRX Triversity" class="logo">
-    <p class="tag">Web flasher · three XIAO ESP32-C5 + Tang Nano 20K</p>
-  </header>
-
-  <main>
-    <section class="card">
-      <h2>Build</h2>
-      <div class="row">
-        <label for="release">Release</label>
-        <select id="release"><option>Loading releases…</option></select>
-      </div>
-      <p class="hint" id="releaseInfo"></p>
-    </section>
-
-    <section class="card">
-      <h2><span class="step">1</span> C5 firmware</h2>
-      <p>All three C5s get the same firmware; the wiring decides which is A, B or C.
-         Flash them one by one over USB-C. Chrome or Edge on a desktop (Web Serial).</p>
-      <div class="row">
-        <label for="baud">Speed</label>
-        <select id="baud"><option value="460800" selected>460800</option><option value="921600">921600</option><option value="115200">115200</option></select>
-        <label class="check"><input type="checkbox" id="eraseAll"> Erase all flash first</label>
-      </div>
-      <details class="local">
-        <summary>Flash a local file instead</summary>
-        <div class="row">
-          <input type="file" id="localFile" accept=".bin">
-          <label for="offset">at</label>
-          <input type="text" id="offset" value="0x10000" size="9">
+<a class="skip-link" href="#main">Skip to tools</a>
+<header>
+  <div class="header-inner">
+    <a href="https://github.com/Twotoz/c5vrx-fpga" aria-label="C5VRX Triversity"><img class="logo tri" src="assets/logo.png" alt="C5VRX Triversity" width="190" height="49"></a>
+    <nav class="links" aria-label="Project links">
+      <a href="https://twotoz.github.io/C5VRX/" target="_blank" rel="noopener noreferrer">C5VRX</a>
+      <a href="https://discord.gg/3YNgJRHmzD" target="_blank" rel="noopener noreferrer">Discord</a>
+      <a href="https://github.com/Twotoz/c5vrx-fpga" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="workspace">
+  <aside class="docs-sidebar" aria-label="Documentation">
+    <details id="docsNav" open>
+      <summary>Documentation</summary>
+      <nav class="docs-links" aria-label="Documentation links">
+        <a href="https://github.com/Twotoz/c5vrx-fpga#wiring" target="_blank" rel="noopener noreferrer">Hardware &amp; wiring</a>
+        <a href="https://github.com/Twotoz/c5vrx-fpga#flashing" target="_blank" rel="noopener noreferrer">Build &amp; flash</a>
+        <a href="https://github.com/Twotoz/c5vrx-fpga#menu" target="_blank" rel="noopener noreferrer">Menu</a>
+        <a href="https://github.com/Twotoz/c5vrx-fpga#colour" target="_blank" rel="noopener noreferrer">Colour</a>
+        <a href="https://github.com/Twotoz/c5vrx-fpga#why-iq-fusion" target="_blank" rel="noopener noreferrer">Why IQ fusion</a>
+        <a href="https://github.com/Twotoz/c5vrx-fpga#fpga" target="_blank" rel="noopener noreferrer">FPGA design</a>
+        <a href="#safety">Safety &amp; warranty</a>
+        <a href="https://twotoz.github.io/C5VRX/" target="_blank" rel="noopener noreferrer">C5VRX (single receiver)</a>
+      </nav>
+    </details>
+  </aside>
+  <div class="content-column">
+    <main id="main">
+      <div class="project-intro">
+        <h1>C5VRX Triversity: three receivers, one picture</h1>
+        <p>Three XIAO ESP32-C5 receive the same 5.8 GHz analog FPV channel on their own antennas. A Sipeed Tang Nano 20K fuses their IQ before demodulation, decodes the colour and drives an 800x480 screen with an on-screen menu. An official C5VRX version.</p>
+        <nav class="project-shortcuts" aria-label="Explore Triversity">
+          <a href="#tools">Web flasher</a>
+          <a href="#bitstream">FPGA bitstream</a>
+          <a href="#hardware">Hardware</a>
+          <a href="https://github.com/Twotoz/c5vrx-fpga#why-iq-fusion" target="_blank" rel="noopener noreferrer">How it works</a>
+        </nav>
+        <div class="shots">
+          <figure><img src="assets/osd_menu.png" alt="Triversity menu over colour video" width="800" height="480" loading="lazy"><figcaption>The menu, rendered by the FPGA design in simulation</figcaption></figure>
+          <figure><img src="assets/osd_live.png" alt="Triversity live view with channel, recording time and per-receiver signal" width="800" height="480" loading="lazy"><figcaption>Live view: channel, signal per receiver</figcaption></figure>
         </div>
-      </details>
-      <div class="row buttons">
-        <button id="btnConnect">Connect C5</button>
-        <button id="btnFlash" class="primary" disabled>Flash firmware</button>
       </div>
-      <div class="status" id="status">No device connected</div>
-      <div class="progress" id="progress" hidden><div class="bar" id="bar"></div><span id="pct">0%</span></div>
-      <details class="log" id="logBox">
-        <summary>Log</summary>
-        <pre id="log"></pre>
-      </details>
-    </section>
+      <section class="safety-notice" id="safety" aria-labelledby="safetyTitle">
+        <h2 id="safetyTitle">Experimental receiver — safety &amp; warranty</h2>
+        <p><strong>Triversity has not flown yet. Video can disappear without warning, and loss of FPV video can lead to a crash, property damage or serious injury.</strong> Do not rely on it as your only means of maintaining safe aircraft control.</p>
+        <details>
+          <summary>Read the flight safety and warranty disclaimer</summary>
+          <ul>
+            <li><strong>Ground-test every firmware, bitstream and settings combination.</strong> Remove propellers for bench tests.</li>
+            <li><strong>Keep disruptive controls on the ground.</strong> Scanning, channel changes, calibration and mode changes can interrupt the picture. Do not flash in flight.</li>
+            <li><strong>A release or passing CI is not flight qualification.</strong> The design is verified in simulation; board tests are still to come.</li>
+          </ul>
+          <p><strong>No warranty:</strong> provided under <a href="https://github.com/Twotoz/c5vrx-fpga/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">GPL-3.0-only</a>, including its warranty and liability provisions in sections 15–17, to the extent permitted by applicable law.</p>
+        </details>
+      </section>
 
-    <section class="card">
-      <h2><span class="step">2</span> FPGA bitstream</h2>
-      <p>The Tang Nano 20K is programmed over its own USB-C (the onboard BL616
-         debugger). Browsers cannot reach that debugger, so download the
-         bitstream and write it to the Tang's flash with openFPGALoader or the
-         Gowin Programmer.</p>
-      <div class="row buttons">
-        <a id="dlFs" class="button primary" href="#" download>Download triversity.fs</a>
-      </div>
-      <pre class="cmd" id="cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>
-      <p class="hint">Or with the Gowin Programmer: write the file to the Tang's external flash
-         (Sipeed's Tang Nano 20K guide). Without <code>-f</code> openFPGALoader loads it until the next power-up only.
-         The DVR is a separate build (<code>DVR=1 fpga/build.sh</code>).</p>
-    </section>
-  </main>
+      <h2 id="tools" class="section-title">Web flasher</h2>
+      <div id="unsupportedWarning" class="warning" role="status" hidden>USB needs a desktop browser with Web Serial, such as Chrome or Edge. You can still download the builds here.</div>
+      <section id="firmwareView" aria-label="C5 firmware">
+        <div class="panel">
+          <div class="sources" role="group" aria-label="Firmware source">
+            <button type="button" id="tabRelease" aria-pressed="true" class="source-button active">Triversity</button>
+            <button type="button" id="tabLocal" aria-pressed="false" class="source-button">Local File</button>
+          </div>
+          <div id="paneRelease" class="tab-pane active">
+            <div class="field">
+              <label for="release">Build</label>
+              <div class="select-row">
+                <select id="release" class="form-control"><option value="">Loading Triversity builds…</option></select>
+              </div>
+            </div>
+            <details class="release-metadata">
+              <summary>Build details</summary>
+              <div class="info-box">
+                <div class="info-row"><span class="info-label">Build</span><span class="info-value" id="infoName">-</span></div>
+                <div class="info-row"><span class="info-label">Published</span><span class="info-value" id="infoDate">-</span></div>
+                <div class="info-row"><span class="info-label">Assets</span><span class="info-value" id="infoAssets">-</span></div>
+              </div>
+            </details>
+            <p class="hint">All three C5s get the same firmware; the wiring decides which is A, B or C. Flash them one after the other.</p>
+          </div>
+          <div id="paneLocal" class="tab-pane">
+            <div class="dropzone" id="dropzone">
+              <p>Drag &amp; drop a firmware binary (<strong>.bin</strong>) here</p>
+              <span class="text-muted">or</span>
+              <button type="button" id="btnBrowseFile" class="action">Browse file</button>
+              <input type="file" id="localFile" accept=".bin" class="file-input" tabindex="-1">
+            </div>
+            <div id="localFileDetails" class="info-box" hidden>
+              <div class="info-row"><span class="info-label">File</span><span class="info-value" id="localFileName">-</span></div>
+              <div class="field offset-field">
+                <label for="offset">Flash offset</label>
+                <input type="text" id="offset" class="form-control" value="0x10000" autocomplete="off" spellcheck="false">
+                <small class="text-muted"><code>0x10000</code> for the application binary.</small>
+              </div>
+            </div>
+          </div>
+          <details class="advanced-box">
+            <summary>Advanced options</summary>
+            <div class="field">
+              <label for="baud">Flash speed</label>
+              <select id="baud" class="form-control">
+                <option value="460800" selected>460,800 (fast and reliable)</option>
+                <option value="115200">115,200 (safe fallback)</option>
+                <option value="921600">921,600 (maximum)</option>
+              </select>
+            </div>
+            <label class="check"><input type="checkbox" id="eraseAll"><span>Erase flash before installing (also clears stored calibration)</span></label>
+          </details>
+          <div class="flash-actions">
+            <button type="button" id="btnConnect" class="action"><span id="btnConnectText">Connect device</span></button>
+            <button type="button" id="btnFlash" class="action primary" disabled>Flash firmware</button>
+          </div>
+          <p id="status" class="device-status" role="status">No device connected</p>
+          <div id="progress" class="progress-container" aria-live="polite" hidden>
+            <div class="progress-labels"><span id="progressText">Preparing…</span><span id="pct">0%</span></div>
+            <div class="progress-track"><div id="bar" class="progress-bar"></div></div>
+          </div>
+          <details id="logBox" class="flash-log">
+            <summary>Flash log</summary>
+            <button type="button" id="btnClearLog" class="action">Clear</button>
+            <pre id="log" class="terminal-output" tabindex="0" aria-label="Flash log"></pre>
+          </details>
+        </div>
+        <details class="help">
+          <summary>Connection help</summary>
+          <p>Use a USB data cable to connect one XIAO ESP32-C5 at a time and choose its serial port when connecting.</p>
+          <p>A running Triversity C5 enters download mode by itself. If connecting still fails, hold BOOT, tap RESET, then release BOOT.</p>
+          <p>Close any other serial program first: only one program can use the port.</p>
+        </details>
+      </section>
 
-  <footer>
-    <p>Triversity is an official version of <a href="https://github.com/Twotoz/C5VRX">C5VRX</a> by Twotoz and the
-       C5VRX contributors · <a href="https://twotoz.github.io/C5VRX/">C5VRX website and Discord</a> ·
-       <a href="https://github.com/Twotoz/c5vrx-fpga">source</a> · GPL-3.0-only.
-       Flashing uses esptool-js (Espressif, Apache-2.0) as bundled for the C5VRX flasher.</p>
-  </footer>
-  <script type="module" src="app.js"></script>
+      <section class="project-info" id="bitstream" aria-labelledby="bitstreamTitle">
+        <h2 id="bitstreamTitle">FPGA bitstream</h2>
+        <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer.</p>
+        <div class="flash-actions">
+          <a id="dlFs" class="action primary" href="#" download>Download triversity.fs</a>
+        </div>
+        <pre class="terminal-output bitstream-cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>
+        <p class="hint">Without <code>-f</code> openFPGALoader loads it until the next power-up only. The DVR is a separate build (<code>DVR=1 fpga/build.sh</code>): it does not fit next to the colour decoder.</p>
+      </section>
+
+      <section class="project-info hardware-section" id="hardware" aria-labelledby="hardwareTitle">
+        <h2 id="hardwareTitle">Hardware</h2>
+        <p>Three Seeed Studio XIAO ESP32-C5 with their antennas, a Sipeed Tang Nano 20K, a 5" 800x480 40-pin RGB LCD and three buttons on C5 A (Up, Select, Down). Each C5 plugs its left-side pads straight into the Tang's pins; one shared wire carries the channel and the settings back.</p>
+        <figure class="wide-figure">
+          <img src="assets/wiring.png" alt="Wiring of three XIAO ESP32-C5 to the Tang Nano 20K" loading="lazy">
+          <figcaption>The wiring; the pin table is in the <a href="https://github.com/Twotoz/c5vrx-fpga#wiring" target="_blank" rel="noopener noreferrer">README</a>.</figcaption>
+        </figure>
+        <figure class="wide-figure">
+          <img src="assets/colour_ntsc.png" alt="Colour bars: source next to the FPGA's colour decoding" loading="lazy">
+          <figcaption>Colour: the source next to what the FPGA design makes of it after three C5s at 20 dB C/N (simulation).</figcaption>
+        </figure>
+      </section>
+    </main>
+    <footer class="project-info">
+      <p>Triversity is an official version of <a href="https://github.com/Twotoz/C5VRX" target="_blank" rel="noopener noreferrer">C5VRX</a> by Twotoz and the C5VRX contributors. Visit the <a href="https://twotoz.github.io/C5VRX/" target="_blank" rel="noopener noreferrer">C5VRX website</a> for the original project and its Discord invite. Source: <a href="https://github.com/Twotoz/c5vrx-fpga" target="_blank" rel="noopener noreferrer">github.com/Twotoz/c5vrx-fpga</a> (GPL-3.0-only). Flashing uses esptool-js (Espressif, Apache-2.0) as bundled for the C5VRX flasher.</p>
+    </footer>
+  </div>
+</div>
+<script type="module" src="app.js"></script>
 </body>
 </html>
