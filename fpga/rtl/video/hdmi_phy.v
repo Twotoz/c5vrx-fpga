@@ -1,6 +1,6 @@
 // Triversity: HDMI (DVI) physical layer on the Tang Nano 20K: three TMDS
 // channels and the clock, each 10 bits a pixel clock through OSER10 (fclk =
-// 5 x pclk, both edges) into a true LVDS pair (pins 33-40, Sipeed's
+// 5 x pclk, both edges) into a true LVDS pair (LVDS25 in the 3.3 V bank, as Sipeed's example; pins 33-40, Sipeed's
 // hdmi.cst). The port names are single wires: nextpnr pairs them with the
 // LVDS buffers only so.
 `default_nettype none

@@ -39,7 +39,9 @@ jobs:
         run: python fpga/sim/run_chroma_tb.py NTSC && python fpga/sim/run_chroma_tb.py PAL
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
-        run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
+        run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hdmi && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
+      - name: TMDS encoder (HDMI), against the model
+        run: python fpga/sim/run_tmds_tb.py
       - name: JPEG encoder, byte-exact with the model (NTSC, PAL, stalled output)
         run: python fpga/sim/run_jpeg_tb.py 3 && python fpga/sim/run_jpeg_tb.py 0 --pal && python fpga/sim/run_jpeg_tb.py 7 --stall
       - name: HQ DVR to the card, byte-exact
@@ -67,4 +69,18 @@ jobs:
           name: triversity-fpga-bitstream
           path: fpga/build/triversity.fs
 
-
+  bitstream-hdmi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tools
+        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - name: Build (HDMI)
+        run: HDMI=1 fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triversity-fpga-bitstream-hdmi
+          path: fpga/build/triversity_hdmi.fs

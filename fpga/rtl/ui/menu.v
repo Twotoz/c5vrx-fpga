@@ -272,6 +272,12 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire [7:0]  cn_db = cn_p[22:11] > 12'd99 ? 8'd99 : cn_p[18:11];
     wire [7:0]  gn = st_gain[rk] > 8'd99 ? 8'd99 : st_gain[rk];
     wire [7:0]  rm = {1'b0, rec_m};
+    // one decimal converter for the number this cell shows (one cell a clock):
+    // the scan step, the recording minutes, C/N or gain; seconds have their own
+    wire [7:0]  nv = fid == F_SCANV ? {2'b0, scan_ch} + 8'd1 :
+                     (fid == F_RECV || fid == F_REC) ? rm :
+                     (fid == F_RXROW && fi <= 7'd14) ? cn_db : gn;
+    wire [3:0]  T = tv(nv), O = ov(nv), T2 = tv({2'b0, rec_s}), O2 = ov({2'b0, rec_s});
     reg  [6:0]  fch; reg fgv, fbv; reg [2:0] ffg; reg [1:0] fbg;
     always @(*) begin
         fch = fi; fgv = 1'b0; ffg = WHITE; fbv = 1'b0; fbg = BG_VIDEO;
@@ -299,8 +305,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     7'd2: fch = scan_ch >= 6'd19 ? G_SEGON : G_SEGOFF;
                     7'd3: fch = scan_ch >= 6'd28 ? G_SEGON : G_SEGOFF;
                     7'd4: fch = scan_ch >= 6'd38 ? G_SEGON : G_SEGOFF;
-                    7'd6: fch = scan_ch >= 6'd9 ? digit(tv({2'b0, scan_ch} + 8'd1)) : SP;
-                    7'd7: fch = digit(scan_ch >= 6'd9 ? ov({2'b0, scan_ch} + 8'd1) : scan_ch[3:0] + 4'd1);
+                    7'd6: fch = scan_ch >= 6'd9 ? digit(T) : SP;
+                    7'd7: fch = digit(scan_ch >= 6'd9 ? O : scan_ch[3:0] + 4'd1);
                     7'd8: fch = "/"; 7'd9: fch = "4"; 7'd10: fch = "8";
                     default: fch = SP;
                 endcase
@@ -311,10 +317,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 else if (ds2 == 2'd2) case (fi)
                     7'd2: fch = rec_m >= 7'd10 ? G_DOT : SP;
                     7'd3: fch = rec_m >= 7'd10 ? SP : G_DOT;
-                    7'd4: fch = rec_m >= 7'd10 ? digit(tv(rm)) : SP;
-                    7'd5: fch = digit(ov(rm));
+                    7'd4: fch = rec_m >= 7'd10 ? digit(T) : SP;
+                    7'd5: fch = digit(O);
                     7'd6: fch = ":";
-                    7'd7: fch = digit(tv({2'b0, rec_s})); 7'd8: fch = digit(ov({2'b0, rec_s}));
+                    7'd7: fch = digit(T2); 7'd8: fch = digit(O2);
                     default: fch = SP;
                 endcase
                 else fch = str(ds2 == 2'd0 ? 5'd4 : ds2 == 2'd1 ? 5'd5 : 5'd6, fi[3:0]);
@@ -342,10 +348,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     7'd0: begin fch = G_CAPL; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                     7'd1: begin fch = G_DOT; fgv = 1'b1; ffg = RED; end
                     7'd3: fch = "R"; 7'd4: fch = "E"; 7'd5: fch = "C";
-                    7'd7: fch = rec_m >= 7'd10 ? digit(tv(rm)) : SP;
-                    7'd8: fch = digit(ov(rm));
+                    7'd7: fch = rec_m >= 7'd10 ? digit(T) : SP;
+                    7'd8: fch = digit(O);
                     7'd9: fch = ":";
-                    7'd10: fch = digit(tv({2'b0, rec_s})); 7'd11: fch = digit(ov({2'b0, rec_s}));
+                    7'd10: fch = digit(T2); 7'd11: fch = digit(O2);
                     7'd12: begin fch = G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                     default: fch = SP;
                 endcase
@@ -379,11 +385,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     else if (fi >= 7'd4 && fi <= 7'd8) begin
                         fch = {1'b0, st_sig[rk]} > ({1'b0, fi} - 8'd4) * 8'd20 ? G_SEGON : G_SEGOFF; fgv = 1'b1; ffg = WHITE;
                     end else if (fi == 7'd12) fch = (cnr != 12'd0 && cn_neg && cn_db >= 8'd10) ? "-" : SP;
-                    else if (fi == 7'd13) fch = cnr == 12'd0 ? "-" : cn_db >= 8'd10 ? digit(tv(cn_db)) : (cn_neg && cn_db != 8'd0) ? "-" : SP;
-                    else if (fi == 7'd14) fch = cnr == 12'd0 ? "-" : digit(ov(cn_db));
+                    else if (fi == 7'd13) fch = cnr == 12'd0 ? "-" : cn_db >= 8'd10 ? digit(T) : (cn_neg && cn_db != 8'd0) ? "-" : SP;
+                    else if (fi == 7'd14) fch = cnr == 12'd0 ? "-" : digit(O);
                     else if (fi == 7'd18) fch = gn >= 8'd10 ? "G" : SP;
-                    else if (fi == 7'd19) fch = gn >= 8'd10 ? digit(tv(gn)) : "G";
-                    else if (fi == 7'd20) fch = digit(ov(gn));
+                    else if (fi == 7'd19) fch = gn >= 8'd10 ? digit(T) : "G";
+                    else if (fi == 7'd20) fch = digit(O);
                     else if (fi >= 7'd23 && fi <= 7'd26) begin
                         fgv = 1'b1;
                         if (rk > mode) begin ffg = GREY; fch = fi == 7'd23 ? "I" : fi == 7'd24 ? "d" : fi == 7'd25 ? "l" : "e"; end

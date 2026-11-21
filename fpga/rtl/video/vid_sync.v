@@ -250,6 +250,24 @@ module vid_sync (
         end
     end
 `ifdef TRI_HQDVR
+`ifdef TRI_HDMI
+    // ---- HQ DVR stream, HDMI build: the display samples 720 a line already,
+    // so the DVR takes the same pixels (Y = the display's luma, Cb / Cr from
+    // the same U, V before the line-above average) ----
+    reg  [8:0] d_ln; reg [2:0] d_ft;
+    wire signed [10:0] q_uo = {p_u[9], p_u}, q_vo = {p_v[9], p_v};
+    wire signed [12:0] q_cb = 13'sd128 + q_uo + (q_uo >>> 3) + (q_uo >>> 6) + (q_uo >>> 8);
+    wire signed [12:0] q_cr = 13'sd128 + (q_vo >>> 1) + (q_vo >>> 2) + (q_vo >>> 4);
+    function [7:0] clq; input signed [12:0] v; clq = v < 0 ? 8'd0 : v > 13'sd255 ? 8'd255 : v[7:0]; endfunction
+    always @(posedge clk) begin
+        d_ft <= {d_ft[1:0], field_tog};
+        d_fstart <= d_ft[2] ^ d_ft[1];
+        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        if (hc == 12'd1) d_ln <= aidx[8:0] - 9'd1;
+        d_valid <= p_tick;
+        if (p_tick) begin d_x <= p_px; d_line <= d_ln; d_y <= y8; d_cb <= clq(q_cb); d_cr <= clq(q_cr); end
+    end
+`else
     // ---- HQ DVR stream: a second DDA, 720 pixels over the active line; JPEG
     // Y = the display's luma, Cb = 128 + 1.146 U, Cr = 128 + 0.813 V (gray
     // units; dvr_hq.v's 4:2:0 averages each line pair, which also cancels
@@ -284,6 +302,7 @@ module vid_sync (
             d_y <= clq(qgy); d_cb <= clq({{7{q_cb[12]}}, q_cb}); d_cr <= clq({{7{q_cr[12]}}, q_cr});
         end
     end
+`endif
 `else
     always @(posedge clk) begin d_valid <= 1'b0; d_x <= 10'd0; d_line <= 9'd0; d_y <= 8'd0; d_cb <= 8'd0; d_cr <= 8'd0; d_fstart <= 1'b0; d_parity <= 1'b0; end
 `endif

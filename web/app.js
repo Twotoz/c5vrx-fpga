@@ -52,6 +52,9 @@ function showRelease() {
   const fs = asset(rel, 'triversity.fs');
   $('dlFs').href = fs ? assetUrl(fs) : '#';
   $('dlFs').toggleAttribute('aria-disabled', !fs);
+  const hd = asset(rel, 'triversity_hdmi.fs');
+  $('dlFsHdmi').href = hd ? assetUrl(hd) : '#';
+  $('dlFsHdmi').toggleAttribute('aria-disabled', !hd);
   $('infoName').textContent = rel ? (rel.name || rel.tag) : '-';
   $('infoDate').textContent = rel ? new Date(rel.published_at).toLocaleString() : '-';
   $('infoAssets').textContent = rel ? rel.assets.map(a => a.name).join(', ') : '-';

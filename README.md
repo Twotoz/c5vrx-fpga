@@ -57,8 +57,11 @@ USB debugger). Every push to `main` that changes the firmware or the FPGA
 design publishes a release (`release.yml`); `pages.yml` mirrors the newest
 releases into the flasher.
 
-One bitstream, `triversity.fs`: three C5s fused (Single, Diversity or
-Triversity), colour, the full menu and the HQ DVR at the same time. The DVR
+Two bitstreams with the same receiver, one per output: `triversity.fs` for
+the 800x480 RGB LCD, `triversity_hdmi.fs` for HDMI (720x480p60 NTSC,
+720x576p50 PAL with all 288 lines; the LCD and HDMI share the Tang's pins).
+Both: three C5s fused (Single, Diversity or Triversity), colour, the full menu
+and the HQ DVR at the same time. The DVR
 buffers the fields in the Tang's built-in 8 MB SDRAM (block order, up to
 four fields), so recording never takes block RAM or time from the picture.
 Fit: 84 % LUT4, 43 of 46 BSRAM; 68 MHz on the 40 MHz IQ clock, 93 MHz on the
@@ -304,13 +307,14 @@ The HQ build's screen while recording:
 
 ![HQ DVR live view](docs/osd_hq_rec.png)
 
-The LCD and HDMI cannot run at the same time on the Tang Nano 20K: the HDMI
-pairs (pins 33-40) are the LCD's green and red pins. The DVR uses its own
-pins (the TF slot), so LCD + DVR and HDMI + DVR both fit. HDMI would be a
-separate bitstream at 720x480p (NTSC) / 720x576p (PAL): exactly twice the
-analog line rate, so the same genlocked line doubling without a frame buffer. The pins' IO standard is
-fixed in a bitstream (LVCMOS for the LCD, LVDS for HDMI), so switching between
-them in the menu means loading the other bitstream.
+HDMI (`HDMI=1 fpga/build.sh` -> `triversity_hdmi.fs`): the LCD's pins 33-40
+carry the TMDS pairs (emulated LVDS, LVCMOS33D), so one bitstream drives one
+of the two. 720x480p59.94 (NTSC) or 720x576p50 (PAL, all 288 lines a field)
+at 27 MHz, exactly twice the analog line rate: the same genlocked line
+doubling as the LCD, no frame buffer. The display samples 720 pixels a line,
+the DVR records the same pixels; the OSD is the LCD's grid cropped to
+columns 3..62 (`run_osd_tb.py --hdmi` checks it pixel for pixel, the TMDS
+encoder `run_tmds_tb.py`).
 
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
 `run_link_tx_tb.py`, `run_chroma_tb.py` (colour, bit-exact),
