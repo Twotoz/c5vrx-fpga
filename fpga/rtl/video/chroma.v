@@ -132,15 +132,15 @@ module chroma (
     wire        p1 = palr[0];                       // pal of pu_r
     wire        chg1 = palr[0] != palr[1];          // standard changed at pu_r
     wire [4:0]  n1 = p1 ? 5'd18 : 5'd22;
-    integer i;
+    integer i, i2, i0;
     // delayed code and table values (python: c, s, co at k - (n - 1))
     reg  signed [6:0] dc [0:31];
     reg  signed [7:0] ds [0:31];
     reg  signed [7:0] dco [0:31];
     initial begin
         palr = 4'd0; u1 = 18'sd0; v1 = 18'sd0; u2 = 22'sd0; v2 = 22'sd0; pu_r = 14'sd0; pv_r = 14'sd0;
-        for (i = 0; i < 24; i = i + 1) begin dpu[i] = 14'sd0; dpv[i] = 14'sd0; du1[i] = 18'sd0; dv1[i] = 18'sd0; end
-        for (i = 0; i < 32; i = i + 1) begin dc[i] = 7'sd0; ds[i] = 8'sd0; dco[i] = 8'sd0; end
+        for (i0 = 0; i0 < 24; i0 = i0 + 1) begin dpu[i0] = 14'sd0; dpv[i0] = 14'sd0; du1[i0] = 18'sd0; dv1[i0] = 18'sd0; end
+        for (i0 = 0; i0 < 32; i0 = i0 + 1) begin dc[i0] = 7'sd0; ds[i0] = 8'sd0; dco[i0] = 8'sd0; end
     end
     always @(posedge clk) begin
         palr <= {palr[2:0], pal};
@@ -166,14 +166,14 @@ module chroma (
     always @(posedge clk) begin
         chg2 <= chg1; p2 <= p1;
         if (rst) begin
-            for (i = 0; i < 24; i = i + 1) begin du1[i] <= 18'sd0; dv1[i] <= 18'sd0; end
+            for (i2 = 0; i2 < 24; i2 = i2 + 1) begin du1[i2] <= 18'sd0; dv1[i2] <= 18'sd0; end
             u2 <= 22'sd0; v2 <= 22'sd0;
         end else if (chg2) begin
-            for (i = 0; i < 24; i = i + 1) begin du1[i] <= 18'sd0; dv1[i] <= 18'sd0; end
+            for (i2 = 0; i2 < 24; i2 = i2 + 1) begin du1[i2] <= 18'sd0; dv1[i2] <= 18'sd0; end
             du1[0] <= u1; dv1[0] <= v1; u2 <= u1; v2 <= v1;
         end else begin
             du1[0] <= u1; dv1[0] <= v1;
-            for (i = 1; i < 24; i = i + 1) begin du1[i] <= du1[i-1]; dv1[i] <= dv1[i-1]; end
+            for (i2 = 1; i2 < 24; i2 = i2 + 1) begin du1[i2] <= du1[i2-1]; dv1[i2] <= dv1[i2-1]; end
             u2 <= u2 + u1 - du1[(p2 ? 5'd18 : 5'd22) - 5'd1]; v2 <= v2 + v1 - dv1[(p2 ? 5'd18 : 5'd22) - 5'd1];
         end
     end

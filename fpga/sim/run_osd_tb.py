@@ -43,7 +43,7 @@ def widen(p):
 def main():
     docs = '--docs' in sys.argv
     pic = picture()
-    g, ps = G.glyphs(), G.pages()
+    g, ps = G.glyphs_vh(), G.pages()
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)

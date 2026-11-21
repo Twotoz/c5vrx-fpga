@@ -23,6 +23,7 @@ by rtl/ui/menu.v; fill() below is the reference for that logic.
 
     python fpga/gen/gen_osd.py      writes rtl/ui/osd_font.vh and osd_pages.vh
 """
+import re
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -62,6 +63,18 @@ SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'L
              ('Calibrate', 'CALV'), ('Back', None)]
 W_VAL = dict(ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
 N_ITEMS = [0, 6, 1, 7]     # selectable rows per page (receivers: Back only, row ITEM0 + 4)
+
+
+def glyphs_vh():
+    """The glyphs as committed in rtl/ui/osd_font.vh (what the RTL draws): the
+    testbench uses these, so another version of the font cannot differ."""
+    g = [[[0] * CW for _ in range(CH)] for _ in range(128)]
+    for m in re.finditer(r"font\[(\d+)\] = 24'h([0-9a-f]+);", (RTL / 'osd_font.vh').read_text()):
+        a, v = int(m.group(1)), int(m.group(2), 16)
+        code, y = a // 32, a % 32
+        if y < CH:
+            g[code][y] = [(v >> (2 * x)) & 3 for x in range(CW)]
+    return g
 
 
 def logo_tiles():
