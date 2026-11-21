@@ -49,12 +49,12 @@ def markers(raws, seed, n, count=6):
     return raws, valid
 
 
-def run(raws, en, work, valid, flags=0):
+def run(raws, en, work, valid):
     for name, r in zip('abc', raws):
         (work / f'raw_{name}.hex').write_text('\n'.join(f'{int(v):02x}' for v in r) + '\n')
     (work / 'valid.hex').write_text('\n'.join(f'{int(valid[0, k] | valid[1, k] << 1 | valid[2, k] << 2):x}'
                                               for k in range(valid.shape[1])) + '\n')
-    subprocess.run(['vvp', '-n', str(work / 'tb'), f'+n={len(raws[0])}', f'+en_b={en[1]}', f'+en_c={en[2]}', f'+flags={flags}'],
+    subprocess.run(['vvp', '-n', str(work / 'tb'), f'+n={len(raws[0])}', f'+en_b={en[1]}', f'+en_c={en[2]}'],
                    cwd=work, check=True, stdout=subprocess.DEVNULL)
     return np.array([int(x, 16) if 'x' not in x and 'z' not in x else -1
                      for x in (work / 'code.hex').read_text().split()], np.int64)
@@ -68,11 +68,8 @@ def main():
         ok = True
         cases = [(5, 3, 300, (1, 1, 1)), (6, 12, 0, (1, 1, 1)), (7, -2, 0, (1, 1, 1)),
                  (8, 6, 300, (1, 1, 0)), (9, 6, 300, (1, 0, 1)), (10, 4, 0, (1, 0, 0)), (11, None, 0, (1, 1, 1))]
-        # the Signal page switches on ({anti-fold, weak branch}): a dead C, random words, single switches
-        cases = [c + (0,) for c in cases] + [(5, 3, 300, (1, 1, 1), 3), (12, 'deadC', 0, (1, 1, 1), 3),
-                                             (11, None, 0, (1, 1, 1), 3), (13, -2, 300, (1, 1, 1), 1),
-                                             (14, 'deadC', 0, (1, 1, 1), 2)]
-        for seed, cn, fd, en, flags in cases:
+        cases.append((12, 'deadC', 0, (1, 1, 1)))   # C5 C without signal
+        for seed, cn, fd, en in cases:
             n = 6000
             if cn == 'deadC':   # C5 C without signal: random words on C only
                 raws = stimulus(seed, 6, fd, n)
@@ -82,16 +79,15 @@ def main():
             else:
                 raws = stimulus(seed, cn, fd, n)
             raws, valid = markers(raws, seed, n, 0 if seed == 6 else 6)
-            hw = run(raws, en, work, valid, flags)
-            ref = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid,
-                                 wbranch=bool(flags & 1), afold=bool(flags & 2)).astype(np.int64)
+            hw = run(raws, en, work, valid)
+            ref = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid).astype(np.int64)
             best = None
             for lat in range(5, 40):
                 m = np.count_nonzero(hw[lat + WARMUP:lat + len(ref)] != ref[WARMUP:len(hw) - lat])
                 if best is None or m < best[1]:
                     best = (lat, m)
             lat, mism = best
-            print(f'seed={seed} cn={cn} fd={fd} en={en} flags={flags}: latency {lat}, mismatches {mism} of {len(ref) - WARMUP}')
+            print(f'seed={seed} cn={cn} fd={fd} en={en}: latency {lat}, mismatches {mism} of {len(ref) - WARMUP}')
             ok &= mism == 0
     print('PASS' if ok else 'FAIL')
     sys.exit(0 if ok else 1)

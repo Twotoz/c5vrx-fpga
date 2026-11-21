@@ -108,8 +108,7 @@ receiver's own.
 - **Record**: Off -> On (video + link log) -> Log (link log only) -> Off;
   No card, Ready, the recording time, Log, Card err. The link log: every
   sixth field (0.1 s) a record with per C5 the C/N, signal and AFC / video
-  flags, the combining weights, which branch Weak branch or Anti-fold left
-  out, sync lock and quality, channel, mode, the Signal switches, the Noise
+  flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, the Noise
   filter's level and the DVR's field number (so it lines up with the video).
   `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
@@ -119,18 +118,6 @@ receiver's own.
   - *Adaptive sync*: once the line lock is full the line phase is pulled in
     by e/8 instead of e/4: less horizontal jitter on a noisy signal; while
     locking it stays e/4.
-  - *Weak branch*: C5 B or C, when its combining weight is below 1/8 of the
-    strongest, is left out of the fusion: at that level it adds more noise
-    than picture. C5 A, the phase reference, always stays in.
-  - *Anti-fold*: per branch the sign correlation of the rotated B / C with A
-    (low-passed over ~128 samples). When it turns clearly negative (the branch
-    adds out of phase and would cancel picture) that branch is left out,
-    whatever its weight, and comes back once it is in phase again. With
-    healthy signals it never trips (identical to off on full frames down to
-    -4 dB C/N, with fading).
-  - *Spike filter*: the median of the last three demodulator codes (50 ns
-    apart) removes single-sample white / black dots; edges and detail of two
-    samples and wider pass unchanged.
   - *Noise filter*: adaptive noise suppression on the luma. The noise on the
     back porch (64 lines) picks a level 0..3; the luma then runs through a
     one-pole low-pass of that strength (`y += (x - y) >> level`). Level 0
@@ -352,7 +339,7 @@ Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`
 `run_align_tb.py` (the shared B/C alignment against two separate engines on FM-modulated video),
 `run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
 `run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`; `--log` with the link log, read back with `tools/trilog.py`),
-`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance per Signal switch and scenario),
+`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).

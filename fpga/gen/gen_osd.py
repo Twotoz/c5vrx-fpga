@@ -61,13 +61,12 @@ TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
 MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
               ('Signal', None), ('Settings', None)]
-SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Weak branch', 'WEAKV'), ('Anti-fold', 'AFOLDV'),
-             ('Noise filter', 'NFILTV'),
+SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'),
              ('Back', None)]
 SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
 W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, AFOLDV=3, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
-N_ITEMS = [0, 7, 1, 7, 6]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
+N_ITEMS = [0, 7, 1, 7, 4]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
 def glyphs_vh():

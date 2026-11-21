@@ -1,16 +1,16 @@
 """C5VRX by Twotoz and the C5VRX contributors: picture performance of the
-Triversity receiver as built, per Signal page switch.
+Triversity receiver as built: one C5 against three, and the Noise filter.
 
 Signal: one NTSC frame per case through the C5 channel model (model/eval3.py:
 own LO per C5, independent noise, optional Rayleigh fading at 300 Hz, 250 us
 AGC), three C5s with 3-bit I/Q. Receiver: model/mrc3_model.py (combiner,
-tracker, weights, discriminator, Weak branch, Anti-fold;
+tracker, weights, discriminator;
 bit-exact with rtl/rx/mrc3_core.v, sim/run_tb3.py) and for the Noise filter
 the luma path of chroma.v + vid_sync.v (model/chroma_model.py hw_decode and
 ans, bit-exact with the RTL: run_chroma_tb.py, run_ans_tb.py).
 
 Table 1, picture lock (0..1) / SINAD dB with research/sim.py's goggle model:
-one C5 alone, and Triversity with the switches off, each on, all on, for
+one C5 alone and Triversity (three C5s), for
   - equal:  all three at the same C/N
   - C dead: C5 C without signal (antenna off)
   - C weak: C5 C 10 dB below A and B
@@ -33,7 +33,7 @@ import eval3  # noqa: E402
 import mrc3_model  # noqa: E402
 
 E = eval3.E
-SW = {'off': {}, 'weak': dict(wbranch=True), 'afold': dict(afold=True), 'both': dict(wbranch=True, afold=True)}
+SW = {'3 C5': {}}
 CASES = ('equal', 'C dead', 'C weak', 'C fold')
 
 

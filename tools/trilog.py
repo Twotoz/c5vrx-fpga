@@ -7,14 +7,13 @@ Record (25 bytes, little-endian):
    0  "TRIL"
    4  log number (16 bit, +1 per record)
    6  video field number (the HQ DVR's JPEG records, tools/hqdvr_to_mp4.py)
-   8  weight in use A, B, C (8 bit each; 0 = left out by Weak branch)
+   8  weight in use A, B, C (8 bit each)
   11  flags: bit 0 PAL, 1 sync locked, 2 B enabled (aligned), 3 C enabled,
-      4 B alive, 5 C alive, 6 B left out by Anti-fold, 7 C left out by Anti-fold
+      4 B alive, 5 C alive
   12  sync quality (in-window sync edges in the last 100 ms, 16 bit)
   14  channel index (bits 0..5), Noise filter level 0..3 (bits 6..7)
-  15  Signal switches (bit 0 Keep lock, 1 Anti-fold, 2 Adaptive sync,
-      4 Weak branch, 5 Noise filter), mode (bits 6..7: 0 Single,
-      1 Diversity, 2 Triversity)
+  15  Signal switches (bit 0 Keep lock, 2 Adaptive sync, 5 Noise filter),
+      mode (bits 6..7: 0 Single, 1 Diversity, 2 Triversity)
   16  per C5 A, B, C three bytes, the newest marker values (c5/main/fpga_link.h):
       C/N x10 + 1000 (12 bits, 0 unknown), flags bits 0..3 (AFC locked,
       video, busy, DC fault; 4 bits), signal 0..100 (8 bits)
@@ -28,7 +27,7 @@ import csv, struct, sys
 from pathlib import Path
 
 SIZE = 25
-SW = ['keep_lock', 'anti_fold', 'adaptive_sync', None, 'weak_branch', 'noise_filter']
+SW = ['keep_lock', None, 'adaptive_sync', None, None, 'noise_filter']
 
 
 def records(data):
@@ -56,7 +55,6 @@ def records(data):
             if name != 'A':
                 row[f'{name}_enabled'] = fl >> (2 if name == 'B' else 3) & 1
                 row[f'{name}_alive'] = fl >> (4 if name == 'B' else 5) & 1
-                row[f'{name}_folded'] = fl >> (6 if name == 'B' else 7) & 1
         out[num] = row
         i += SIZE
     if not out:
@@ -92,10 +90,6 @@ def main():
         ax[2].plot(t, [r['sync_q'] for r in rows], label='sync quality')
         ax[2].plot(t, [0 if r['locked'] else -1 for r in rows], label='lock lost', color='red')
         ax[2].set_xlabel('s'); ax[2].legend()
-        for b in 'BC':
-            for r in rows:
-                if r[f'{b}_folded']:
-                    ax[1].axvline(r['t_s'], color='orange', alpha=.2)
         fig.tight_layout(); fig.savefig(sys.argv[sys.argv.index('--plot') + 1])
 
 

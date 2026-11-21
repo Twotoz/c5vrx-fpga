@@ -86,11 +86,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     input  wire       en_b,
     input  wire       en_c,
     input  wire       va, vb, vc,   // per sample, with raw_*
-    input  wire       wbranch,         // weak branch: B / C under 1/8 of the strongest weight are left out (A, the phase reference, never)
-    input  wire       afold,        // anti-fold: B / C out of phase with A after rotation are left out (fold guard)
     output reg  [5:0] code,
-    output wire [23:0] wts,         // logger: the weights in use {C, B, A} (0: left out by Weak branch)
-    output wire [1:0]  folded       // logger: {C, B} left out by Anti-fold
+    output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
     reg [7:0] g_rom   [0:255];
     reg [7:0] isq_rom [0:511];
@@ -190,9 +187,6 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     // well before the hand-over at idx3 == 127 of the next period.
     reg  [7:0]  w_use [0:2];
     reg  [7:0]  pend  [0:2];
-    // anti-fold: the strongest pending weight / 8 (weights below it would add more noise than signal)
-    wire [7:0]  wmax01 = pend[0] > pend[1] ? pend[0] : pend[1];
-    wire [7:0]  wfloor = (wmax01 > pend[2] ? wmax01 : pend[2]) >> 3;
     reg         have_pend;
     reg  [3:0]  st;
     reg  [1:0]  wj;
@@ -253,26 +247,8 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     // ---- S4: combine ------------------------------------------------------------------
     reg signed [23:0] zi4, zq4;
     wire [7:0] wa_eff = v3[0] ? w_use[0] : 8'd0;
-    // anti-fold: per branch the sign agreement of the rotated B / C with A,
-    // (I and Q each +1 agree / -1 not) / 2 per sample, low-passed with tau 128
-    // (-128..128; in phase it sits well above 0). Below -16 the branch adds out
-    // of phase (folded): it is left out of the sum, whatever its weight, until
-    // it agrees again. Never trips on healthy branches (model: -4 dB C/N, fading).
-    wire signed [1:0] gb = {1'b0, ca_i3[4] == rb_i3[12]} + {1'b0, ca_q3[4] == rb_q3[12]} - 2'sd1;
-    wire signed [1:0] gc = {1'b0, ca_i3[4] == rc_i3[12]} + {1'b0, ca_q3[4] == rc_q3[12]} - 2'sd1;
-    reg  signed [9:0] fold_b = 10'sd0, fold_c = 10'sd0;
-    // g - (fold >>> 7) in three bits (|fold| <= 128: fold >>> 7 is -1, 0 or 1)
-    wire signed [2:0] fdb = {gb[1], gb} - fold_b[9:7], fdc = {gc[1], gc} - fold_c[9:7];
-    always @(posedge clk) begin
-        if (rst) begin fold_b <= 10'sd0; fold_c <= 10'sd0; end
-        else begin
-            if (v3[0] && v3[1]) fold_b <= fold_b + {{7{fdb[2]}}, fdb};
-            if (v3[0] && v3[2]) fold_c <= fold_c + {{7{fdc[2]}}, fdc};
-        end
-    end
-    wire       out_b = afold && fold_b < -10'sd16, out_c = afold && fold_c < -10'sd16;
-    assign wts = {w_use[2], w_use[1], w_use[0]}; assign folded = {out_c, out_b};
-    wire [7:0] wb_eff = en_b && v3[1] && !out_b ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] && !out_c ? w_use[2] : 8'd0;
+    assign wts = {w_use[2], w_use[1], w_use[0]};
+    wire [7:0] wb_eff = en_b && v3[1] ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
     wire [17:0] a_i, a_q;
     wire [35:0] b_i, b_q, c_i, c_q;
     mul9  u_ai (.a({1'b0, wa_eff}), .b({{4{ca_i3[4]}}, ca_i3}), .y(a_i));
@@ -289,7 +265,7 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;
         end else if (run3 && idx3 == 7'd127 && have_pend) begin
-            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= (wbranch && ku != 0 && pend[ku] < wfloor) ? 8'd0 : pend[ku];
+            for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= pend[ku];
         end
         zi4 <= $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
         zq4 <= $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);

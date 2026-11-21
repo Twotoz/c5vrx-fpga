@@ -33,7 +33,6 @@ import mrc_model as m2model
 
 M_SHIFT, X_SHIFT, W_PERIOD, W_APPLY, TH_BLOCK = 6, 7, 128, 127, 16
 Z_SHIFT, X_SHIFT_TH = 6, 4
-FOLD_OUT = -16   # anti-fold: sign agreement with A (-128..128), branch out below this
 G, ISQ, COS, SIN, ATAN = m2model.G, m2model.ISQ, m2model.COS, m2model.SIN, m2model.ATAN
 cordic_angle = m2model.cordic_angle
 
@@ -46,7 +45,7 @@ def _cell(v3):
 
 
 @njit(cache=True)
-def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold):
+def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
     nb, n = raw.shape
     m2 = np.zeros(3, np.int64)
     m4 = np.zeros(3, np.int64)
@@ -58,7 +57,6 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold):
     th_cur = np.zeros(3, np.int64)
     th_pend = np.zeros(3, np.int64)
     phi_prev = 0
-    fold = np.zeros(3, np.int64)
     ci = np.zeros(3, np.int64)
     cq = np.zeros(3, np.int64)
     for k in range(n):
@@ -74,10 +72,7 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold):
             s = SIN[th_cur[b]]
             ri = ci[b] * c - cq[b] * s
             rq_ = ci[b] * s + cq[b] * c
-            out_b = afold and fold[b] < FOLD_OUT
-            wb = w[b] if (en[b] and valid[b, k] and not out_b) else 0
-            if valid[0, k] and valid[b, k]:
-                fold[b] += int((ci[0] < 0) == (ri < 0)) + int((cq[0] < 0) == (rq_ < 0)) - 1 - (fold[b] >> 7)
+            wb = w[b] if (en[b] and valid[b, k]) else 0
             zi += wb * ri
             zq += wb * rq_
         phi = cordic_angle(zi >> Z_SHIFT, zq >> Z_SHIFT, ATAN)
@@ -107,9 +102,8 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold):
                 th_cur[b] = th_pend[b]
                 th_pend[b] = (cordic_angle(xr[b] >> X_SHIFT_TH, xi[b] >> X_SHIFT_TH, ATAN) + 128) >> 8 & 255
         if (k & (W_PERIOD - 1)) == W_APPLY and have_pend:
-            wfloor = max(pend[0], pend[1], pend[2]) >> 3
             for b in range(3):
-                w[b] = 0 if (wbranch and b != 0 and pend[b] < wfloor) else pend[b]
+                w[b] = pend[b]
         if (k & (W_PERIOD - 1)) == W_PERIOD - 1:
             have_pend = True
             for b in range(3):
@@ -150,7 +144,7 @@ def disc50(phis, out):
         s = (s + step) & 1023
 
 
-def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None, wbranch=False, afold=False):
+def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None):
     """raws: list of 1..3 arrays of 6-bit samples {I2..I0, Q2..Q0}, C5 A first.
     return_phi: also return the combined angle per sample (2^-16 turn)."""
     raw = np.zeros((3, len(raws[0])), np.int64)
@@ -160,7 +154,7 @@ def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=Non
     out = np.zeros(raw.shape[1], np.int64)
     phis = np.zeros(raw.shape[1], np.int64)
     v = np.ones((3, raw.shape[1]), np.int64) if valid is None else np.asarray(valid, np.int64)
-    _run(raw, en, v, G, ISQ, COS, SIN, ATAN, out, phis, wbranch, afold)
+    _run(raw, en, v, G, ISQ, COS, SIN, ATAN, out, phis)
     if disc:
         out = np.zeros(raw.shape[1], np.int64)
         disc50(phis, out)

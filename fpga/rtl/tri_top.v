@@ -110,9 +110,9 @@ module tri_top (
         mk_src <= ev_a ? 2'd0 : ev_b ? 2'd1 : 2'd2;
         mk_pl  <= ev_a ? pl_a : ev_b ? pl_b : pl_c;
     end
-    // ---- Signal page switches (menu, LCD clock) into the IQ clock: {noise filter, wbranch, -, adapt, anti-fold, keep lock} ----
+    // ---- Signal page switches (menu, LCD clock) into the IQ clock: {noise filter, -, -, adapt, -, keep lock} ----
     wire [5:0] sg_l; reg [5:0] sg_m, sg_a;
-    assign sg_l[3] = 1'b0;
+    assign sg_l[1] = 1'b0; assign sg_l[3] = 1'b0; assign sg_l[4] = 1'b0;
     always @(posedge a_clk) begin sg_m <= sg_l; sg_a <= sg_m; end
     // ---- combine and demodulate ----
     wire       dvr_l, lg_l;
@@ -121,15 +121,14 @@ module tri_top (
     always @(posedge a_clk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
-    wire [23:0] lg_w; wire [1:0] lg_f; wire [1:0] ans_lev;
+    wire [23:0] lg_w; wire [1:0] ans_lev;
 `ifdef TRI_NO_C
     mrc3_core #(.HAS_C(0)) u_core (
 `else
     mrc3_core u_core (
 `endif
                       .clk(a_clk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
-                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .wbranch(sg_a[4]), .afold(sg_a[1]), .code(code),
-                      .wts(lg_w), .folded(lg_f));
+                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .code(code), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
@@ -159,7 +158,7 @@ module tri_top (
                             mode_s[3:2], sg_a,                                 // 7: mode, Signal switches
                             ans_lev, ch_a,                                     // 6: noise level, channel
                             sync_q,                                            // 4, 5
-                            lg_f, c_alive, b_alive, en_c, en_b, locked, pal,  // 3: flags
+                            2'b00, c_alive, b_alive, en_c, en_b, locked, pal, // 3: flags
                             lg_w};                                             // 0 .. 2: weights A, B, C
     dvr_hq u_dvr (.clk(a_clk), .rst(rst), .rec(dvr_l), .lg(lg_l), .lg_data(lg_data), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
                   .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
@@ -196,7 +195,7 @@ module tri_top (
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
-                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .wbranch(sg_l[4]), .afold(sg_l[1]), .nfilt(sg_l[5]),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]),
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
