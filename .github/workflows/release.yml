@@ -1,0 +1,65 @@
+name: Release
+
+# Every push to main that changes the C5 firmware or the FPGA design builds both
+# and publishes them as release triversity-v<run number> (marked Latest); the
+# Pages workflow then mirrors it into the web flasher.
+on:
+  push:
+    branches: [main]
+    paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  c5:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: bash
+        working-directory: c5
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -DC5VRX5_COMMIT="${GITHUB_SHA}" set-target esp32c5 build
+          mkdir -p ../out
+          cp build/triversity_c5.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin \
+             build/flasher_args.json ../out/
+      - uses: actions/upload-artifact@v4
+        with: { name: c5, path: out/ }
+
+  fpga:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - run: fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: fpga, path: fpga/build/triversity.fs }
+
+  publish:
+    needs: [c5, fpga]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: triversity-v${{ github.run_number }}
+        run: |
+          cd out
+          sha256sum * > SHA256SUMS
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "Triversity $TAG" \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstream, built from ${GITHUB_SHA}. Flash with the web flasher." \
+            *
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

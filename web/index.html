@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Triversity Flasher</title>
+  <meta name="description" content="Flash the C5VRX Triversity firmware onto the three XIAO ESP32-C5 receivers and get the Tang Nano 20K bitstream.">
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <img src="assets/logo.png" alt="C5VRX Triversity" class="logo">
+    <p class="tag">Web flasher · three XIAO ESP32-C5 + Tang Nano 20K</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Build</h2>
+      <div class="row">
+        <label for="release">Release</label>
+        <select id="release"><option>Loading releases…</option></select>
+      </div>
+      <p class="hint" id="releaseInfo"></p>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">1</span> C5 firmware</h2>
+      <p>All three C5s get the same firmware; the wiring decides which is A, B or C.
+         Flash them one by one over USB-C. Chrome or Edge on a desktop (Web Serial).</p>
+      <div class="row">
+        <label for="baud">Speed</label>
+        <select id="baud"><option value="460800" selected>460800</option><option value="921600">921600</option><option value="115200">115200</option></select>
+        <label class="check"><input type="checkbox" id="eraseAll"> Erase all flash first</label>
+      </div>
+      <details class="local">
+        <summary>Flash a local file instead</summary>
+        <div class="row">
+          <input type="file" id="localFile" accept=".bin">
+          <label for="offset">at</label>
+          <input type="text" id="offset" value="0x10000" size="9">
+        </div>
+      </details>
+      <div class="row buttons">
+        <button id="btnConnect">Connect C5</button>
+        <button id="btnFlash" class="primary" disabled>Flash firmware</button>
+      </div>
+      <div class="status" id="status">No device connected</div>
+      <div class="progress" id="progress" hidden><div class="bar" id="bar"></div><span id="pct">0%</span></div>
+      <details class="log" id="logBox">
+        <summary>Log</summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span> FPGA bitstream</h2>
+      <p>The Tang Nano 20K is programmed over its own USB-C (the onboard BL616
+         debugger). Browsers cannot reach that debugger, so download the
+         bitstream and write it to the Tang's flash with openFPGALoader or the
+         Gowin Programmer.</p>
+      <div class="row buttons">
+        <a id="dlFs" class="button primary" href="#" download>Download triversity.fs</a>
+      </div>
+      <pre class="cmd" id="cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>
+      <p class="hint">Or with the Gowin Programmer: write the file to the Tang's external flash
+         (Sipeed's Tang Nano 20K guide). Without <code>-f</code> openFPGALoader loads it until the next power-up only.
+         The DVR is a separate build (<code>DVR=1 fpga/build.sh</code>).</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Triversity is an official version of <a href="https://github.com/Twotoz/C5VRX">C5VRX</a> by Twotoz and the
+       C5VRX contributors · <a href="https://twotoz.github.io/C5VRX/">C5VRX website and Discord</a> ·
+       <a href="https://github.com/Twotoz/c5vrx-fpga">source</a> · GPL-3.0-only.
+       Flashing uses esptool-js (Espressif, Apache-2.0) as bundled for the C5VRX flasher.</p>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

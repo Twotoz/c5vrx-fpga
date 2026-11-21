@@ -1,0 +1,36 @@
+name: Web flasher
+
+# GitHub Pages: web/ plus a same-origin mirror of the newest releases
+# (firmware/<tag>/ and firmware/releases.json), so flashing never depends on
+# cross-origin GitHub downloads. Pages must use "GitHub Actions" as source.
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "tools/prepare_pages.py", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - name: Site
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: python3 tools/prepare_pages.py site
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deployment
+        uses: actions/deploy-pages@v4
