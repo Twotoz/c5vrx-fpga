@@ -50,7 +50,8 @@ module tb_dvr_hq #(parameter SECTORS = 4096, parameter BUSY = 40);
             $display("field %0d sent: fields %0d dropped %0d qi %0d ring %0d", fld, fields, dropped, qi, u.used);
         end
         rec = 0;
-        if (lg) begin   // log only: four more fields
+        if (lg) begin   // log only: four more field starts (no pixels), once rec has crossed the synchroniser
+            repeat (16) @(posedge clk);
             repeat (4) begin @(posedge clk) d_fstart <= 1; @(posedge clk) d_fstart <= 0; repeat (66000) @(posedge clk); end
             lg = 0;
         end
