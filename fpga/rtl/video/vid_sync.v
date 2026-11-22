@@ -373,7 +373,7 @@ module vid_sync (
     reg  [1:0]  wcnt;
     reg  [5:0]  nocode;
     reg         ftp;
-    wire [11:0] we_at = 12'd444 + {we_n, 3'd0};          // centre of WSS element we_n
+    wire [11:0] we_at = 12'd432 + {we_n, 3'd0};          // centre of WSS element we_n (hc = 0 is 12 clocks after the edge)
     wire        cg_line = !pal && field_lines >= 10'd255 && field_lines <= 10'd270 && vline >= 10'd10 && vline <= 10'd18;
     wire        ws_line = pal && vline >= 10'd18 && vline <= 10'd26;
     // biphase group 1: bit k = elements 53 + 6k .. +5, 1 = 111000, 0 = 000111
@@ -403,9 +403,9 @@ module vid_sync (
             end
             wide <= wcnt >= 2'd2;
             // CGMS-A: 22 bits of 2.235 us (89.4 clocks) from 11.2 us after the sync edge
-            if (hc == 12'd0) begin cg_pre <= 1'b1; we_n <= 7'd0; cg_n <= 5'd0; cg_at <= 12'd493; cg_fr <= 4'd0; end
+            if (hc == 12'd0) begin cg_pre <= 1'b1; we_n <= 7'd0; cg_n <= 5'd0; cg_at <= 12'd481; cg_fr <= 4'd0; end
             if (cg_line) begin
-                if (hc == 12'd420 && ahi) cg_pre <= 1'b0;
+                if (hc == 12'd408 && ahi) cg_pre <= 1'b0;
                 if (cg_n != 5'd22 && hc == cg_at) begin
                     cgs[cg_n] <= ahi; cg_n <= cg_n + 5'd1;
                     cg_at <= cg_at + (cg_fr >= 4'd6 ? 12'd90 : 12'd89);
