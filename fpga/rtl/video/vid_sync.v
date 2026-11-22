@@ -79,10 +79,11 @@ module vid_sync (
     // sync detection on a low-passed luma (one pole, tau 16 clocks = 0.4 us,
     // on top of y's 8-sample sum): FM clicks at low C/N no longer cut a sync
     // pulse short or pull the line minimum (the slicer before the first lock)
-    // below the sync tip. Its edge comes SD clocks late: taken off hc_cross.
+    // below the sync tip. Its edge comes ~12 clocks late, so hc = 0 is 12
+    // clocks after the true sync edge: HSTART is 12 earlier (the level, burst
+    // and CGMS / WSS windows take the 0.3 us in their stride).
     reg  [12:0] ysa = 13'd0;
     wire [8:0]  yf = ysa[12:4];
-    localparam [11:0] SD = 12'd12;
     reg        seen;                        // an in-window edge this line
     // ---- edge qualification ------------------------------------------------------
     reg        low;
@@ -99,7 +100,7 @@ module vid_sync (
 `endif
     wire [9:0] VMAX   = pal ? 10'd313 : 10'd263;
     // ---- active line ----------------------------------------------------------------
-    wire [11:0] HSTART = pal ? 12'd420 : 12'd376;
+    wire [11:0] HSTART = pal ? 12'd408 : 12'd364;
     wire [11:0] ACT    = pal ? 12'd2080 : 12'd2104;
     reg  [11:0] dda;
     reg  [9:0]  px;
@@ -193,7 +194,7 @@ module vid_sync (
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
             // ---- sync edges ----
             ysa <= ysa + {4'd0, y} - {4'd0, yf};
-            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc >= SD ? hc - SD : hc + HT - SD; end
+            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; end
             else if (low && yf >= slice + 9'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
             else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
@@ -203,7 +204,7 @@ module vid_sync (
                     seen <= 1'b1;
                     qcnt <= qcnt + 16'd1;
                 end else if (lock == 4'd0) begin
-                    hc <= low_len + 12'd1 + SD;                       // snap: the (true) edge was hc = 0
+                    hc <= low_len + 12'd1;                            // snap: the edge was hc = 0
                     lock <= 4'd1; seen <= 1'b1;
                 end
             end
