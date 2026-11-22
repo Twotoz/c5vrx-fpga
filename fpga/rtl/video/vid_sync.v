@@ -1,7 +1,8 @@
 // Triversity: video timing and line capture from the demodulated codes
 // (40 MHz domain of C5 A), in colour (chroma.v).
 //  - luma: moving sum of 8 codes (200 ns; also takes most of the chroma)
-//  - sync slicer halfway between the measured sync tip and back porch
+//  - sync slicer halfway between the measured sync tip and back porch, on a
+//    low-passed luma (tau 0.4 us): locks down to 0 dB C/N (sim/sync_perf.py)
 //  - H flywheel: a line counter that a qualified sync edge (low >= 2 us)
 //    pulls in a +-1 us window, snaps to after losing lock, and free-runs
 //    without one; V: a broad pulse (low >= 17.5 us) starts a field, line
@@ -75,6 +76,13 @@ module vid_sync (
     reg  [8:0] linemin, minprev;
     reg  [4:0] lev_n;                       // level updates so far (slicer on measured levels at 16)
     wire [8:0] slice = lev_n[4] ? (tip + porch) >> 1 : minprev + 9'd16;
+    // sync detection on a low-passed luma (one pole, tau 16 clocks = 0.4 us,
+    // on top of y's 8-sample sum): FM clicks at low C/N no longer cut a sync
+    // pulse short or pull the line minimum (the slicer before the first lock)
+    // below the sync tip. Its edge comes SD clocks late: taken off hc_cross.
+    reg  [12:0] ysa = 13'd0;
+    wire [8:0]  yf = ysa[12:4];
+    localparam [11:0] SD = 12'd12;
     reg        seen;                        // an in-window edge this line
     // ---- edge qualification ------------------------------------------------------
     reg        low;
@@ -184,8 +192,9 @@ module vid_sync (
             // line counter, with the flywheel correction below
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
             // ---- sync edges ----
-            if (!low && y < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; end
-            else if (low && y >= slice + 9'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
+            ysa <= ysa + {4'd0, y} - {4'd0, yf};
+            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc >= SD ? hc - SD : hc + HT - SD; end
+            else if (low && yf >= slice + 9'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
             else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
                 if (lock != 4'd0 && inwin) begin
@@ -194,7 +203,7 @@ module vid_sync (
                     seen <= 1'b1;
                     qcnt <= qcnt + 16'd1;
                 end else if (lock == 4'd0) begin
-                    hc <= low_len + 12'd1;                            // snap: the edge was hc = 0
+                    hc <= low_len + 12'd1 + SD;                       // snap: the (true) edge was hc = 0
                     lock <= 4'd1; seen <= 1'b1;
                 end
             end
@@ -209,7 +218,7 @@ module vid_sync (
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
-            if (y < linemin) linemin <= y;
+            if (yf < linemin) linemin <= yf;
             if (hc == 12'd400 && lock >= 4'd8) begin
                 if (!lev_n[4]) lev_n <= lev_n + 5'd1;
                 tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);

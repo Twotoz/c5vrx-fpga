@@ -18,6 +18,8 @@ DEF="-DTRI_HQDVR"                                  # default: Triversity + colou
 [ "${TRIDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR -DTRI_TRIDVR -DTRI_LIVEUI -DTRI_SEGFONT -DTRI_HMAPCALC"   # TRIDVR=1: compact 7-segment OSD variant -> triversity_dvr.fs
 [ "${HDMI:-0}" = 1 ] && DEF="$DEF -DTRI_HDMI -DTRI_HMAPCALC"   # HDMI=1: the HDMI output instead of the LCD -> *_hdmi.fs
 CST="$HERE/boards/tang_nano_20k.cst"; [ "${HDMI:-0}" = 1 ] && CST="$HERE/boards/tang_nano_20k_hdmi.cst"
+# HDMI: the placement that routes (tools/fit.py: seed 1, placer density 0.8; at 85 % LUT not every seed does)
+[ "${HDMI:-0}" = 1 ] && PNR_OPTS="${PNR_OPTS---seed 1 --placer-heap-beta 0.8}"
 OUT="triversity"; [ "${HQDVR:-0}" = 1 ] && OUT="triversity_hqdvr"; [ "${TRIDVR:-0}" = 1 ] && OUT="triversity_dvr"; [ "${HDMI:-0}" = 1 ] && OUT="${OUT}_hdmi"
 "$YOSYS" -q -l "$B/yosys.log" -p "read_verilog $DEF $INC $SRC; synth_gowin -family gw2a ${SYNTH_OPTS--nodsp} -top tri_top -json $B/triversity.json"
 "$NEXTPNR" -q -l "$B/nextpnr.log" --json "$B/triversity.json" --write "$B/triversity_pnr.json" \

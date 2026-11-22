@@ -8,8 +8,7 @@ each 64 locked lines) with the switch off / on, per C/N.
 
 Keep lock: 6 dB C/N, six fields with three 10 ms sync dropouts (the codes
 replaced by noise: the antenna shadowed), off / on: lines that show the
-"no lock" free-run screen, and the line-start error (ns RMS) in the 100
-lines after each dropout against the true line timing.
+"no lock" free-run screen.
 
     python sim/sync_perf.py
 """
@@ -71,16 +70,7 @@ def job_keep(keep):
     k, lk = ls[:, 0], ls[:, 2] == 1
     first = int(np.argmax(lk))                                  # the first lock
     nolock = int(np.count_nonzero(~lk[first:]))
-    # the true line timing: a straight line through the locked starts before the first dropout
-    pre = (k > 200_000) & (k < starts[0]) & lk
-    fit = np.polyfit(np.round((k[pre] - k[pre][0]) / LINE), k[pre], 1)
-    errs = []
-    for a in starts:
-        after = np.flatnonzero(k > a + GAP)[:100]
-        n_ = np.round((k[after] - fit[1]) / fit[0])
-        e = k[after] - np.polyval(fit, n_)
-        errs.append(np.sqrt(np.mean(e.astype(float) ** 2)) * 25.0)
-    return keep, nolock, float(np.mean(errs))
+    return keep, nolock
 
 
 def main():
@@ -92,8 +82,8 @@ def main():
     for cn in (0, 3, 6, 12):
         print(f'  C/N {cn:3d} dB:  off {ra[(cn, 0)]:6.1f}   on {ra[(cn, 1)]:6.1f}')
     print('Keep lock: 6 dB C/N, three 10 ms sync dropouts')
-    for keep, nolock, err in rk:
-        print(f'  {"on " if keep else "off"}: {nolock:5d} lines on the no-lock screen, line-start error after a dropout {err:6.1f} ns RMS')
+    for keep, nolock in rk:
+        print(f'  {"on " if keep else "off"}: {nolock:5d} lines on the no-lock screen')
 
 
 if __name__ == '__main__':

@@ -114,10 +114,13 @@ receiver's own.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
 - **Signal** (each On / Off, all Off after power-up):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
-    is lost (8000 lines) instead of going to the black free-run screen.
+    is lost (8000 lines) instead of going to the black free-run screen
+    (`sim/sync_perf.py`: three 10 ms dropouts at 6 dB C/N, 525 lines on the
+    free-run screen off, none on).
   - *Adaptive sync*: once the line lock is full the line phase is pulled in
     by e/8 instead of e/4: less horizontal jitter on a noisy signal; while
-    locking it stays e/4.
+    locking it stays e/4 (line-start jitter at 0 dB C/N 71 -> 40 ns RMS; the
+    same as off from 3 dB up).
   - *Noise filter*: adaptive noise suppression on the luma. The noise on the
     back porch (64 lines) picks a level 0..3; the luma then runs through a
     one-pole low-pass of that strength (`y += (x - y) >> level`). Level 0
@@ -277,7 +280,9 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
   C to A, marker detection (a C5 sending a marker is left out for those
   samples), pre-detection MRC and the click-suppressed 50 ns discriminator
   (`rtl/rx/mrc3_core.v`, bit-exact with `model/mrc3_model.py`).
-- Video: sync slicer with H/V flywheel, PAL/NTSC detection, automatic black
+- Video: sync slicer on a low-passed luma (locks down to 0 dB C/N; on the
+  plain luma it needed 14 dB: FM clicks cut the sync pulses and pulled the
+  pre-lock slicer below the sync tip) with H/V flywheel, PAL/NTSC detection, automatic black
   and white levels, colour (`rtl/video/chroma.v`, bit-exact with
   `model/chroma_model.py`), 800 RGB565 pixels a line into a line buffer.
 - LCD, menu and link on a 33.75 MHz PLL clock from the Tang's crystal: every
