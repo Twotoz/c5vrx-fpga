@@ -64,8 +64,8 @@ Both: three C5s fused (Single, Diversity or Triversity), colour, the full menu
 and the HQ DVR at the same time. The DVR
 buffers the fields in the Tang's built-in 8 MB SDRAM (block order, up to
 four fields), so recording never takes block RAM or time from the picture.
-Fit: 84 % (LCD) / 85 % (HDMI) LUT4, 45 / 42 of 46 BSRAM, timing met (the HDMI build only with the
-placement `fpga/build.sh` pins: seed 1, density 0.8).
+Fit: 84 % (LCD) / 85 % (HDMI) LUT4, 45 / 42 of 46 BSRAM, timing met (`fpga/build.sh` tries
+placements, seed and density, until one routes: at 85 % not every one does).
 
 ## Experimental hardware — flight safety warning
 
@@ -307,7 +307,7 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 - Fit (LCD): 84 % LUT4, 45 of 46 BSRAM, 21 MULT18 + 35 MULT9; 62 MHz on the
   40 MHz IQ clock, 48 MHz on the LCD clock (33.75 needed). HDMI: 85 % LUT4,
   59 MHz IQ clock, 48 MHz pixel clock (27 needed); at 85 % only some seeds
-  place (`fpga/tools/fit.py` searches, `build.sh` pins the one that does). The DSP blocks are kept at or below
+  place (`build.sh` tries a list in turn, `fpga/tools/fit.py` searches in parallel). The DSP blocks are kept at or below
   38.5 MULT18 equivalents (MULT18 + MULT9 / 2): above that nextpnr's placer
   does not finish. `fpga/tools/fit.py` shows the resources per module.
 
