@@ -48,7 +48,7 @@ module sd_ring (
                S_WRDATA = 15, S_BUSY = 16, S_STOP = 17, S_STOPBUSY = 18, S_ERROR = 19;
     reg [4:0]  st;
     reg [2:0]  step;                 // init command: 0 CMD0, 1 CMD8, 2 CMD55, 3 ACMD41, 4 CMD58, 5 a CMD17
-    reg [47:0] cmd;
+    reg [2:0]  cid;                  // command: 0 CMD0, 1 CMD8, 2 CMD55, 3 ACMD41, 4 CMD58, 5 CMD17, 6 CMD25
     reg [3:0]  ci;
     reg [7:0]  r1;
     reg [2:0]  extra;
@@ -70,8 +70,22 @@ module sd_ring (
             14: magic = "0"; default: magic = "1";
         endcase
     endfunction
-    function [47:0] mk; input [5:0] c; input [31:0] arg; input [7:0] crc; mk = {2'b01, c, arg, crc}; endfunction
     wire [31:0] addr = ccs ? {8'd0, lba} : {lba[22:0], 9'd0};
+    // byte ci (0..5) of command cid, made as it is sent (no 48-bit command register):
+    // {01, index}, the argument MSB first (CMD17 / CMD25: the sector address), the CRC
+    reg  [7:0] cbyte;
+    always @* begin
+        case (ci[2:0])
+            3'd0: case (cid) 3'd0: cbyte = 8'h40; 3'd1: cbyte = 8'h48; 3'd2: cbyte = 8'h77; 3'd3: cbyte = 8'h69;
+                             3'd4: cbyte = 8'h7a; 3'd5: cbyte = 8'h51; default: cbyte = 8'h59; endcase
+            3'd1: cbyte = cid[2] && cid != 3'd4 ? addr[31:24] : cid == 3'd3 ? 8'h40 : 8'h00;
+            3'd2: cbyte = cid[2] && cid != 3'd4 ? addr[23:16] : 8'h00;
+            3'd3: cbyte = cid[2] && cid != 3'd4 ? addr[15:8]  : cid == 3'd1 ? 8'h01 : 8'h00;
+            3'd4: cbyte = cid[2] && cid != 3'd4 ? addr[7:0]   : cid == 3'd1 ? 8'haa : 8'h00;
+            default: case (cid) 3'd0: cbyte = 8'h95; 3'd1: cbyte = 8'h87; 3'd2: cbyte = 8'h65; 3'd3: cbyte = 8'h77;
+                                3'd4: cbyte = 8'hfd; default: cbyte = 8'hff; endcase
+        endcase
+    end
     always @(posedge clk) begin
         sp_go <= 1'b0;
         if (rst) begin st <= S_RESET; state <= 2'd0; sd_cs <= 1'b1; slow <= 1'b1; rp <= 16'd0; tmo <= 24'd0; end
@@ -84,17 +98,17 @@ module sd_ring (
             S_NEXT: begin
                 ci <= 4'd0; extra <= 3'd0; st <= S_CMD;
                 case (step)
-                    3'd0: cmd <= mk(6'd0, 32'd0, 8'h95);
-                    3'd1: begin cmd <= mk(6'd8, 32'h1aa, 8'h87); extra <= 3'd4; end
-                    3'd2: cmd <= mk(6'd55, 32'd0, 8'h65);
-                    3'd3: cmd <= mk(6'd41, 32'h40000000, 8'h77);
-                    3'd4: begin cmd <= mk(6'd58, 32'd0, 8'hfd); extra <= 3'd4; end
+                    3'd0: cid <= 3'd0;
+                    3'd1: begin cid <= 3'd1; extra <= 3'd4; end
+                    3'd2: cid <= 3'd2;
+                    3'd3: cid <= 3'd3;
+                    3'd4: begin cid <= 3'd4; extra <= 3'd4; end
                     default: begin slow <= 1'b0; lba <= 24'd0; st <= S_RD17; end
                 endcase
             end
-            S_RD17: begin cmd <= mk(6'd17, addr, 8'hff); ci <= 4'd0; extra <= 3'd0; step <= 3'd5; st <= S_CMD; end
+            S_RD17: begin cid <= 3'd5; ci <= 4'd0; extra <= 3'd0; step <= 3'd5; st <= S_CMD; end
             S_CMD: begin
-                sp_tx <= cmd[47 - 8 * ci -: 8]; sp_go <= 1'b1; ci <= ci + 4'd1;
+                sp_tx <= cbyte; sp_go <= 1'b1; ci <= ci + 4'd1;
                 if (ci == 4'd5) begin st <= S_RESP; tries <= 16'd0; end
             end
             S_RESP: begin                                       // R1: the first byte with bit 7 clear
@@ -144,9 +158,9 @@ module sd_ring (
                 state <= 2'd1; rp <= wp;
                 if (rec_on) begin state <= 2'd2; lba <= file_lba + {1'b0, pos}; st <= S_WR25; end
             end
-            S_WR25: begin cmd <= mk(6'd25, addr, 8'hff); ci <= 4'd0; st <= S_WRWAIT; end
+            S_WR25: begin cid <= 3'd6; ci <= 4'd0; st <= S_WRWAIT; end
             S_WRWAIT: begin                                     // CMD25, its R1, one gap byte
-                if (ci < 4'd6) begin sp_tx <= cmd[47 - 8 * ci -: 8]; sp_go <= 1'b1; ci <= ci + 4'd1; tries <= 16'd0; end
+                if (ci < 4'd6) begin sp_tx <= cbyte; sp_go <= 1'b1; ci <= ci + 4'd1; tries <= 16'd0; end
                 else if (ci == 4'd6) begin sp_tx <= 8'hff; sp_go <= 1'b1; ci <= 4'd7; end
                 else if (ci == 4'd8) st <= S_WRTOK;
                 else if (!sp_rx[7]) begin

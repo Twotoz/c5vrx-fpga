@@ -288,8 +288,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                      (fid == F_RXROW && fi <= 7'd14) ? cn_db : gn;
     wire [3:0]  T = tv(nv), O = ov(nv), T2 = tv({2'b0, rec_s}), O2 = ov({2'b0, rec_s});
     reg  [6:0]  fch; reg fgv, fbv; reg [2:0] ffg; reg [1:0] fbg;
+    // the fixed strings: a field picks one and the character (ss, si); one str() lookup for all
+    reg  [4:0]  ss; reg [3:0] si; reg su;
     always @(*) begin
-        fch = fi; fgv = 1'b0; ffg = WHITE; fbv = 1'b0; fbg = BG_VIDEO;
+        fch = fi; fgv = 1'b0; ffg = WHITE; fbv = 1'b0; fbg = BG_VIDEO; ss = 5'd31; si = 4'd0; su = 1'b0;
         case (fid)
             6'd0: fch = fi;
             F_CAPL, F_CAPR: begin
@@ -305,7 +307,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 7'd5: fch = digit(fq[15:12]); 7'd6: fch = digit(fq[11:8]); 7'd7: fch = digit(fq[7:4]); 7'd8: fch = digit(fq[3:0]);
                 default: fch = SP;
             endcase
-            F_VSTD: fch = str(!locked ? 5'd0 : pal ? 5'd1 : 5'd2, fi[3:0] + 4'd1);
+            F_VSTD: begin ss = !locked ? 5'd0 : pal ? 5'd1 : 5'd2; si = fi[3:0] + 4'd1; su = 1'b1; end
             F_SCANV: begin
                 fch = SP;
                 if (scanning) case (fi)
@@ -321,8 +323,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 endcase
             end
             F_RECV: begin
-                if (HAS_DVR == 0) fch = str(5'd24, fi[3:0]);
-                else if (!dvr) fch = str(!lg ? 5'd3 : ds2 == 2'd0 ? 5'd4 : ds2 == 2'd3 ? 5'd6 : 5'd25, fi[3:0]);
+                if (HAS_DVR == 0) begin ss = 5'd24; si = fi[3:0]; su = 1'b1; fch = SP; end
+                else if (!dvr) begin ss = !lg ? 5'd3 : ds2 == 2'd0 ? 5'd4 : ds2 == 2'd3 ? 5'd6 : 5'd25; si = fi[3:0]; su = 1'b1; fch = SP; end
                 else if (ds2 == 2'd2) case (fi)
                     7'd2: fch = rec_m >= 7'd10 ? G_DOT : SP;
                     7'd3: fch = rec_m >= 7'd10 ? SP : G_DOT;
@@ -332,26 +334,27 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     7'd7: fch = digit(T2); 7'd8: fch = digit(O2);
                     default: fch = SP;
                 endcase
-                else fch = str(ds2 == 2'd0 ? 5'd4 : ds2 == 2'd1 ? 5'd5 : 5'd6, fi[3:0]);
+                else begin ss = ds2 == 2'd0 ? 5'd4 : ds2 == 2'd1 ? 5'd5 : 5'd6; si = fi[3:0]; su = 1'b1; fch = SP; end
                 if ((dvr || lg) && ((ds2 == 2'd2 && fch == G_DOT) || ds2 == 2'd3)) begin fgv = 1'b1; ffg = RED; end
             end
-            F_MODEV: fch = mode == 2'd2 ? (fi == 7'd0 ? "T" : str(5'd18, fi[3:0] - 4'd1)) : fi == 7'd0 ? SP : str(5'd16 + {3'd0, mode}, fi[3:0] - 4'd1);
-            F_ASPV:  fch = str(aspect == 2'd3 ? (wd[1] ? 5'd23 : 5'd22) : 5'd19 + {3'd0, aspect}, fi[3:0]);
-            F_LOGOV: fch = str(logo ? 5'd10 : 5'd11, fi[3:0] + 4'd6);
+            F_MODEV: if (fi == 7'd0) fch = mode == 2'd2 ? "T" : SP;
+                     else begin ss = mode == 2'd2 ? 5'd18 : 5'd16 + {3'd0, mode}; si = fi[3:0] - 4'd1; su = 1'b1; end
+            F_ASPV:  begin ss = aspect == 2'd3 ? (wd[1] ? 5'd23 : 5'd22) : 5'd19 + {3'd0, aspect}; si = fi[3:0]; su = 1'b1; end
+            F_LOGOV: begin ss = logo ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_LOGO: begin
                 if (!logo) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi == 7'd0 || fi == 7'd11) begin fch = fi == 7'd0 ? G_CAPL : G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                 else begin fch = G_LOGO0 + fi - 7'd1; fgv = 1'b1; ffg = fi <= 7'd4 ? ACCENT : WHITE; end
             end
             F_RXCNT: fch = fi == 7'd0 ? digit({2'b0, nact}) : fi == 7'd1 ? "/" : "3";
-            F_GAINV: fch = str(5'd7 + {3'd0, gain_model}, fi[3:0] + 4'd4);
-            F_AFCV:  fch = str(afc ? 5'd10 : 5'd11, fi[3:0] + 4'd6);
+            F_GAINV: begin ss = 5'd7 + {3'd0, gain_model}; si = fi[3:0] + 4'd4; su = 1'b1; end
+            F_AFCV:  begin ss = afc ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_KLOCKV, F_ASYNCV, F_NFILTV:
-                     fch = str((fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11, fi[3:0] + 4'd6);
+                     begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_BRIGHTV: begin fch = fi[2:0] <= bright ? G_SEGON : G_SEGOFF; if (is_sel || is_edit) begin fgv = 1'b1; ffg = WHITE; end end
             F_CALV: begin
                 if (cal_ms == 12'd0) fch = SP;
-                else begin fch = fi == 7'd5 ? G_CHECK : str(5'd12, fi[3:0] + 4'd4); fgv = 1'b1; ffg = GREEN; end
+                else begin if (fi == 7'd5) fch = G_CHECK; else begin ss = 5'd12; si = fi[3:0] + 4'd4; su = 1'b1; end fgv = 1'b1; ffg = GREEN; end
             end
             F_REC: begin
                 if (!(dvr && ds2 == 2'd2)) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
@@ -370,7 +373,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             F_NOSIG: begin
                 if (locked) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi == 7'd0 || fi == 7'd12) begin fch = fi == 7'd0 ? G_CAPL : G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
-                else if (fi >= 7'd2 && fi <= 7'd10) fch = str(5'd13, fi[3:0] - 4'd2);
+                else if (fi >= 7'd2 && fi <= 7'd10) begin ss = 5'd13; si = fi[3:0] - 4'd2; su = 1'b1; end
                 else fch = SP;
             end
             F_RXBAR: begin
@@ -390,7 +393,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     if (fi == 7'd0) fch = rk == 2'd0 ? "A" : rk == 2'd1 ? "B" : "C";
                     else if (fi >= 7'd4 && fi <= 7'd8) fch = G_SEGOFF;
                     else if (fi == 7'd13 || fi == 7'd14 || fi == 7'd19 || fi == 7'd20) fch = "-";
-                    else if (fi >= 7'd23 && fi <= 7'd25) fch = str(5'd15, fi[3:0] - 4'd2);
+                    else if (fi >= 7'd23 && fi <= 7'd25) begin ss = 5'd15; si = fi[3:0] - 4'd2; su = 1'b1; end
                 end else begin
                     if (fi == 7'd0) fch = rk == 2'd0 ? "A" : rk == 2'd1 ? "B" : "C";
                     else if (fi >= 7'd4 && fi <= 7'd8) begin
@@ -412,6 +415,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             end
             default: fch = SP;
         endcase
+        if (su) fch = str(ss, si);
     end
     // resolve: the selection bar, edit colours
     reg [2:0] rfg; reg [1:0] rbg;
