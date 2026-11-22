@@ -7,13 +7,16 @@ module tb_vsync;
     reg [5:0] mem [0:6000000];
     reg [5:0] code = 0;
     reg ans_on = 0; integer ansd = 0, fa;
+    reg klk = 0, adp = 0; integer kv;
     wire wr_en, line_tog, field_tog, pal, locked; wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q;
-    vid_sync u_vs (.clk(clk), .rst(rst), .keep_lock(1'b0), .adapt(1'b0), .ans_lev(), .ans(ans_on), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
+    vid_sync u_vs (.clk(clk), .rst(rst), .keep_lock(klk), .adapt(adp), .ans_lev(), .ans(ans_on), .code(code), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q));
     integer n, k, f, fl, fh, fld = 0; reg ft = 0; reg [11:0] hcp = 0; reg pp = 0;
     initial begin
         if (!$value$plusargs("n=%d", n)) n = 1000;
         $readmemh("code.hex", mem);
+        if ($value$plusargs("keep=%d", kv)) klk = kv != 0;     // +keep=1: Keep lock
+        if ($value$plusargs("adapt=%d", kv)) adp = kv != 0;    // +adapt=1: Adaptive sync
         if ($value$plusargs("ans=%d", ansd)) ans_on = ansd != 0;   // +ans=1: noise filter on, every clock to ans.txt
         if (ansd) fa = $fopen("ans.txt", "w");
         f = $fopen("vs.txt", "w"); fl = $fopen("ls.txt", "w"); fh = $fopen("hc.txt", "w");
