@@ -9,10 +9,11 @@ Record (25 bytes, little-endian):
    6  video field number (the HQ DVR's JPEG records, tools/hqdvr_to_mp4.py)
    8  weight in use A, B, C (8 bit each)
   11  flags: bit 0 PAL, 1 sync locked, 2 B enabled (aligned), 3 C enabled,
-      4 B alive, 5 C alive
+      4 B alive, 5 C alive, 6 Rescue PLL in use
   12  sync quality (in-window sync edges in the last 100 ms, 16 bit)
   14  channel index (bits 0..5), Noise filter level 0..3 (bits 6..7)
-  15  Signal switches (bit 0 Keep lock, 2 Adaptive sync, 5 Noise filter),
+  15  Signal switches (bit 0 Keep lock, 2 Adaptive sync, 3..4 Rescue 0 Off
+      1 Auto 2 On, 5 Noise filter),
       mode (bits 6..7: 0 Single, 1 Diversity, 2 Triversity)
   16  per C5 A, B, C three bytes, the newest marker values (c5/main/fpga_link.h):
       C/N x10 + 1000 (12 bits, 0 unknown), flags bits 0..3 (AFC locked,
@@ -28,6 +29,7 @@ from pathlib import Path
 
 SIZE = 25
 SW = ['keep_lock', None, 'adaptive_sync', None, None, 'noise_filter']
+RESCUE = ['Off', 'Auto', 'On', 'On']
 
 
 def records(data):
@@ -44,6 +46,7 @@ def records(data):
         row = dict(log=num, video_field=vid, pal=fl & 1, locked=fl >> 1 & 1, sync_q=sq,
                    channel=chn & 63, noise_level=chn >> 6, mode=['Single', 'Diversity', 'Triversity', '?'][sw >> 6])
         row.update({s: sw >> k & 1 for k, s in enumerate(SW) if s})
+        row.update(rescue=RESCUE[sw >> 3 & 3], rescue_active=fl >> 6 & 1)
         for b, name in enumerate('ABC'):
             v = int.from_bytes(r[16 + 3 * b:19 + 3 * b], 'little')
             cn, flags, sig = v & 4095, v >> 12 & 15, v >> 16

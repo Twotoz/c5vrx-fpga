@@ -52,7 +52,7 @@ BANDS = 'RABEFL'
 
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
-          'KLOCKV', 'ASYNCV', 'AFOLDV', 'SPIKEV', 'WEAKV', 'NFILTV']
+          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -61,12 +61,12 @@ TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
 MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
               ('Signal', None), ('Settings', None)]
-SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'),
+SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'), ('Rescue', 'RESCV'),
              ('Back', None)]
 SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
-W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, AFOLDV=3, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
-N_ITEMS = [0, 7, 1, 7, 4]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
+W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
+N_ITEMS = [0, 7, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
 def glyphs_vh():
@@ -383,8 +383,10 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['Level', 'Keel', 'RSSI'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
-    if name in ('KLOCKV', 'ASYNCV', 'AFOLDV', 'SPIKEV', 'WEAKV', 'NFILTV'):
-        key = dict(KLOCKV='klock', ASYNCV='async', AFOLDV='afold', SPIKEV='spike', WEAKV='weak', NFILTV='nfilt')[name]
+    if name == 'RESCV':
+        return K(rjust(['Off', 'Auto', 'On'][st.get('rescue', 1)], w))
+    if name in ('KLOCKV', 'ASYNCV', 'SPIKEV', 'WEAKV', 'NFILTV'):
+        key = dict(KLOCKV='klock', ASYNCV='async', SPIKEV='spike', WEAKV='weak', NFILTV='nfilt')[name]
         return K(rjust('On' if st.get(key, False) else 'Off', w))
     if name == 'BRIGHTV':
         return K([SEG_ON if k <= st['bright'] else SEG_OFF for k in range(8)], fg=WHITE if sel or edit else None)

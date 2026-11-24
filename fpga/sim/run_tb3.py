@@ -49,12 +49,12 @@ def markers(raws, seed, n, count=6):
     return raws, valid
 
 
-def run(raws, en, work, valid):
+def run(raws, en, work, valid, rescue=0):
     for name, r in zip('abc', raws):
         (work / f'raw_{name}.hex').write_text('\n'.join(f'{int(v):02x}' for v in r) + '\n')
     (work / 'valid.hex').write_text('\n'.join(f'{int(valid[0, k] | valid[1, k] << 1 | valid[2, k] << 2):x}'
                                               for k in range(valid.shape[1])) + '\n')
-    subprocess.run(['vvp', '-n', str(work / 'tb'), f'+n={len(raws[0])}', f'+en_b={en[1]}', f'+en_c={en[2]}'],
+    subprocess.run(['vvp', '-n', str(work / 'tb'), f'+n={len(raws[0])}', f'+en_b={en[1]}', f'+en_c={en[2]}', f'+rescue={rescue}'],
                    cwd=work, check=True, stdout=subprocess.DEVNULL)
     return np.array([int(x, 16) if 'x' not in x and 'z' not in x else -1
                      for x in (work / 'code.hex').read_text().split()], np.int64)
@@ -69,7 +69,9 @@ def main():
         cases = [(5, 3, 300, (1, 1, 1)), (6, 12, 0, (1, 1, 1)), (7, -2, 0, (1, 1, 1)),
                  (8, 6, 300, (1, 1, 0)), (9, 6, 300, (1, 0, 1)), (10, 4, 0, (1, 0, 0)), (11, None, 0, (1, 1, 1))]
         cases.append((12, 'deadC', 0, (1, 1, 1)))   # C5 C without signal
-        for seed, cn, fd, en in cases:
+        cases = [c + (0,) for c in cases]
+        cases += [(13, -2, 0, (1, 1, 1), 2), (14, 3, 300, (1, 0, 0), 2), (15, 0, 300, (1, 1, 1), 1), (16, 3, 300, (1, 0, 0), 1)]  # rescue on / auto
+        for seed, cn, fd, en, rescue in cases:
             n = 6000
             if cn == 'deadC':   # C5 C without signal: random words on C only
                 raws = stimulus(seed, 6, fd, n)
@@ -79,15 +81,18 @@ def main():
             else:
                 raws = stimulus(seed, cn, fd, n)
             raws, valid = markers(raws, seed, n, 0 if seed == 6 else 6)
-            hw = run(raws, en, work, valid)
-            ref = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid).astype(np.int64)
+            hw = run(raws, en, work, valid, rescue)
+            ref, act = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid,
+                                      rescue=rescue, rwin=64, ron=8, roff=3, return_act=True)
+            ref = ref.astype(np.int64)
             best = None
             for lat in range(5, 40):
                 m = np.count_nonzero(hw[lat + WARMUP:lat + len(ref)] != ref[WARMUP:len(hw) - lat])
                 if best is None or m < best[1]:
                     best = (lat, m)
             lat, mism = best
-            print(f'seed={seed} cn={cn} fd={fd} en={en}: latency {lat}, mismatches {mism} of {len(ref) - WARMUP}')
+            sw = f', rescue {rescue}: in use {np.mean(act):.0%}, {int(np.count_nonzero(np.diff(act)))} switches' if rescue else ''
+            print(f'seed={seed} cn={cn} fd={fd} en={en}{sw}: latency {lat}, mismatches {mism} of {len(ref) - WARMUP}')
             ok &= mism == 0
     print('PASS' if ok else 'FAIL')
     sys.exit(0 if ok else 1)

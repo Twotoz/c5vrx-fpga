@@ -144,9 +144,65 @@ def disc50(phis, out):
         s = (s + step) & 1023
 
 
-def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None):
+# Rescue PLL (menu Signal > Rescue): a second-order phase-locked loop on the
+# same combined angle, a threshold-extending demodulator for very weak signals
+# (sim/perf_rescue.py). Per sample k, in 2^-16 turn:
+#   e   = wrap16(phi - th)
+#   fo  = (F >> 9) + (e >> 2)                   kp = 1/4
+#   F   = clamp(F + 5 e, -9830 << 9, 14746 << 9)   ki = 5/512; -6 .. +9 MHz
+#   th  = (th + fo) & 0xFFFF
+#   code = clamp(((fo + fo[k-1]) * 84 + 1684275) >> 16, 0, 63), output at k+2
+# th starts at phi[0], F and fo[-1] at 0. Auto: disc50's out-of-window steps
+# (clicks) are counted per RS_WIN sample pairs (saturating at 4095); at the end
+# of a window the PLL takes over from RS_ON clicks and hands back below RS_OFF,
+# from that pair's output (k+2) on. Mode 0 off, 1 auto, 2 on.
+RS_WIN, RS_ON, RS_OFF = 1 << 18, 400, 100
+RS_FLO, RS_FHI = -9830, 14746
+
+
+@njit(cache=True)
+def rescue50(phis, out, mode, win, ton, toff, act):
+    n = len(phis)
+    s = ((phis[0] + 32768) >> 6) & 1023
+    th = phis[0]; F = 0; fop = 0
+    on = mode >= 2
+    cnt = 0; j = 0
+    pll = np.zeros(n, np.int64)
+    for k in range(n):
+        e = ((phis[k] - th + 32768) & 0xFFFF) - 32768
+        fo = (F >> 9) + (e >> 2)
+        F += 5 * e
+        if F < RS_FLO << 9: F = RS_FLO << 9
+        if F > RS_FHI << 9: F = RS_FHI << 9
+        th = (th + fo) & 0xFFFF
+        c = ((fo + fop) * 84 + 1684275) >> 16
+        pll[k] = 0 if c < 0 else (63 if c > 63 else c)
+        fop = fo
+    for k in range(0, n - 3, 2):
+        t = ((phis[k] + 32768) >> 6) & 1023
+        d = ((t - s + 512) & 1023) - 512
+        cl = not (d >= DISC_WL and d <= DISC_WH)
+        step = d if not cl else (d * 179) >> 8
+        s = (s + step) & 1023
+        if mode == 1:
+            cnt = cnt + 1 if cl and cnt < 4095 else cnt
+            if j % win == win - 1:
+                if cnt >= ton: on = True
+                elif cnt < toff: on = False
+                cnt = 0
+        j += 1
+        if on:
+            out[k + 2] = pll[k]
+            out[k + 3] = pll[k + 1]
+        act[k + 2] = on
+        act[k + 3] = on
+
+
+def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None,
+        rescue=0, rwin=RS_WIN, ron=RS_ON, roff=RS_OFF, return_act=False):
     """raws: list of 1..3 arrays of 6-bit samples {I2..I0, Q2..Q0}, C5 A first.
-    return_phi: also return the combined angle per sample (2^-16 turn)."""
+    return_phi: also return the combined angle per sample (2^-16 turn).
+    rescue (with disc): 0 off, 1 auto, 2 on; return_act: also the per-sample rescue flag."""
     raw = np.zeros((3, len(raws[0])), np.int64)
     for b, r in enumerate(raws):
         raw[b] = np.asarray(r, np.int64)
@@ -158,6 +214,11 @@ def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=Non
     if disc:
         out = np.zeros(raw.shape[1], np.int64)
         disc50(phis, out)
+        act = np.zeros(raw.shape[1], np.int64)
+        if rescue:
+            rescue50(phis, out, rescue, rwin, ron, roff, act)
+        if return_act:
+            return (out.astype(np.uint8), phis, act) if return_phi else (out.astype(np.uint8), act)
     return (out.astype(np.uint8), phis) if return_phi else out.astype(np.uint8)
 
 

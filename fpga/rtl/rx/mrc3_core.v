@@ -77,7 +77,8 @@ module mrc3_trk (
     end
 endmodule
 
-module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's tracker and products left out
+module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
+                   parameter RS_WSH = 18, parameter [11:0] RS_ON = 12'd400, parameter [11:0] RS_OFF = 12'd100) (   // rescue: window 2^RS_WSH sample pairs
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
@@ -86,7 +87,9 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     input  wire       en_b,
     input  wire       en_c,
     input  wire       va, vb, vc,   // per sample, with raw_*
+    input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2/3 on
     output reg  [5:0] code,
+    output reg        ract,         // rescue PLL in use
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
     reg [7:0] g_rom   [0:255];
@@ -290,19 +293,59 @@ module mrc3_core #(parameter HAS_C = 1) (   // HAS_C 0: two C5s (A, B), C's trac
     // (ev_phi comes every other clock, so st_s is updated before the next d)
     reg [15:0] disc [0:1023];
 `include "disc_rom.vh"
-    reg [15:0] dq; reg dv;
+    reg [15:0] dq; reg dv; reg [5:0] dcode;
+    // rescue PLL on phi (mrc3_model.rescue50): e = phi - th, fo = F/512 + e/4,
+    // F += 5 e (clamped to -6 .. +9 MHz), th += fo; code from fo + fo[k-1]
+    reg  [15:0] th;
+    reg  signed [23:0] F;
+    reg         p_ok;
+    reg  signed [16:0] fo_r, fop_r;
+    wire signed [15:0] e  = phi - th;
+    wire signed [16:0] fo = (F >>> 9) + (e >>> 2);
+    wire signed [24:0] Fn = F + 5 * e;
+    wire signed [24:0] FLO = -25'sd9830 * 512, FHI = 25'sd14746 * 512;
+    wire signed [17:0] fs = fo_r + fop_r;
+    wire signed [26:0] pc_x = fs * 84 + 27'sd1684275;
+    wire signed [10:0] pc_h = pc_x[26:16];
+    wire [5:0] pcode = pc_h < 0 ? 6'd0 : pc_h > 63 ? 6'd63 : pc_h[5:0];
+    wire        run_phi = run_d[11];
+    always @(posedge clk) begin
+        if (rst) p_ok <= 1'b0;
+        else if (run_phi) begin
+            if (!p_ok) begin th <= phi; F <= 24'sd0; fo_r <= 17'sd0; fop_r <= 17'sd0; p_ok <= 1'b1; end
+            else begin
+                th <= th + fo[15:0];
+                F <= Fn < FLO ? FLO[23:0] : Fn > FHI ? FHI[23:0] : Fn[23:0];
+                fo_r <= fo; fop_r <= fo_r;
+            end
+        end
+    end
+    // Auto: disc50's out-of-window steps (clicks) per 2^RS_WSH pairs, hysteresis RS_ON / RS_OFF
+    wire        click = st_ok && (d < -10'sd312 || d > 10'sd384);
+    reg  [RS_WSH-1:0] pj;
+    reg  [11:0] ncl;
+    wire [11:0] ncl_n = (click && ncl != 12'hfff) ? ncl + 12'd1 : ncl;
     always @(posedge clk) begin
         dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
         dv <= 1'b0;
-        if (rst) begin st_ok <= 1'b0; code <= 6'd25; end
+        if (rst) begin st_ok <= 1'b0; dcode <= 6'd25; code <= 6'd25; pj <= 0; ncl <= 12'd0; ract <= 1'b0; end
         else begin
             if (ev_phi) begin
-                if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; code <= 6'd25; end
+                if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; end
                 else dv <= 1'b1;
+                pj <= pj + 1'b1;
+                if (rmode == 2'd1) begin
+                    if (&pj) begin
+                        if (ncl_n >= RS_ON) ract <= 1'b1;
+                        else if (ncl_n < RS_OFF) ract <= 1'b0;
+                        ncl <= 12'd0;
+                    end else ncl <= ncl_n;
+                end else begin
+                    ract <= rmode[1]; ncl <= 12'd0;
+                end
             end
-            if (dv) begin
-                st_s <= st_s + dq[15:6]; code <= dq[5:0];
-            end
+            if (dv) begin st_s <= st_s + dq[15:6]; dcode <= dq[5:0]; end
+            code <= ract ? pcode : dv ? dq[5:0] : dcode;
         end
     end
 endmodule

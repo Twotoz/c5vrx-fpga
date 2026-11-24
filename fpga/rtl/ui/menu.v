@@ -44,6 +44,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg         afc,
     output reg  [7:0]  f_seq,
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
+    output reg  [1:0]  rescue,           // Signal page: rescue PLL 0 Off, 1 Auto, 2 On
     output reg         bl_pwm
 );
     // ---- glyphs, colours, fields (gen_osd.py) ------------------------------------
@@ -55,7 +56,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     localparam [5:0] F_CAPL = 1, F_CAPR = 2, F_LIVECH = 3, F_REC = 4, F_NOSIG = 5, F_RXBAR = 6, F_VSTD = 7, F_CHVAL = 8,
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
-                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_AFOLDV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28;
+                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -136,10 +137,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     wire [5:0] ch_next = channel == 6'd47 ? 6'd0 : channel + 6'd1;
     wire [5:0] ch_prev = channel == 6'd0 ? 6'd47 : channel - 6'd1;
-    wire [2:0] n_items = page == 3'd2 ? 3'd1 : page == 3'd4 ? 3'd4 : 3'd7;
+    wire [2:0] n_items = page == 3'd2 ? 3'd1 : page == 3'd4 ? 3'd5 : 3'd7;
     always @(posedge clk) begin
         if (rst) begin
-            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
+            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rec_m <= 7'd0; rec_s <= 6'd0;
         end else begin
@@ -210,6 +211,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         3'd0: klock <= ~klock;
                         3'd1: async_on <= ~async_on;
                         3'd2: nfilt <= ~nfilt;
+                        3'd3: rescue <= rescue == 2'd2 ? 2'd0 : rescue + 2'd1;   // Off -> Auto -> On
                         default: begin page <= 3'd1; cursor <= 3'd5; end
                     endcase
                     default: case (cursor)
@@ -258,7 +260,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 0: s = " No video"; 1: s = "      PAL"; 2: s = "     NTSC"; 3: s = "      Off"; 4: s = "  No card";
                 5: s = "    Ready"; 6: s = " Card err"; 7: s = "    Level"; 8: s = "     Keel"; 9: s = "     RSSI";
                 10: s = "       On"; 11: s = "      Off"; 12: s = "     Sent"; 13: s = "NO SIGNAL"; 14: s = "     REC ";
-                15: s = "     Off "; 24: s = "   No DVR"; 25: s = "      Log";
+                15: s = "     Off "; 24: s = "   No DVR"; 25: s = "      Log"; 26: s = "     Auto";
                 default: s = "         ";
             endcase
             str = s[8 * (8 - i) +: 7];
@@ -351,6 +353,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             F_AFCV:  begin ss = afc ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_KLOCKV, F_ASYNCV, F_NFILTV:
                      begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
+            F_RESCV: begin ss = rescue == 2'd1 ? 5'd26 : rescue == 2'd2 ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
             F_BRIGHTV: begin fch = fi[2:0] <= bright ? G_SEGON : G_SEGOFF; if (is_sel || is_edit) begin fgv = 1'b1; ffg = WHITE; end end
             F_CALV: begin
                 if (cal_ms == 12'd0) fch = SP;
