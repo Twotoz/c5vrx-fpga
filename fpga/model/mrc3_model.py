@@ -156,7 +156,7 @@ def disc50(phis, out):
 # (clicks) are counted per RS_WIN sample pairs (saturating at 4095); at the end
 # of a window the PLL takes over from RS_ON clicks and hands back below RS_OFF,
 # from that pair's output (k+2) on. Mode 0 off, 1 auto, 2 on.
-RS_WIN, RS_ON, RS_OFF = 1 << 18, 400, 100
+RS_WIN, RS_ON, RS_OFF = 1 << 18, 100, 25
 RS_FLO, RS_FHI = -9830, 14746
 
 

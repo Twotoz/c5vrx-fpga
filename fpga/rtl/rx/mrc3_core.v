@@ -78,7 +78,7 @@ module mrc3_trk (
 endmodule
 
 module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
-                   parameter RS_WSH = 18, parameter [11:0] RS_ON = 12'd400, parameter [11:0] RS_OFF = 12'd100) (   // rescue: window 2^RS_WSH sample pairs
+                   parameter RS_WSH = 18, parameter [11:0] RS_ON = 12'd100, parameter [11:0] RS_OFF = 12'd25) (   // rescue: window 2^RS_WSH sample pairs
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
