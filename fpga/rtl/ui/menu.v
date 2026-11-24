@@ -131,7 +131,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [10:0] toast_ms;                  // channel pill highlight after a live change
     reg [11:0] cal_ms;                    // "Sent" after Calibrate
     reg [9:0]  sec_ms;
-    reg [6:0]  rec_m; reg [5:0] rec_s;    // recording time
+    reg [3:0]  rm_t, rm_o, rs_o; reg [2:0] rs_t;    // recording time, BCD (mm:ss, minutes stop at 99)
     wire       ev = btn_ev | s2_ev;
     wire [3:0] b  = btn_ev ? btn : s2_btn;       // bit 0 UP, 1 SELECT, 2 DOWN, 3 long
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
@@ -142,17 +142,25 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         if (rst) begin
             open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
-            scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rec_m <= 7'd0; rec_s <= 6'd0;
+            scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
         end else begin
             if (ms && toast_ms != 11'd0) toast_ms <= toast_ms - 11'd1;
             if (ms && cal_ms != 12'd0) cal_ms <= cal_ms - 12'd1;
             // recording time
-            if (!(dvr && ds2 == 2'd2)) begin sec_ms <= 10'd0; rec_m <= 7'd0; rec_s <= 6'd0; end
+            if (!(dvr && ds2 == 2'd2)) begin sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0; end
             else if (ms) begin
                 if (sec_ms == 10'd999) begin
                     sec_ms <= 10'd0;
-                    if (rec_s == 6'd59) begin rec_s <= 6'd0; if (rec_m != 7'd99) rec_m <= rec_m + 7'd1; end
-                    else rec_s <= rec_s + 6'd1;
+                    if (rs_o != 4'd9) rs_o <= rs_o + 4'd1;
+                    else begin
+                        rs_o <= 4'd0;
+                        if (rs_t != 3'd5) rs_t <= rs_t + 3'd1;
+                        else begin
+                            rs_t <= 3'd0;
+                            if (rm_o != 4'd9) rm_o <= rm_o + 4'd1;
+                            else if (rm_t != 4'd9) begin rm_o <= 4'd0; rm_t <= rm_t + 4'd1; end
+                        end
+                    end
                 end else sec_ms <= sec_ms + 10'd1;
             end
             if (mk_ev && mk_pl_a[15:12] == 4'd5 && mk_src_a == 2'd0 && !link_on && mk_pl_a[5:0] < 6'd48)
@@ -279,16 +287,16 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire [11:0] cnr = st_cn[rk];
     wire        cn_neg = cnr < 12'd1000;
     wire [11:0] cn_mag = cn_neg ? 12'd1000 - cnr : cnr - 12'd1000;
-    wire [22:0] cn_p = ({11'd0, cn_mag} + 23'd5) * 23'd205;
-    wire [7:0]  cn_db = cn_p[22:11] > 12'd99 ? 8'd99 : cn_p[18:11];
+    wire [9:0]  cn_c = cn_mag > 12'd994 ? 10'd994 : cn_mag[9:0];    // 99.4 dB and up show 99
+    wire [17:0] cn_x = {8'd0, cn_c} + 18'd5;
+    wire [17:0] cn_p = (cn_x << 7) + (cn_x << 6) + (cn_x << 3) + (cn_x << 2) + cn_x;    // * 205
+    wire [7:0]  cn_db = {1'b0, cn_p[17:11]};
     wire [7:0]  gn = st_gain[rk] > 8'd99 ? 8'd99 : st_gain[rk];
-    wire [7:0]  rm = {1'b0, rec_m};
     // one decimal converter for the number this cell shows (one cell a clock):
     // the scan step, the recording minutes, C/N or gain; seconds have their own
     wire [7:0]  nv = fid == F_SCANV ? {2'b0, scan_ch} + 8'd1 :
-                     (fid == F_RECV || fid == F_REC) ? rm :
                      (fid == F_RXROW && fi <= 7'd14) ? cn_db : gn;
-    wire [3:0]  T = tv(nv), O = ov(nv), T2 = tv({2'b0, rec_s}), O2 = ov({2'b0, rec_s});
+    wire [3:0]  T = tv(nv), O = ov(nv);
     reg  [6:0]  fch; reg fgv, fbv; reg [2:0] ffg; reg [1:0] fbg;
     // the fixed strings: a field picks one and the character (ss, si); one str() lookup for all
     reg  [4:0]  ss; reg [3:0] si; reg su;
@@ -328,12 +336,12 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 if (HAS_DVR == 0) begin ss = 5'd24; si = fi[3:0]; su = 1'b1; fch = SP; end
                 else if (!dvr) begin ss = !lg ? 5'd3 : ds2 == 2'd0 ? 5'd4 : ds2 == 2'd3 ? 5'd6 : 5'd25; si = fi[3:0]; su = 1'b1; fch = SP; end
                 else if (ds2 == 2'd2) case (fi)
-                    7'd2: fch = rec_m >= 7'd10 ? G_DOT : SP;
-                    7'd3: fch = rec_m >= 7'd10 ? SP : G_DOT;
-                    7'd4: fch = rec_m >= 7'd10 ? digit(T) : SP;
-                    7'd5: fch = digit(O);
+                    7'd2: fch = rm_t != 4'd0 ? G_DOT : SP;
+                    7'd3: fch = rm_t != 4'd0 ? SP : G_DOT;
+                    7'd4: fch = rm_t != 4'd0 ? digit(rm_t) : SP;
+                    7'd5: fch = digit(rm_o);
                     7'd6: fch = ":";
-                    7'd7: fch = digit(T2); 7'd8: fch = digit(O2);
+                    7'd7: fch = digit({1'b0, rs_t}); 7'd8: fch = digit(rs_o);
                     default: fch = SP;
                 endcase
                 else begin ss = ds2 == 2'd0 ? 5'd4 : ds2 == 2'd1 ? 5'd5 : 5'd6; si = fi[3:0]; su = 1'b1; fch = SP; end
@@ -365,10 +373,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     7'd0: begin fch = G_CAPL; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                     7'd1: begin fch = G_DOT; fgv = 1'b1; ffg = RED; end
                     7'd3: fch = "R"; 7'd4: fch = "E"; 7'd5: fch = "C";
-                    7'd7: fch = rec_m >= 7'd10 ? digit(T) : SP;
-                    7'd8: fch = digit(O);
+                    7'd7: fch = rm_t != 4'd0 ? digit(rm_t) : SP;
+                    7'd8: fch = digit(rm_o);
                     7'd9: fch = ":";
-                    7'd10: fch = digit(T2); 7'd11: fch = digit(O2);
+                    7'd10: fch = digit({1'b0, rs_t}); 7'd11: fch = digit(rs_o);
                     7'd12: begin fch = G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                     default: fch = SP;
                 endcase

@@ -96,10 +96,12 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     reg [7:0] isq_rom [0:511];
 `include "rom_gi_init.vh"
 
-    function automatic [7:0] sq5;
-        input signed [4:0] c;
-        reg [3:0] m;
-        begin m = c[4] ? -c : c; sq5 = m * m; end
+    function automatic [7:0] sq3;    // (4 v + 2)^2 as a table: v signed 3 bit
+        input [2:0] v;
+        case (v)
+            3'd0, 3'd7: sq3 = 8'd4;   3'd1, 3'd6: sq3 = 8'd36;
+            3'd2, 3'd5: sq3 = 8'd100; default:    sq3 = 8'd196;
+        endcase
     endfunction
     function automatic signed [4:0] cell3;   // 4 v + 2, -14..14
         input [2:0] v;
@@ -131,9 +133,9 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     reg [8:0] pa2, pb2, pc2;
     reg signed [4:0] ca_i2, ca_q2;
     always @(posedge clk) begin
-        pa2 <= sq5(ca_i1) + sq5(ca_q1);
-        pb2 <= sq5(cb_i1) + sq5(cb_q1);
-        pc2 <= sq5(cc_i1) + sq5(cc_q1);
+        pa2 <= sq3(ca_i1[4:2]) + sq3(ca_q1[4:2]);
+        pb2 <= sq3(cb_i1[4:2]) + sq3(cb_q1[4:2]);
+        pc2 <= sq3(cc_i1[4:2]) + sq3(cc_q1[4:2]);
         ca_i2 <= ca_i1; ca_q2 <= ca_q1;
         idx2 <= idx1; run2 <= run1 & ~rst; v2 <= v1;
     end

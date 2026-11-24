@@ -106,7 +106,7 @@ module tb_osd;
         mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd1}); mark(2'd1, {4'd6, 12'd55});
         press(5'b00010);                                             // open
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Record: on
-        dvr_state = 2'd2; repeat (20) @(posedge clk); u_menu.rec_m = 7'd1; u_menu.rec_s = 6'd23; u_menu.sec_ms = 10'd0;
+        dvr_state = 2'd2; repeat (20) @(posedge clk); u_menu.rm_t = 4'd0; u_menu.rm_o = 4'd1; u_menu.rs_t = 3'd2; u_menu.rs_o = 4'd3; u_menu.sec_ms = 10'd0;
         press(5'b00001); press(5'b00001); press(5'b00001);           // back to Channel
         shot;                                                        // 0 menu
         press(5'b00010); shot;                                       // 1 editing the channel

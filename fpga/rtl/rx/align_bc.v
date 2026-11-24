@@ -99,11 +99,16 @@ module align_bc (
         assign mg[l] = (axr[l] > axi[l]) ? axr[l] + (axi[l] >> 1) : axi[l] + (axr[l] >> 1);
     end endgenerate
     wire [19:0] mm = mg[0], m0 = mg[1], mp = mg[2];
-    function automatic [7:0] sq5; input signed [4:0] c; reg [3:0] m; begin m = c[4] ? -c : c; sq5 = m * m; end endfunction
+    function automatic [7:0] sqn;    // cv(nib)^2 as a table
+        input [3:0] nib;
+        case (nib[3] ? ~nib[2:0] : nib[2:0])
+            3'd0: sqn = 8'd1;  3'd1: sqn = 8'd9;   3'd2: sqn = 8'd25;  3'd3: sqn = 8'd49;
+            3'd4: sqn = 8'd81; 3'd5: sqn = 8'd121; 3'd6: sqn = 8'd169; default: sqn = 8'd225;
+        endcase
+    endfunction
     reg [15:0] pa_acc, pb_acc;
-    wire [8:0] pa = sq5(ai) + sq5(aq);
-    wire signed [4:0] b0i = cv(bsel[1][7:4]), b0q = cv(bsel[1][3:0]);
-    wire [8:0] pb = sq5(b0i) + sq5(b0q);
+    wire [8:0] pa = sqn(a1[7:4]) + sqn(a1[3:0]);
+    wire [8:0] pb = sqn(bsel[1][7:4]) + sqn(bsel[1][3:0]);
     always @(posedge clk_a) begin
         if (rst_a) begin pa_acc <= 0; pb_acc <= 0; end
         else begin pa_acc <= pa_acc + pa - (pa_acc >> 7); pb_acc <= pb_acc + pb - (pb_acc >> 7); end
