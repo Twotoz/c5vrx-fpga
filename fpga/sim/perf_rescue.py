@@ -41,11 +41,14 @@ def job(a):
     k0 = len(ire) // 2
     c = dict(truth=sg.sosfilt(E.sim.GOGGLE, ire)[k0:], region=region[k0:], standard='NTSC')
     out = {}
+    ref_off, ref_on = M.run(clean, disc=True), M.run(clean, disc=True, rescue=2)
     for m, name in enumerate(MODES):
         codes, act = M.run(raws, disc=True, rescue=m, return_act=True)
-        ref = M.run(clean, disc=True, rescue=2 if m == 2 else 0)        # calibration: the same demodulator, clean
+        ref = np.where(act == 1, ref_on, ref_off).astype(np.uint8)    # calibration: the demodulator in use, clean
         r = E.sim.measure(c, codes[k0:], ref[k0:])
         out[name] = (r['picture'], r['sinad'], float(np.mean(act[k0:])))
+    lag = [E.sim.calibrate(E.sim.video_out(x[k0:]), c['truth'], c['region'])[0] for x in (ref_off, ref_on)]
+    out['lag'] = lag[1] - lag[0]
     return a[:3], out
 
 
@@ -61,6 +64,7 @@ def main():
             rs = [r for a, r in res if a == (nb, cn, fd)]
             print(f'{fd:4d} {cn:4d}' + ''.join(f"{np.mean([r[m][0] for r in rs]):.2f}/{np.mean([r[m][1] for r in rs]):5.1f}".rjust(13) for m in MODES)
                   + f"   {np.mean([r['Auto'][2] for r in rs]):6.0%}")
+    print('\nPLL output against the discriminator, clean signal: delay', sorted({r['lag'] for _, r in res}), 'samples of 25 ns')
 
 
 if __name__ == '__main__':
