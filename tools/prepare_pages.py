@@ -8,7 +8,7 @@ names, local_url, upstream url). Runs in GitHub Actions with GH_TOKEN.
 import json, os, shutil, sys, urllib.request
 from pathlib import Path
 
-REPO = os.environ.get('GITHUB_REPOSITORY', 'Twotoz/c5vrx-fpga')
+REPO = os.environ.get('GITHUB_REPOSITORY', 'Twotoz/triversity')
 
 
 def get(url, binary=False):

@@ -1,5 +1,5 @@
 /* Triversity C5 firmware: one of three XIAO ESP32-C5 receivers feeding the
- * FPGA (https://github.com/Twotoz/c5vrx-fpga). Adapted from C5VRX-5 by Twotoz
+ * FPGA (https://github.com/Twotoz/triversity). Adapted from C5VRX-5 by Twotoz
  * and the C5VRX contributors (https://github.com/Twotoz/C5VRX,
  * https://twotoz.github.io/C5VRX/). The same firmware runs on all three. */
 #include "receiver.h"

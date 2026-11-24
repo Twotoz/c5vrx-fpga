@@ -5,7 +5,7 @@
   <p>Three Seeed Studio XIAO ESP32-C5 receive the same 5.8 GHz FPV channel on their own antennas; a Sipeed Tang Nano 20K fuses their IQ before demodulation and drives an 800x480 screen in colour, with a menu and a DVR.</p>
 
   <p>
-    <a href="https://twotoz.github.io/c5vrx-fpga/"><img src="https://img.shields.io/badge/Web%20Flasher-Triversity-1f6feb?style=flat" alt="Web flasher" /></a>
+    <a href="https://twotoz.github.io/triversity/"><img src="https://img.shields.io/badge/Web%20Flasher-Triversity-1f6feb?style=flat" alt="Web flasher" /></a>
     <a href="https://twotoz.github.io/C5VRX/"><img src="https://img.shields.io/badge/C5VRX-Website-1f6feb?style=flat" alt="C5VRX website" /></a>
     <a href="https://discord.gg/3YNgJRHmzD"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&amp;logoColor=white" alt="Join the C5VRX Discord" /></a>
     <img src="https://img.shields.io/badge/receivers-3%C3%97%20ESP32--C5-111111" alt="3x ESP32-C5" />
@@ -50,7 +50,7 @@ demodulates once and shows the picture with an on-screen menu.
 
 ## Flashing
 
-[Web flasher](https://twotoz.github.io/c5vrx-fpga/): the C5 firmware onto
+[Web flasher](https://twotoz.github.io/triversity/): the C5 firmware onto
 each XIAO over USB (Chrome or Edge), and the Tang Nano 20K bitstream as a
 download with its `openFPGALoader` command (browsers cannot reach the Tang's
 USB debugger). Every push to `main` that changes the firmware or the FPGA

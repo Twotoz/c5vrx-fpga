@@ -27,7 +27,7 @@ async function loadReleases() {
     releases = await r.json();
   } catch {
     try {
-      const r = await fetch('https://api.github.com/repos/Twotoz/c5vrx-fpga/releases?per_page=10');
+      const r = await fetch('https://api.github.com/repos/Twotoz/triversity/releases?per_page=10');
       releases = (await r.json()).map(x => ({ tag: x.tag_name, name: x.name, published_at: x.published_at,
         assets: x.assets.map(a => ({ name: a.name, url: a.browser_download_url })) }));
     } catch { releases = []; }
