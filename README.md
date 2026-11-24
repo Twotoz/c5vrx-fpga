@@ -109,11 +109,11 @@ receiver's own.
 - **Record**: Off -> On (video + link log) -> Log (link log only) -> Off;
   No card, Ready, the recording time, Log, Card err. The link log: every
   sixth field (0.1 s) a record with per C5 the C/N, signal and AFC / video
-  flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, the Noise
-  filter's level and the DVR's field number (so it lines up with the video).
+  flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, whether Rescue
+  is in use, the Noise filter's level and the DVR's field number (so it lines up with the video).
   `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
-- **Signal** (each On / Off, all Off after power-up):
+- **Signal** (Keep lock, Adaptive sync and Noise filter On / Off, Off after power-up; Rescue Off / Auto / On, Auto after power-up):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
     is lost (8000 lines) instead of going to the black free-run screen
     (`sim/sync_perf.py`: three 10 ms dropouts at 6 dB C/N, 525 lines on the
@@ -127,6 +127,26 @@ receiver's own.
     one-pole low-pass of that strength (`y += (x - y) >> level`). Level 0
     above ~13 dB C/N, so a good picture keeps all its detail; +2.4 to +3.9
     dB luma SINAD between 3 and 9 dB C/N (`sim/perf_vrx.py`).
+  - *Rescue*: a second demodulator for very weak signals, a phase-locked
+    loop on the combined angle (FM threshold extension: it rides through the
+    noise "clicks" that break up the normal discriminator's picture). It costs
+    some sharpness and colour, so Auto only uses it while the normal
+    discriminator clicks a lot (from 100 clicks per 13 ms, back below 25) and
+    hands back on a good signal. `sim/perf_rescue.py`, picture lock with the
+    goggle model, colour scene:
+
+    | | Off | Auto |
+    |---|---|---|
+    | 1 C5, -2 dB C/N | 0.04 | 0.93 |
+    | 1 C5, 0 dB | 0.31 | 1.00 |
+    | 1 C5, 0 dB, fading 300 Hz | 0.46 | 0.76 |
+    | 3 C5s, -4 dB | 0.38 | 1.00 |
+    | 3 C5s, -2 dB, fading 300 Hz | 0.72 | 0.97 |
+
+    About +4..5 dB SINAD while it is in use (1 C5 to 9 dB C/N, three to
+    ~5 dB); above that Auto stays on the normal discriminator. On shows the
+    PLL always (softer picture on a good signal). The link log records when
+    it is in use.
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
   brightness, calibrate (filter and DC on every C5).
 - **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
@@ -346,7 +366,7 @@ Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`
 `run_align_tb.py` (the shared B/C alignment against two separate engines on FM-modulated video),
 `run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
 `run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`; `--log` with the link log, read back with `tools/trilog.py`),
-`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter),
+`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter), `perf_rescue.py` (Rescue Off / Auto / On; `run_tb3.py` checks the PLL bit-exact, on and switching),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).
