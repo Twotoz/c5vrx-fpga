@@ -16,7 +16,7 @@ module tb_mrc3_core;
     wire [5:0] code;
     integer n, k, f;
     // a short rescue window (64 pairs) so Auto switches within the test
-    mrc3_core #(.RS_WSH(6), .RS_ON(12'd8), .RS_OFF(12'd3)) dut ( .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
+    mrc3_core #(.RS_WSH(6), .RS_ON(8'd8), .RS_OFF(8'd3)) dut ( .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
                    .en_b(en_b), .en_c(en_c),
                    .va(vv[0]), .vb(vv[1]), .vc(vv[2]), .rmode(rmode), .code(code), .ract(), .wts());
     always #12.5 clk = ~clk;

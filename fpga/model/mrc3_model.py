@@ -146,36 +146,37 @@ def disc50(phis, out):
 
 # Rescue PLL (menu Signal > Rescue): a second-order phase-locked loop on the
 # same combined angle, a threshold-extending demodulator for very weak signals
-# (sim/perf_rescue.py). Per sample k, in 2^-16 turn:
-#   e   = wrap16(phi - th)
-#   fo  = (F >> 9) + (e >> 2)                   kp = 1/4
-#   F   = clamp(F + 5 e, -9830 << 9, 14746 << 9)   ki = 5/512; -6 .. +9 MHz
-#   th  = (th + fo) & 0xFFFF
-#   code = clamp(((fo + fo[k-1]) * 84 + 1684275) >> 16, 0, 63), output at k+2
-# th starts at phi[0], F and fo[-1] at 0. Auto: disc50's out-of-window steps
-# (clicks) are counted per RS_WIN sample pairs (saturating at 4095); at the end
-# of a window the PLL takes over from RS_ON clicks and hands back below RS_OFF,
-# from that pair's output (k+2) on. Mode 0 off, 1 auto, 2 on.
+# (sim/perf_rescue.py). Per sample k, on the top 12 bits of phi (2^-12 turn):
+#   e   = wrap12(p - th)                         p = phi >> 4
+#   fo  = (F >> 7) + (e >> 2)                    kp = 1/4
+#   F   = F + e, saturating at 17 bits            ki = 1/128
+#   th  = (th + fo) & 0xFFF
+#   code = disc50's code for d = (fo + fo[k-1]) >> 2 (the same table), output at k+2
+# th, F and fo[-1] start at 0. Auto: disc50's out-of-window steps (clicks) are
+# counted per RS_WIN sample pairs (saturating at 255); at the end of a window
+# the PLL takes over from RS_ON clicks and hands back below RS_OFF, from that
+# pair's output (k+2) on. Mode 0 off, 1 auto, 2 on.
 RS_WIN, RS_ON, RS_OFF = 1 << 18, 100, 25
-RS_FLO, RS_FHI = -9830, 14746
 
 
 @njit(cache=True)
 def rescue50(phis, out, mode, win, ton, toff, act):
     n = len(phis)
     s = ((phis[0] + 32768) >> 6) & 1023
-    th = phis[0]; F = 0; fop = 0
+    th = 0; F = 0; fop = 0
     on = mode >= 2
     cnt = 0; j = 0
     pll = np.zeros(n, np.int64)
     for k in range(n):
-        e = ((phis[k] - th + 32768) & 0xFFFF) - 32768
-        fo = (F >> 9) + (e >> 2)
-        F += 5 * e
-        if F < RS_FLO << 9: F = RS_FLO << 9
-        if F > RS_FHI << 9: F = RS_FHI << 9
-        th = (th + fo) & 0xFFFF
-        c = ((fo + fop) * 84 + 1684275) >> 16
+        e = (((phis[k] >> 4) - th + 2048) & 0xFFF) - 2048
+        fo = (F >> 7) + (e >> 2)
+        F += e
+        if F < -(1 << 16): F = -(1 << 16)
+        if F > (1 << 16) - 1: F = (1 << 16) - 1
+        th = (th + fo) & 0xFFF
+        d = (fo + fop) >> 2                       # -512 .. 511
+        step = d if (d >= DISC_WL and d <= DISC_WH) else (d * 179) >> 8
+        c = (105 * step + 32896) // 1280
         pll[k] = 0 if c < 0 else (63 if c > 63 else c)
         fop = fo
     for k in range(0, n - 3, 2):
@@ -185,7 +186,7 @@ def rescue50(phis, out, mode, win, ton, toff, act):
         step = d if not cl else (d * 179) >> 8
         s = (s + step) & 1023
         if mode == 1:
-            cnt = cnt + 1 if cl and cnt < 4095 else cnt
+            cnt = cnt + 1 if cl and cnt < 255 else cnt
             if j % win == win - 1:
                 if cnt >= ton: on = True
                 elif cnt < toff: on = False

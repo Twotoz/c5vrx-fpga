@@ -192,7 +192,7 @@ module lcd_out (
 `endif
         // n+3: blend sums
         begin : blend
-            reg [1:0] a; reg [7:0] vr, vg, vb; reg [23:0] bgc, fgc, pnl;
+            reg [1:0] a; reg [7:0] vr, vg, vb; reg [23:0] bgc, fgc, pnl, m0, m1;
             vr = {v3[15:11], v3[15:13]}; vg = {v3[10:5], v3[10:9]}; vb = {v3[4:0], v3[4:2]};
             a = g3 ? glyph[{sx3, 1'b0} +: 2] : 2'd0;
             pnl = {{2'b0, vr[7:2]} + 8'd14, {2'b0, vg[7:2]} + 8'd16, {2'b0, vb[7:2]} + 8'd22};
@@ -203,9 +203,11 @@ module lcd_out (
                 default: bgc = pal8(3'd6);
             endcase
             fgc = cell3[9:7] == 3'd7 ? pnl : pal8(cell3[9:7]);
-            sr <= bgc[23:16] * (2'd3 - a) + fgc[23:16] * a;
-            sg <= bgc[15:8]  * (2'd3 - a) + fgc[15:8]  * a;
-            sb <= bgc[7:0]   * (2'd3 - a) + fgc[7:0]   * a;
+            // bg * (3 - a) + fg * a as one add: (a[0] ? fg : bg) + 2 (a[1] ? fg : bg)
+            m0 = a[0] ? fgc : bgc; m1 = a[1] ? fgc : bgc;
+            sr <= {2'b0, m0[23:16]} + {1'b0, m1[23:16], 1'b0};
+            sg <= {2'b0, m0[15:8]}  + {1'b0, m1[15:8], 1'b0};
+            sb <= {2'b0, m0[7:0]}   + {1'b0, m1[7:0], 1'b0};
         end
         // n+4: / 3 (x 171 >> 9 on DSP blocks), out
         begin : px
