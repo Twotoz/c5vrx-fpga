@@ -165,7 +165,8 @@ module chroma (
     wire       rst1 = rst || chg1;
     always @(posedge clk) begin
         palr <= {palr[2:0], pal};
-        pu_r <= pu; pv_r <= pv;
+        pu_r <= rst ? 14'sd0 : pu;
+        pv_r <= rst ? 14'sd0 : pv;
         wr <= wr + 5'd1;
         // ring k-entry of a shift register d (d[0] <= x each clock): d[k](t) = x(t - 1 - k),
         // written at wr(t - 1 - k) = wr(t - 1) - k: read now (wr) at wr - k for the next clock
@@ -178,7 +179,7 @@ module chroma (
     // stage 1: u1 = sum of the last n pu (python u1[k] lands here at k + 2)
     always @(posedge clk) begin
         if (rst) begin
-            u1 <= 18'sd0; v1 <= 18'sd0; pu_r <= 14'sd0; pv_r <= 14'sd0; age1 <= 5'd0;
+            u1 <= 18'sd0; v1 <= 18'sd0; age1 <= 5'd0;
         end else if (chg1) begin
             u1 <= pu_r; v1 <= pv_r; age1 <= 5'd1;
         end else begin
