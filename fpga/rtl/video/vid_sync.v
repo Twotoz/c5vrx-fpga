@@ -62,7 +62,11 @@ module vid_sync (
         c[0] <= code;
         for (i = 1; i < 8; i = i + 1) c[i] <= c[i-1];
         y <= y + code - c[7];
-        if (rst) y <= 9'd0;
+        // the running sum and its window are cleared together: on the board the IQ
+        // clock runs during the reset and the combiner holds code 25 there, so a
+        // cleared y with a full window left y ~200 low for good (9 bits: wrapped) and
+        // the sync slicer never saw a pulse
+        if (rst) begin y <= 9'd0; for (i = 0; i < 8; i = i + 1) c[i] <= 6'd0; end
     end
     // ---- line counter -------------------------------------------------------
     wire [11:0] HT = pal ? 12'd2560 : 12'd2542;
