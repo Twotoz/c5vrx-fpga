@@ -47,6 +47,10 @@ jobs:
         run: |
           iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_raster -o "$RUNNER_TEMP/lcd_raster" fpga/sim/tb_lcd_raster.v fpga/rtl/video/lcd_out.v
           vvp -n "$RUNNER_TEMP/lcd_raster"
+      - name: LCD line zero and cadence across alternating video fields
+        run: |
+          iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_field_origin -o "$RUNNER_TEMP/lcd_field_origin" fpga/sim/tb_lcd_field_origin.v fpga/rtl/video/lcd_out.v
+          vvp -n "$RUNNER_TEMP/lcd_field_origin"
       - name: Video sync with a high DC level
         run: |
           iverilog -g2012 -I fpga/rtl/video -I fpga/rtl/rx -s tb_vsync_levels -o "$RUNNER_TEMP/vsync_levels" fpga/sim/tb_vsync_levels.v fpga/rtl/video/{vid_sync,chroma}.v fpga/rtl/rx/{addsub,cordic_iter,mul_dsp}.v

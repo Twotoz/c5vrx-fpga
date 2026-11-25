@@ -171,7 +171,8 @@ module lcd_out (
     reg [10:0] hc;
     reg [9:0] lv;
     reg half;
-    reg latest_bank, line_bank;
+    reg latest_bank, line_bank, first_pending;
+    reg [2:0] start_wait;
     reg signed [4:0] htrim, vtrim;
     reg [10:0] line_clocks;
     reg [9:0] frame_lines;
@@ -179,6 +180,12 @@ module lcd_out (
     wire end_line = hc >= line_clocks - 11'd1;
     wire end_frame = lv >= frame_lines - 10'd1;
     wire new_line = line_ev && line_info_a[8];
+    wire first_source_line = new_line && line_info_a[7:0] == 8'd0;
+    // Line zero can arrive a few lines early or late on alternate fields.
+    // Rephase in the back porch, with a four-line timeout if it never comes.
+    wire align_window = locked && pal == pal_lcd && lv >= FIRST_ROW - 10'd4 && lv < FIRST_ROW;
+    wire align_start = align_window && (first_pending || first_source_line);
+    wire wait_for_start = align_window && lv == FIRST_ROW - 10'd1 && start_wait < 3'd4;
     wire [10:0] next_line_clocks = HHALF + {10'd0, !pal_lcd} + {{6{htrim[4]}}, htrim};
     wire [9:0] next_frame_lines = VFRAME + {{5{vtrim[4]}}, vtrim};
 
@@ -191,8 +198,11 @@ module lcd_out (
             line_clocks <= 11'd1072; frame_lines <= 10'd525;
             htrim <= 5'sd0; vtrim <= 5'sd0;
             latest_bank <= 1'b0; line_bank <= 1'b0;
+            first_pending <= 1'b0; start_wait <= 3'd0;
         end else begin
             if (new_line) latest_bank <= line_info_a[0];
+            if (!align_window) first_pending <= 1'b0;
+            else if (first_source_line) first_pending <= 1'b1;
             if (!locked || pal != pal_lcd) htrim <= 5'sd0;
             else if (line_ev) begin
                 if (!half) htrim <= hc < 11'd8 ? 5'sd2 : 5'sd8;
@@ -204,8 +214,9 @@ module lcd_out (
             // Align the first completed visible source row with the panel's
             // first active row, by stretching or shortening vertical blanking.
             if (!locked || pal != pal_lcd) vtrim <= 5'sd0;
-            else if (new_line && line_info_a[7:0] == 8'd0) begin
-                if (lv > FIRST_ROW + (VFRAME >> 1)) vtrim <= lv + 10'd12 < frame_lines ? -5'sd12 : -5'sd2;
+            else if (first_source_line) begin
+                if (align_window) vtrim <= 5'sd0;
+                else if (lv > FIRST_ROW + (VFRAME >> 1)) vtrim <= lv + 10'd12 < frame_lines ? -5'sd12 : -5'sd2;
                 else if (lv + 10'd2 < FIRST_ROW) vtrim <= lv + 10'd12 < FIRST_ROW ? -5'sd12 : -5'sd2;
                 else if (lv > FIRST_ROW + 10'd1) vtrim <= lv > FIRST_ROW + 10'd12 ? 5'sd12 : 5'sd2;
                 else vtrim <= 5'sd0;
@@ -213,15 +224,20 @@ module lcd_out (
 
             if (end_line) begin
                 hc <= 11'd0;
-                line_bank <= new_line ? line_info_a[0] : latest_bank;
+                line_bank <= align_start ? 1'b0 : (new_line ? line_info_a[0] : latest_bank);
                 if (end_frame) begin
                     lv <= 10'd0;
                     pal_lcd <= pal && locked;
+                    start_wait <= 3'd0;
                     frame_lines <= (!locked || pal != pal_lcd) ? (pal && locked ? 10'd625 : 10'd525) : next_frame_lines;
-                end else lv <= lv + 10'd1;
-                half <= end_frame ? 1'b0 : ~half;
+                end else if (align_start) begin
+                    lv <= FIRST_ROW;
+                    first_pending <= 1'b0;
+                end else if (wait_for_start) start_wait <= start_wait + 3'd1;
+                else lv <= lv + 10'd1;
+                half <= end_frame || align_start ? 1'b0 : ~half;
                 line_clocks <= end_frame ? (pal && locked ? 11'd1080 : 11'd1072) :
-                               half ? HHALF : next_line_clocks;
+                               (half || align_start) ? HHALF : next_line_clocks;
             end else hc <= hc + 11'd1;
         end
     end
