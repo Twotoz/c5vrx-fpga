@@ -17,13 +17,13 @@ module tb_video;
     reg [11:0] osd [0:2047]; wire osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     integer i; initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;
     always @(posedge clk_l) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
-    wire bl;
-    menu #(.CLK_HZ(33750000)) u_menu (.clk(clk_l), .rst(rst), .mk_tog_a(1'b0), .mk_src_a(2'd3), .mk_pl_a(16'd0), .s2_n(1'b1),
+    wire bl, boot;
+    menu #(.CLK_HZ(33750000)) u_menu (.clk(clk_l), .rst(rst), .mk_tog_a(1'b0), .mk_src_a(2'd3), .mk_pl_a(16'd0), .s1_n(1'b1), .s2_n(1'b1),
         .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(2'd0), .wide_a(1'b0), .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-        .dvr(), .mode(), .hmode(hm), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm(bl));
+        .dvr(), .mode(), .hmode(hm), .boot(boot), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm(bl));
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
     lcd_out u_lcd (.clk(clk_l), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-        .locked_a(locked), .pal_a(pal), .hmode(hm), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
+        .locked_a(locked), .pal_a(pal), .hmode(hm), .boot(boot), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
         .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r), .lcd_g(g), .lcd_b(b));
     integer n, k, f, frame = 0, row = 0, col = 0; reg de_p = 0;
     initial begin
@@ -31,6 +31,7 @@ module tb_video;
         $readmemh("code.hex", mem);
         f = $fopen("lcd.txt", "w");
         #100 rst = 0;
+        #100 u_menu.boot = 1'b0;                 // the video path, not the start-up screen
         for (k = 0; k < n; k = k + 1) begin @(posedge clk_a); code <= mem[k]; end
         $fclose(f); $finish;
     end
