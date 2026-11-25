@@ -149,20 +149,26 @@ module lcd_out (
         if (field_ev) vcnt <= 9'd0;
         else if (line_ev && locked && line_info_a[8]) begin vrow <= vcnt; vcnt <= vcnt + 9'd1; end
     end
+    wire        vblank = lv < 10'd20 || lv >= 10'd506;   // no DE rows (free_row 23..502; locked rows below)
     always @(posedge clk) begin
         if (rst) begin hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= 10'd0; vs_r <= 1'b0; end
         else begin
             vs_r <= 1'b0;
-            if (line_ev && locked) begin
+            // panel-safe genlock: the panel drops its timing (OSD and all) on a line far off
+            // length, so a line toggle is taken only near the end of the second half (+-24
+            // clocks of HHALF), and anywhere only in the vertical blanking (no DE: free to
+            // jump, which is how the lock is acquired); a missing toggle ends the line at
+            // HHALF + 24. A field toggle restarts the frame only from row 480 on.
+            if (line_ev && locked && (vblank || (half && hc >= HHALF - 11'd24))) begin
                 hc <= 11'd0; half <= 1'b0; info <= line_info_a;   // stable since the toggle
                 lv <= lv + 10'd1;
             end else if (!half && hc == HHALF - 11'd1) begin
                 hc <= 11'd0; half <= 1'b1; lv <= lv + 10'd1;
-            end else if (half && hc == (locked ? HFREE : HHALF) - 11'd1) begin   // no line toggle: free-run
+            end else if (half && hc == (locked ? HHALF + 11'd24 : HHALF) - 11'd1) begin   // no line toggle: free-run
                 // (unlocked: every line HHALF long; the panel's timing controller drops lines that alternate 1072 / 1200)
                 hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= lv + 10'd1;
             end else hc <= hc + 11'd1;
-            if ((field_ev && locked) || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
+            if ((field_ev && locked && lv >= 10'd480) || lv >= VFRAME + 10'd40 || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
         end
     end
     wire        free_row = !locked && lv >= 10'd23 && lv < 10'd503;
