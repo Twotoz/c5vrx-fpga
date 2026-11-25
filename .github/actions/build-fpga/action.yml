@@ -27,10 +27,10 @@ runs:
         PLACEMENT: ${{ inputs.placement }}
         PNR_TIMEOUT: ${{ inputs.pnr-timeout }}
       run: |
-        export NODVR=0 HDMI=0 HDMI90=0
+        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0
         case "$VARIANT" in
           lcd) source=triversity.fs ;;
-          lcd-live) NODVR=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
+          lcd-live) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
           hdmi) HDMI=1; source=triversity_hdmi.fs ;;
           hdmi-live) HDMI=1; NODVR=1; source=triversity_hdmi.fs; asset=triversity_hdmi_live.fs ;;
           hdmi90) HDMI90=1; source=triversity_hdmi90.fs ;;

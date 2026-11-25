@@ -27,6 +27,11 @@ DEF="-DTRI_HQDVR"                                  # default: Triversity + colou
 [ "${HQDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR -DTRI_NO_C -DTRI_LIVEUI -DTRI_HMAPCALC"   # HQDVR=1: Diversity + HQ DVR, live view -> triversity_hqdvr.fs
 [ "${TRIDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR -DTRI_TRIDVR -DTRI_LIVEUI -DTRI_SEGFONT -DTRI_HMAPCALC"   # TRIDVR=1: compact 7-segment OSD variant -> triversity_dvr.fs
 [ "${HDMI:-0}" = 1 ] && DEF="$DEF -DTRI_HDMI -DTRI_HMAPCALC"   # HDMI=1: the HDMI output instead of the LCD -> *_hdmi.fs
+# LCDBUF=1 (with NODVR=1): the LCD on fixed timing from an SDRAM line buffer, ~3 ms behind the camera
+if [ "${LCDBUF:-0}" = 1 ]; then
+  [ "${NODVR:-0}" = 1 ] && [ "${HDMI:-0}" != 1 ] || { echo "LCDBUF=1 needs NODVR=1 and the LCD" >&2; exit 2; }
+  DEF="$DEF -DTRI_LCDBUF"
+fi
 # HDMI90=1: HDMI at ~90 Hz from a field buffer in the SDRAM (no HQ DVR) -> triversity_hdmi90.fs
 [ "${HDMI90:-0}" = 1 ] && { DEF="-DTRI_HDMI -DTRI_HDMI90 -DTRI_HMAPCALC"; HDMI=1; }
 # the start-up screen shows the build's git commit

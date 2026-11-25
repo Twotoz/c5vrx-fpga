@@ -17,11 +17,17 @@
 `endif
 `ifdef TRI_HDMI90
 `define TRI_SDRAM
+`define TRI_FBUF
+`endif
+`ifdef TRI_LCDBUF
+`define TRI_SDRAM
+`define TRI_FBUF
 `endif
 // Build options (fpga/build.sh sets them): TRI_HQDVR the HQ DVR, TRI_NO_C without
 // C5 C, TRI_LIVEUI the live-view OSD (hq_ui.v) instead of the menu, TRI_SEGFONT
 // 7-segment glyphs from logic, TRI_HMAPCALC the aspect column map computed,
-// TRI_HDMI90 (with TRI_HDMI, without TRI_HQDVR) HDMI at ~90 Hz from a field buffer in the SDRAM
+// TRI_HDMI90 (with TRI_HDMI, without TRI_HQDVR) HDMI at ~90 Hz from a field buffer in the SDRAM,
+// TRI_LCDBUF (LCD, without TRI_HQDVR) the LCD on fixed timing from the same buffer, ~3 ms behind the camera
 module tri_top (
     input  wire       xtal,          // 27 MHz
     input  wire       key_s1,        // Tang S1, active high (pressed = 1): DOWN (menu)
@@ -201,11 +207,18 @@ module tri_top (
     assign sd_cs = 1'b1; assign sd_sck = 1'b0; assign sd_mosi = 1'b1; assign dvr_state = 2'd0;
 `endif
     wire [10:0] lb_raddr; wire [15:0] lb_rdata;
-`ifdef TRI_HDMI90
-    // 90 Hz: every field into the SDRAM, the display reads the newest one (fbuf.v)
+`ifdef TRI_FBUF
+    // 90 Hz HDMI / buffered LCD: every field into the SDRAM, the display reads the newest one or
+    // races the one coming in (fbuf.v)
     wire fb_frame, fb_fetch; wire [8:0] fb_line; wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
-    fbuf u_fb (.clk(a_gclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
-               .field_tog(field_tog), .pal(pal), .mode_p(hz90), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+`ifdef TRI_LCDBUF
+    fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(a_gclk),
+               .mode_p(2'd1),                                      // Camera: frames locked to the fields
+`else
+    fbuf u_fb (.clk(a_gclk), .mode_p(hz90),
+`endif
+               .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
+               .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
                .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
                .O_sdram_cas_n(O_sdram_cas_n), .O_sdram_wen_n(O_sdram_wen_n), .O_sdram_addr(O_sdram_addr), .O_sdram_ba(O_sdram_ba),
@@ -240,7 +253,9 @@ module tri_top (
                    .osd_addr(osd_raddr), .osd_cell(osd_rdata),
                    .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
                    .px_r(px_r), .px_g(px_g), .px_b(px_b)
-`ifdef TRI_HDMI90
+`ifdef TRI_LCDBUF
+                   , .hz90(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
+`elsif TRI_HDMI90
                    , .hz90(hz90), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
 `endif
                    );

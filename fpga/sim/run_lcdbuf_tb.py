@@ -1,0 +1,176 @@
+"""Triversity: the buffered LCD (TRI_LCDBUF) from source to panel: rtl/video/fbuf.v
+(SDRAM via rtl/io/sdram.v and sim/sdram_model.v) and rtl/video/lcd_out.v at
+33.75 MHz, fed like vid_sync feeds the line buffer (40 MHz, NTSC 262 / 263 lines a
+field, 240 shown, 800 pixels a line). Every source line carries {field, row} in
+its pixels. The lock drops once and comes back.
+Checked:
+  - the panel: every line HHALF (1072) clocks, every frame 480 rows of 800 pixels,
+    frame lengths within VFRAME +- 4: whatever the source does;
+  - once locked and settled: each LCD row shows the source row it belongs to, all
+    rows of a frame from one field, the fields in order (none skipped or
+    repeated), and the camera-to-panel delay of row 0 between 2 and 5 ms;
+  - no SDRAM timing violation.
+    python fpga/sim/run_lcdbuf_tb.py [--frames=N] [--pdelay=ns]
+"""
+import subprocess, sys, tempfile
+from pathlib import Path
+HERE = Path(__file__).resolve().parent
+RTL = HERE.parent / 'rtl'
+TB = r'''
+`timescale 1ns/1ps
+module tb;
+    reg aclk = 0; always #12.5 aclk = ~aclk;            // 40 MHz IQ clock
+    reg pclk = 0; always #14.815 pclk = ~pclk;          // 33.75 MHz LCD clock
+    reg rst = 1, rst_p = 1, locked = 1;
+    integer fs;
+    localparam LT = 2542, SHOW0 = 18, NSHOW = 240;
+    // ---- source: vid_sync's line-buffer interface, 800 pixels a line ----
+    reg wr_en = 0; reg [10:0] wr_addr = 0; reg [15:0] wr_data = 0;
+    reg line_tog = 0, field_tog = 0; reg [8:0] line_info = 0;
+    integer hc = 0, ln = 0, fld = 0, flines, px, orow = 0, show = 0;
+    always @(posedge aclk) begin
+        wr_en <= 0;
+        if (!rst) begin
+            flines = fld[0] ? 263 : 262;
+            if (hc == LT - 1) begin
+                hc <= 0;
+                line_info <= {show[0], orow[7:0]}; line_tog <= ~line_tog;
+                if (show) begin
+                    orow <= orow + 1;
+                    $fwrite(fs, "W %0t %0d %0d\n", $time, fld, orow);        // row orow of field fld complete
+                end
+                if (ln == flines - 1) begin ln <= 0; fld <= fld + 1; field_tog <= ~field_tog; orow <= 0; show <= 0; end
+                else begin ln <= ln + 1; show <= (ln + 1 >= SHOW0 && ln + 1 < SHOW0 + NSHOW); end
+                px = 0;
+            end else hc <= hc + 1;
+            if (show && hc >= 300 && px < 800 && hc[0]) begin
+                wr_en <= 1; wr_addr <= {orow[0], px[9:0]};
+                wr_data <= {fld[7:0], orow[7:0]};
+                px = px + 1;
+            end
+        end
+    end
+    // ---- DUT ----
+    wire fb_frame, fb_fetch; wire [8:0] fb_line; wire [10:0] ra; wire [15:0] rd;
+    wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
+    wire sdclk, sdcke, sdcs, sdras, sdcas, sdwe; wire [10:0] sda; wire [1:0] sdba; wire [3:0] sddqm; wire [31:0] sddq;
+    fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(aclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr),
+               .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
+               .field_tog(field_tog), .pal(1'b0), .mode_p(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
+               .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+               .rclk(pclk), .raddr(ra), .rdata(rd),
+               .O_sdram_clk(sdclk), .O_sdram_cke(sdcke), .O_sdram_cs_n(sdcs), .O_sdram_ras_n(sdras), .O_sdram_cas_n(sdcas),
+               .O_sdram_wen_n(sdwe), .O_sdram_addr(sda), .O_sdram_ba(sdba), .O_sdram_dqm(sddqm), .IO_sdram_dq(sddq));
+    sdram_model u_ram (.clk(sdclk), .cke(sdcke), .cs_n(sdcs), .ras_n(sdras), .cas_n(sdcas), .we_n(sdwe), .addr(sda), .ba(sdba),
+                       .dqm(sddqm), .dq(sddq));
+    wire de, hs, vs; wire [4:0] r5, b5; wire [5:0] g6; wire [7:0] pr, pg, pb; wire [10:0] oa;
+    lcd_out u_lcd (.clk(pclk), .rst(rst_p), .line_tog_a(1'b0), .line_info_a(9'd0), .field_tog_a(field_tog), .locked_a(locked), .pal_a(1'b0),
+                   .hmode(2'd0), .boot(1'b0), .lb_addr(ra), .lb_data(rd), .osd_addr(oa), .osd_cell(12'd0),
+                   .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r5), .lcd_g(g6), .lcd_b(b5), .px_r(pr), .px_g(pg), .px_b(pb),
+                   .hz90(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
+                   .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line));
+    // ---- capture: HS periods, frames, and per row the code in the middle of the line ----
+    integer cyc = 0, last_hs = 0, nfr = 0, row = 0, npx = 0, lines = 0;
+    reg vs_p = 1, de_p = 0, hs_p = 1;
+    reg [15:0] mid;
+    always @(posedge pclk) if (!rst_p) begin
+        cyc = cyc + 1;
+        hs_p <= hs; vs_p <= vs; de_p <= de;
+        if (hs_p && !hs) begin
+            if (last_hs != 0) $fwrite(fs, "H %0d\n", cyc - last_hs);
+            last_hs = cyc; lines = lines + 1;
+        end
+        if (vs_p && !vs) begin
+            $fwrite(fs, "V %0t %0d %0d %0d\n", $time, row, lines, locked);
+            nfr = nfr + 1; row = 0; lines = 0;
+            if (nfr > __FRAMES__) begin $display("sdram_errors %0d", u_ram.errors); $fclose(fs); $finish; end
+        end
+        if (de) begin npx = npx + 1; if (npx == 400) mid = {pr[7:3], pg[7:2], pb[7:3]}; end
+        if (de_p && !de) begin
+            $fwrite(fs, "R %0t %0d %0d %04x\n", $time, row, npx, u_lcd.lb_data);
+            row = row + 1; npx = 0;
+        end
+    end
+    initial begin
+        fs = $fopen("out.txt", "w"); #1000 rst = 0; #__PDELAY__ rst_p = 0;
+        #(__UNLOCK_AT__) locked = 0;
+        #(30000000) locked = 1;
+    end
+endmodule
+'''
+
+
+def main():
+    frames = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--frames=')), 40))
+    pdelay = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--pdelay=')), 3000))
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        tb = TB
+        for k, v in dict(FRAMES=frames, PDELAY=pdelay, UNLOCK_AT=250_000_000).items():
+            tb = tb.replace(f'__{k}__', str(v))
+        (t / 'tb.v').write_text(tb)
+        srcs = [str(RTL / 'video' / 'fbuf.v'), str(RTL / 'video' / 'motion.v'), str(RTL / 'video' / 'lcd_out.v'),
+                str(RTL / 'io' / 'sdram.v'), str(HERE / 'sdram_model.v')]
+        inc = [f'-I{d}' for d in sorted({p.parent for p in RTL.rglob('*.v*')})]
+        subprocess.run(['iverilog', '-g2012', '-DTRI_LCDBUF', '-DTRI_LIVEUI', *inc, '-s', 'tb', '-o', str(t / 'sim'),
+                        str(t / 'tb.v'), *srcs], check=True)
+        r = subprocess.run(['vvp', '-n', str(t / 'sim')], cwd=t, capture_output=True, text=True)
+        print(r.stdout.strip()[-300:])
+        lines = (t / 'out.txt').read_text().split('\n')
+    ok = True
+    def fail(m):
+        nonlocal ok
+        ok = False; print('FAIL', m)
+    if 'sdram_errors 0' not in r.stdout: fail('SDRAM timing: ' + r.stdout[-200:])
+    hs = [int(l.split()[1]) for l in lines if l.startswith('H ')]
+    bad = sorted({h for h in hs if h != 1072})
+    if bad: fail(f'LCD line lengths other than 1072: {bad[:8]}')
+    # writes: time of row orow of field f complete
+    wr = {}
+    for l in lines:
+        if l.startswith('W '):
+            _, tm, f, o = l.split(); wr[(int(f), int(o))] = int(tm)
+    # frames: rows between V markers
+    frames, cur = [], []
+    for l in lines:
+        if l.startswith('R '):
+            _, tm, row, npx, code = l.split(); cur.append((int(tm), int(row), int(npx), int(code, 16)))
+        elif l.startswith('V '):
+            _, tm, nrow, nlines, lk = l.split()
+            frames.append((int(tm), cur, int(nlines), int(lk))); cur = []
+    frames = frames[1:]                     # the first is partial
+    unlock_t, relock_t = 250_000_000 + 1000 + pdelay, 280_000_000 + 1000 + pdelay
+    last_field, shown, delays, since_relock = None, 0, [], 0
+    for k, (tm, rows, nlines, lk) in enumerate(frames):
+        if len(rows) != 480 or any(r[2] != 800 for r in rows):
+            fail(f'frame {k}: {len(rows)} rows, pixels {sorted({r[2] for r in rows})[:4]}')
+        if not 521 <= nlines <= 529: fail(f'frame {k}: {nlines} lines')
+        t0 = rows[0][0] if rows else tm
+        settled = (t0 > 60_000_000 and t0 < unlock_t) or t0 > relock_t + 120_000_000
+        if not settled: continue
+        flds = {r[3] >> 8 for r in rows}
+        want = [r[1] // 2 for r in rows]
+        got = [r[3] & 255 for r in rows]
+        if len(flds) != 1: fail(f'frame {k}: rows from fields {sorted(flds)}'); continue
+        if got != want:
+            i = next(j for j in range(len(got)) if got[j] != want[j])
+            fail(f'frame {k}: row {i} shows source row {got[i]}, wants {want[i]}'); continue
+        f = flds.pop()
+        first_after_relock = t0 > relock_t and since_relock == 0
+        if last_field is not None and f != (last_field + 1) % 256 and not first_after_relock:
+            fail(f'frame {k}: field {f} after {last_field}')
+        last_field = f
+        if t0 > relock_t: since_relock += 1
+        w = wr.get((f, 0))
+        if w is not None: delays.append((rows[0][0] - w) / 1e6)
+        shown += 1
+    if shown < 10: fail(f'only {shown} settled frames checked')
+    if delays:
+        print(f'row 0 camera-to-panel delay: {min(delays):.2f} .. {max(delays):.2f} ms over {len(delays)} frames')
+        if not all(2.0 <= d <= 5.0 for d in delays): fail('delay outside 2 .. 5 ms')
+    print('PASS' if ok else 'FAIL', f'({len(frames)} frames, {shown} checked)')
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == '__main__':
+    main()

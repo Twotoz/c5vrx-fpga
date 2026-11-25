@@ -403,6 +403,15 @@ the DVR records the same pixels; the OSD is the LCD's grid cropped to
 columns 3..62 (`run_osd_tb.py --hdmi` checks it pixel for pixel, the TMDS
 encoder `run_tmds_tb.py`).
 
+Buffered LCD (`NODVR=1 LCDBUF=1 fpga/build.sh`, released as `triversity_lcd_live.fs`;
+without the HQ DVR): the panel runs on fixed timing from the crystal (every line
+1072 / 1080 clocks) and reads each source line from the SDRAM field buffer
+(`fbuf.v`, 400 words a line), one frame a field, about 3 ms behind the camera
+(`LAG_W` in `lcd_out.v`). The panel never sees a line or frame shaped by the
+source, so a lock, a dropout or a field-length change cannot shift the picture
+or the OSD; while the frame lock settles it shows the last complete field.
+`run_lcdbuf_tb.py` checks it from the source to the panel.
+
 HDMI at 90 Hz (`HDMI90=1 fpga/build.sh` -> `triversity_hdmi90.fs`, for screens
 that need 90 Hz; without the HQ DVR): the output free-runs from the crystal at
 48.6 MHz, 720x480 at 89.88 Hz (NTSC, 1030 x 525) or 720x576 at 90.00 Hz (PAL,

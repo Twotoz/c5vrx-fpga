@@ -90,8 +90,19 @@ jobs:
           placement: ${{ inputs.hdmi90_placement }}
           artifact: fpga-hdmi90
 
+  # the LCD from an SDRAM line buffer (no DVR): fixed panel timing, ~3 ms behind the camera
+  fpga-lcd-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/build-fpga
+        with:
+          variant: lcd-live
+          artifact: fpga-lcd-live
+
   publish:
-    needs: [c5, fpga, fpga-hdmi, fpga-hdmi90]
+    needs: [c5, fpga, fpga-hdmi, fpga-hdmi90, fpga-lcd-live]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -104,6 +115,7 @@ jobs:
           mkdir out
           cp all/c5/* out/
           cp all/fpga-hdmi90/triversity_hdmi90.fs* out/
+          cp all/fpga-lcd-live/triversity_lcd_live.fs* out/
           lcd=$(ls all/fpga-lcd-*/triversity.fs 2>/dev/null | head -1)
           hdmi=$(ls all/fpga-hdmi-*/triversity_hdmi.fs 2>/dev/null | head -1)
           [ -n "$lcd" ] && [ -n "$hdmi" ] || { echo "no LCD or no HDMI placement routed"; exit 1; }
@@ -119,6 +131,6 @@ jobs:
           sha256sum * > SHA256SUMS
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Triversity $TAG" \
-            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (Triversity, colour, menu and HQ DVR; triversity.fs for the LCD, triversity_hdmi.fs for HDMI; triversity_hdmi90.fs HDMI at 90 Hz without the HQ DVR), built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (Triversity, colour, menu and HQ DVR; triversity.fs for the LCD, triversity_hdmi.fs for HDMI; triversity_hdmi90.fs HDMI at 90 Hz without the HQ DVR; triversity_lcd_live.fs the LCD from an SDRAM line buffer, ~3 ms behind the camera, without the HQ DVR), built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
             *
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
