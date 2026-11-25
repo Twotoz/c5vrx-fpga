@@ -6,7 +6,8 @@
 // Clock domains: the IQ/video path on C5 A's clock (clk_a, 40 MHz), the LCD,
 // menu and link on a PLL clock from the 27 MHz crystal (33.75 MHz), so the
 // menu and screen keep running without C5 A.
-// Buttons: S1 (pin 88) reset, S2 (pin 87) SELECT; the menu buttons on C5 A
+// Buttons: S1 (pin 88) DOWN, S2 (pin 87) SELECT (held: close), so the menu works without
+// C5 A's buttons (with the Exit item); the menu buttons on C5 A
 // arrive as markers. Menu Record records to the TF card (dvr.v, in the DVR=1 build).
 // Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
@@ -23,7 +24,7 @@
 // TRI_HDMI90 (with TRI_HDMI, without TRI_HQDVR) HDMI at ~90 Hz from a field buffer in the SDRAM
 module tri_top (
     input  wire       xtal,          // 27 MHz
-    input  wire       s1_n,          // reset
+    input  wire       s1_n,          // DOWN (menu)
     input  wire       s2_n,          // SELECT
     input  wire       a_clk, b_clk, c_clk,
     input  wire [6:1] a_d, b_d, c_d, // XIAO pads D1..D6
@@ -84,13 +85,13 @@ module tri_top (
     reg [1:0] bs = 2'b00; reg [11:0] por = 12'd0;
     wire rst = ~por[11];
     always @(posedge a_clk) begin
-        bs <= {bs[0], s1_n};
+        bs <= {bs[0], 1'b1};                                 // power-on reset only (S1 is DOWN)
         if (!bs[1]) por <= 12'd0; else if (!por[11]) por <= por + 12'd1;
     end
     reg [1:0] bl2 = 2'b00; reg [15:0] porl = 16'd0;
     wire rst_l = ~porl[15];
     always @(posedge clk_lcd) begin
-        bl2 <= {bl2[0], s1_n & pll_lock};
+        bl2 <= {bl2[0], pll_lock};
         if (!bl2[1]) porl <= 16'd0; else if (!porl[15]) porl <= porl + 16'd1;
     end
     // ---- alignment of B and C to A ----
@@ -217,7 +218,7 @@ module tri_top (
 `else
     menu #(.HAS_DVR(HAS_DVR), .CLK_HZ(UI_HZ)) u_menu (
 `endif
-                 .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(s2_n),
+                 .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(s1_n), .s2_n(s2_n),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),

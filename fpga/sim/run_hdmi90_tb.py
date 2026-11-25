@@ -77,7 +77,7 @@ module tb;
                        .dqm(sddqm), .dq(sddq));
     wire de, hs, vs; wire [4:0] r5, b5; wire [5:0] g6; wire [7:0] pr, pg, pb; wire [10:0] oa;
     lcd_out u_lcd (.clk(pclk), .rst(rst_p), .line_tog_a(1'b0), .line_info_a(9'd0), .field_tog_a(field_tog), .locked_a(1'b1), .pal_a(PAL[0]),
-                   .hmode(2'd0), .lb_addr(ra), .lb_data(rd), .osd_addr(oa), .osd_cell(12'd0),
+                   .hmode(2'd0), .boot(1'b0), .lb_addr(ra), .lb_data(rd), .osd_addr(oa), .osd_cell(12'd0),
                    .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r5), .lcd_g(g6), .lcd_b(b5), .px_r(pr), .px_g(pg), .px_b(pb),
                    .hz90(MODE[1:0]), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
                    .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line));

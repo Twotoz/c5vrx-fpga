@@ -61,7 +61,7 @@ P0, P1 = 16, 49            # panel columns (inclusive)
 TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
 MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
-              ('Signal', None), ('Settings', None)]
+              ('Signal', None), ('Settings', None), ('Exit', None)]
 SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'), ('Rescue', 'RESCV'),
              ('Back', None)]
 SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
@@ -69,7 +69,7 @@ SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'L
 # the 90 Hz HDMI build (rtl/ui/osd_pages_h90.vh): the output mode instead of the LCD's brightness
 SET_ITEMS_H90 = [(('90 Hz', 'HZ90V') if v == 'BRIGHTV' else (l, v)) for l, v in SET_ITEMS]
 W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
-N_ITEMS = [0, 7, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
+N_ITEMS = [0, 8, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
 def glyphs_vh():
@@ -276,7 +276,7 @@ def menu_frame(p, title, right=None):
         p.field(TOP + 1, P1 - 1 - right[1], right[0], right[1], fg=GREY)
     for c in range(P0 + 2, P1 - 1):
         p.t[TOP + 2][c] = Page.word(BG_PANEL, DARKFG, 0, DIV)
-    p.put(BOT - 1, P0 + 2, [ARR_U, ARR_D] + list(' Move  ') + [DOT] + list(' Select  Hold: close'), fg=GREY)
+    p.put(BOT - 1, P0 + 2, [ARR_U, ARR_D] + list(' Move  ') + [DOT] + list(' Select'), fg=GREY)
 
 
 def pages(h90=False):
@@ -456,9 +456,11 @@ def field_cells(name, w, st, row, sel, edit):
         return K(st.get('version', '0000000'))
     if name == 'BOOTRX':
         out = []
-        for k in range(3):
-            alive = st['age'][k] < 3000
-            out += K('C5 ' + 'ABC'[k] + ' ') + [(DOT, GREEN if alive else GREY, None)] + (K('   ') if k < 2 else [])
+        for k in range(3):                               # green: works; red: faulty, or silent after 1 s
+            heard = st['age'][k] < 3000
+            ok = heard and not st['flags'][k] & 8
+            col = GREEN if ok else RED if heard or st.get('boot_ms', 0) >= 1000 else GREY
+            out += K('C5 ' + 'ABC'[k] + ' ') + [(DOT, col, None)] + (K('   ') if k < 2 else [])
         return out
     if name == 'BOOTSD':
         if not st.get('has_dvr', True):
@@ -610,6 +612,10 @@ def emit(g, ps):
         for r in range(ROWS):
             for c in range(COLS):
                 lines.append(f"    tmpl[{k * COLS * ROWS + r * COLS + c}] = 18'h{p.t[r][c]:05x};")
+    bp = boot_page()                                # the start-up screen: rows 10..15 after the pages (the ROM's spare room)
+    boot_lines = [f"    tmpl[{5 * COLS * ROWS + (r - 10) * COLS + c}] = 18'h{bp.t[r][c]:05x};" for r in range(10, 16) for c in range(COLS)]
+    assert all(not bp.t[r][c] for r in range(ROWS) for c in range(COLS) if not 10 <= r <= 15)
+    lines += boot_lines
     lines += [f"    freq[{i}] = 16'h{int(str(f), 16):04x};" for i, f in enumerate(FREQS)]
     lines.append('end')
     (RTL / 'osd_pages.vh').write_text('\n'.join(lines) + '\n')
@@ -618,16 +624,8 @@ def emit(g, ps):
         for r in range(ROWS):
             for c in range(COLS):
                 h90.append(f"    tmpl[{k * COLS * ROWS + r * COLS + c}] = 18'h{p.t[r][c]:05x};")
-    h90 += [l for l in lines if 'freq[' in l] + ['end']
+    h90 += boot_lines + [l for l in lines if 'freq[' in l] + ['end']
     (RTL / 'osd_pages_h90.vh').write_text('\n'.join(h90) + '\n')
-    bp = boot_page()                                # the start-up screen's cells: a function, no block RAM
-    bl = head + ['function [17:0] boot_tw; input [4:0] r; input [6:0] c;', '    case ({r, c})']
-    for r in range(ROWS):
-        for c in range(COLS):
-            if bp.t[r][c]:
-                bl.append(f"        12'h{r << 7 | c:03x}: boot_tw = 18'h{bp.t[r][c]:05x};")
-    bl += ['        default: boot_tw = 18\'h0;', '    endcase', 'endfunction']
-    (RTL / 'osd_boot.vh').write_text('\n'.join(bl) + '\n')
     runs = boot_runs()
     (RTL.parent / 'video' / 'boot_logo.vh').write_text('\n'.join(head + ['initial begin'] +
         [f"    logo[{i}] = 9'h{v:03x};" for i, v in enumerate(runs)] + ['end']) + '\n')

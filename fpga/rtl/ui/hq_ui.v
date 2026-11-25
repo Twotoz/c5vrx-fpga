@@ -16,6 +16,7 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
     input  wire        mk_tog_a,
     input  wire [1:0]  mk_src_a,
     input  wire [15:0] mk_pl_a,
+    input  wire        s1_n,               // Tang S1 (not used by this UI)
     input  wire        s2_n,
     input  wire        locked_a,
     input  wire        pal_a,

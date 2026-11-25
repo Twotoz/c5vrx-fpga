@@ -24,7 +24,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     input  wire        mk_tog_a,         // markers (clk_a domain): toggle, source C5, payload
     input  wire [1:0]  mk_src_a,
     input  wire [15:0] mk_pl_a,
-    input  wire        s2_n,             // Tang S2, active low
+    input  wire        s1_n,             // Tang S1, active low: DOWN
+    input  wire        s2_n,             // Tang S2, active low: SELECT (held: close)
     input  wire        locked_a,         // video (clk_a domain, slow)
     input  wire        pal_a,
     input  wire [15:0] sync_q_a,
@@ -126,6 +127,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         end
     end
     wire [2:0] fresh = {st_age[2] < 12'd3000, st_age[1] < 12'd3000, st_age[0] < 12'd3000};
+    // a C5 that works: heard, and not reporting its DC fault (flags bit 3)
+    wire [2:0] c5ok = fresh & ~{st_flags[2][3], st_flags[1][3], st_flags[0][3]};
     // ---- Tang S2: debounced SELECT (short) / SELECT long (0.6 s) ----------------------
     reg [1:0] s2s; reg [9:0] s2_ms; reg s2_long_done; reg s2_ev; reg [3:0] s2_btn;
     always @(posedge clk) begin
@@ -139,6 +142,16 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 if (s2_ms >= 10'd30 && !s2_long_done) begin s2_ev <= 1'b1; s2_btn <= 4'b0010; end
                 s2_ms <= 10'd0; s2_long_done <= 1'b0;
             end
+        end
+    end
+    // ---- Tang S1: debounced DOWN (with S2 and the Exit item the menu works without C5 A's buttons) ----
+    reg [1:0] s1s; reg [5:0] s1_ms; reg s1_ev;
+    always @(posedge clk) begin
+        s1s <= {s1s[0], ~s1_n}; s1_ev <= 1'b0;
+        if (rst) s1_ms <= 6'd0;
+        else if (ms) begin
+            if (s1s[1]) begin if (s1_ms != 6'h3f) s1_ms <= s1_ms + 6'd1; end
+            else begin if (s1_ms >= 6'd30) s1_ev <= 1'b1; s1_ms <= 6'd0; end
         end
     end
     // ---- menu state -------------------------------------------------------------------
@@ -157,14 +170,14 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [11:0] cal_ms;                    // "Sent" after Calibrate
     reg [9:0]  sec_ms;
     reg [3:0]  rm_t, rm_o, rs_o; reg [2:0] rs_t;    // recording time, BCD (mm:ss, minutes stop at 99)
-    wire       ev = btn_ev | s2_ev;
+    wire       ev = btn_ev | s2_ev | s1_ev;
     // start-up screen: at least 1 s, then until there is video (or SELECT), at most 3 s
     reg  [11:0] boot_ms; reg bskip;
-    wire [3:0] b  = btn_ev ? btn : s2_btn;       // bit 0 UP, 1 SELECT, 2 DOWN, 3 long
+    wire [3:0] b  = btn_ev ? btn : s2_ev ? s2_btn : 4'b0100;       // bit 0 UP, 1 SELECT, 2 DOWN, 3 long
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     wire [5:0] ch_next = channel == 6'd47 ? 6'd0 : channel + 6'd1;
     wire [5:0] ch_prev = channel == 6'd0 ? 6'd47 : channel - 6'd1;
-    wire [2:0] n_items = page == 3'd2 ? 3'd1 : page == 3'd4 ? 3'd5 : 3'd7;
+    wire [3:0] n_items = page == 3'd2 ? 4'd1 : page == 3'd4 ? 4'd5 : page == 3'd1 ? 4'd8 : 4'd7;
     always @(posedge clk) begin
         if (rst) begin
             open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
@@ -174,7 +187,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         end else begin
             if (boot && ms) begin
                 boot_ms <= boot_ms + 12'd1;
-                if ((boot_ms >= 12'd1000 && (locked || bskip)) || boot_ms >= 12'd3000) boot <= 1'b0;
+                if ((boot_ms >= 12'd1000 && (locked || bskip)) || boot_ms >= 12'd3000) begin
+                    boot <= 1'b0;
+                    // a C5 missing or faulty: fall back to what the working ones can do
+                    if (!(c5ok[0] && c5ok[1] && c5ok[2])) mode <= (c5ok[0] && c5ok[1]) ? 2'd1 : 2'd0;
+                end
             end
             if (ms && toast_ms != 11'd0) toast_ms <= toast_ms - 11'd1;
             if (ms && cal_ms != 12'd0) cal_ms <= cal_ms - 12'd1;
@@ -245,7 +262,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         3'd3: if (HAS_DVR != 0) begin dvr <= !dvr && !lg; lg <= !lg || dvr; end   // Off -> On -> Log -> Off
                         3'd4: begin page <= 3'd2; cursor <= 3'd0; end
                         3'd5: begin page <= 3'd4; cursor <= 3'd0; end
-                        default: begin page <= 3'd3; cursor <= 3'd0; end
+                        3'd6: begin page <= 3'd3; cursor <= 3'd0; end
+                        default: begin open <= 1'b0; edit <= 1'b0; end      // Exit
                     endcase
                     3'd2: begin page <= 3'd1; cursor <= 3'd4; end
                     3'd4: case (cursor)
@@ -273,7 +291,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [10:0] pw;
     always @(posedge clk) begin pw <= pw == 11'd1279 ? 11'd0 : pw + 11'd1; bl_pwm <= pw < {bright, 8'd0} + 11'd160 + {3'd0, bright, 5'd0}; end
     // ---- renderer: template -> fields -> cell RAM --------------------------------------
-    reg [17:0] tmpl [0:6599];
+    reg [17:0] tmpl [0:6995];                      // five pages, then the start-up screen's rows 10..15
     reg [15:0] freq [0:47];
 `ifdef TRI_MENU_H90
 `include "osd_pages_h90.vh"
@@ -282,19 +300,20 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
 `endif
     reg [10:0] ra; reg [6:0] rc; reg [4:0] rr;      // cell address, column, row
     reg [12:0] pbase;                               // page * 1320
-    reg [17:0] tw; reg [10:0] wa1; reg [4:0] rr1;
+    reg [17:0] tw_t; reg tw_sel; reg [10:0] wa1; reg [4:0] rr1;
+    wire [17:0] tw = tw_sel ? 18'd0 : tw_t;    // the template ROM's read stays a plain block-RAM read
     reg [15:0] fq;
     wire [2:0] pg = open ? page : 3'd0;
     always @(posedge clk) begin
         ra <= (rst || ra == 11'd1319) ? 11'd0 : ra + 11'd1;
-        if (rst || ra == 11'd1319) begin rc <= 7'd0; rr <= 5'd0; pbase <= pg == 3'd0 ? 13'd0 : pg == 3'd1 ? 13'd1320 : pg == 3'd2 ? 13'd2640 : pg == 3'd3 ? 13'd3960 : 13'd5280; end
+        if (rst || ra == 11'd1319) begin rc <= 7'd0; rr <= 5'd0; pbase <= boot ? 13'd5940 : pg == 3'd0 ? 13'd0 : pg == 3'd1 ? 13'd1320 : pg == 3'd2 ? 13'd2640 : pg == 3'd3 ? 13'd3960 : 13'd5280; end
         else if (rc == 7'd65) begin rc <= 7'd0; rr <= rr + 5'd1; end else rc <= rc + 7'd1;
-        tw <= boot ? boot_tw(rr, rc) : tmpl[pbase + {2'b0, ra}]; wa1 <= ra; rr1 <= rr; fq <= freq[channel];
+        // the start-up screen has rows 10..15 only (after the five pages)
+        tw_t <= tmpl[pbase + {2'b0, ra}]; tw_sel <= boot && (rr < 5'd10 || rr > 5'd15); wa1 <= ra; rr1 <= rr; fq <= freq[channel];
     end
     // ---- field logic (gen_osd.py field_cells) ----
     function [7:0] digit; input [3:0] d; digit = 8'd48 + d; endfunction
     function [6:0] hexd; input [3:0] d; hexd = d < 4'd10 ? 7'd48 + {3'd0, d} : 7'd87 + {3'd0, d}; endfunction
-`include "osd_boot.vh"
     function [3:0] tv; input [7:0] v;    // tens of v (0..99)
         tv = v >= 8'd90 ? 4'd9 : v >= 8'd80 ? 4'd8 : v >= 8'd70 ? 4'd7 : v >= 8'd60 ? 4'd6 : v >= 8'd50 ? 4'd5 :
              v >= 8'd40 ? 4'd4 : v >= 8'd30 ? 4'd3 : v >= 8'd20 ? 4'd2 : v >= 8'd10 ? 4'd1 : 4'd0;
@@ -412,7 +431,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 bg_k = fi >= 7'd18 ? 2'd2 : fi >= 7'd9 ? 2'd1 : 2'd0;
                 case (fi - bo)
                     7'd0: fch = "C"; 7'd1: fch = "5"; 7'd3: fch = 7'd65 + {5'd0, bg_k};
-                    7'd5: begin fch = G_DOT; fgv = 1'b1; ffg = fresh[bg_k] ? GREEN : GREY; end
+                    7'd5: begin fch = G_DOT; fgv = 1'b1; ffg = c5ok[bg_k] ? GREEN : (fresh[bg_k] || boot_ms >= 12'd1000) ? RED : GREY; end
                     default: fch = SP;
                 endcase
             end

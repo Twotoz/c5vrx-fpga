@@ -50,9 +50,9 @@ module tb_osd;
     always @(posedge clk) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire dvr, boot; wire [1:0] mode;
 `ifdef TRI_LIVEUI
-    hq_ui u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
+    hq_ui u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(1'b1), .s2_n(1'b1),
 `else
-    menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
+    menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(1'b1), .s2_n(1'b1),
 `endif
         .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state), .wide_a(1'b0),
         .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
@@ -105,6 +105,7 @@ module tb_osd;
         mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd1}); mark(2'd0, {4'd6, 12'd78});
         mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd1}); mark(2'd1, {4'd6, 12'd55});
         u_lcd.rev = 9'd160; shot;                                    // 0 start-up screen (the logo revealed)
+        locked = 0; u_menu.boot_ms = 12'd1500; shot; locked = 1;      // 1 after 1 s without C5 C: its dot red
         u_menu.boot = 1'b0; repeat (20) @(posedge clk);              // (it would end after 1 s with video)
         press(5'b00010);                                             // open
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Record: on
