@@ -289,7 +289,13 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     assign hmode = aspect == 2'd0 ? 2'd1 : aspect == 2'd1 ? 2'd0 : aspect == 2'd2 ? 2'd2 : (wd[1] ? 2'd0 : 2'd1);
     // ---- backlight ------------------------------------------------------------------------
     reg [10:0] pw;
-    always @(posedge clk) begin pw <= pw == 11'd1279 ? 11'd0 : pw + 11'd1; bl_pwm <= pw < {bright, 8'd0} + 11'd160 + {3'd0, bright, 5'd0}; end
+    // Eight evenly spaced levels, from 160/1280 to continuously on.
+    wire [10:0] bl_duty = 11'd160 + {bright, 7'd0} + {bright, 5'd0};
+    always @(posedge clk) begin
+        if (rst || pw == 11'd1279) pw <= 11'd0;
+        else pw <= pw + 11'd1;
+        bl_pwm <= pw < bl_duty;
+    end
     // ---- renderer: template -> fields -> cell RAM --------------------------------------
     reg [17:0] tmpl [0:6995];                      // five pages, then the start-up screen's rows 10..15
     reg [15:0] freq [0:47];
