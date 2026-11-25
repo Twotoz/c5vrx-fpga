@@ -485,8 +485,8 @@ def field_cells(name, w, st, row, sel, edit):
         t = st['rec_s']
         body = [(CAP_L, PANEL, BG_VIDEO), (DOT, RED, None), (32, None, None)] + K('REC ') + K(rjust(f'{t // 60}:{t % 60:02d}', 5))
         return body + [(32, None, None)] * (w - 1 - len(body)) + [(CAP_R, PANEL, BG_VIDEO)]
-    if name == 'NOSIG':
-        if st['locked']:
+    if name == 'NOSIG':      # no NO SIGNAL label (menu.v F_NOSIG): the picture or snow stays clear
+        if True:
             return hide
         return [(CAP_L, PANEL, BG_VIDEO), (32, None, None)] + K('NO SIGNAL ') + [(CAP_R, PANEL, BG_VIDEO)]
     if name == 'RXBAR':

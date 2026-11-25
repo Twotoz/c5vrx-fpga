@@ -289,7 +289,13 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     assign hmode = aspect == 2'd0 ? 2'd1 : aspect == 2'd1 ? 2'd0 : aspect == 2'd2 ? 2'd2 : (wd[1] ? 2'd0 : 2'd1);
     // ---- backlight ------------------------------------------------------------------------
     reg [10:0] pw;
-    always @(posedge clk) begin pw <= pw == 11'd1279 ? 11'd0 : pw + 11'd1; bl_pwm <= pw < {bright, 8'd0} + 11'd160 + {3'd0, bright, 5'd0}; end
+    // Eight evenly spaced levels, from 160/1280 to continuously on.
+    wire [10:0] bl_duty = 11'd160 + {bright, 7'd0} + {bright, 5'd0};
+    always @(posedge clk) begin
+        if (rst || pw == 11'd1279) pw <= 11'd0;
+        else pw <= pw + 11'd1;
+        bl_pwm <= pw < bl_duty;
+    end
     // ---- renderer: template -> fields -> cell RAM --------------------------------------
     reg [17:0] tmpl [0:6995];                      // five pages, then the start-up screen's rows 10..15
     reg [15:0] freq [0:47];
@@ -457,7 +463,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 endcase
             end
             F_NOSIG: begin
-                if (locked) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
+                // no NO SIGNAL label: the picture (or snow) stays clear
+                if (1'b1) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi == 7'd0 || fi == 7'd12) begin fch = fi == 7'd0 ? G_CAPL : G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi >= 7'd2 && fi <= 7'd10) begin ss = 5'd13; si = fi[3:0] - 4'd2; su = 1'b1; end
                 else fch = SP;

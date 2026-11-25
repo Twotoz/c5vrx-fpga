@@ -1,7 +1,7 @@
 // Triversity: 800x480 RGB LCD output, genlocked to the video (LCD domain).
 // Every video line is shown twice: a line toggle from vid_sync starts an LCD
-// line pair (the second at half a video line). Without video the LCD free-runs
-// its line and frame timing (black picture, the OSD stays). DE-mode timing with
+// line pair. The LCD keeps an 800x480 active raster through lock changes and
+// adjusts its blanking to follow the input when locked. DE-mode timing with
 // HS/VS as well; 33.75 MHz pixel clock: half an NTSC line is 1072.5 clocks,
 // half a PAL line 1080 (the Sipeed 800x480 example runs 1066 x 520).
 // OSD: 66 x 20 cells of 12 x 24 pixels from 4 px in (fpga/gen/gen_osd.py);
@@ -79,11 +79,12 @@ module lcd_out (
     wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
     wire [9:0]  OSDV = pal ? 10'd48 : 10'd0;          // the 480-line OSD centred in 576
 `else
-    localparam  HBP = 11'd56, HACT = 11'd800, HFREE = 11'd1200;
-    wire [10:0] HHALF = pal ? 11'd1080 : 11'd1072;
+    reg pal_lcd;
+    localparam  HBP = 11'd56, HACT = 11'd800;
+    wire [10:0] HHALF = pal_lcd ? 11'd1080 : 11'd1072;
     wire [10:0] HSYNC = 11'd10;
     wire [10:0] GSTART = HBP + 11'd3;                  // X0 = 4: column 0 at x = 4
-    wire [9:0]  VFRAME = 10'd525;
+    wire [9:0]  VFRAME = pal_lcd ? 10'd625 : 10'd525;
     wire [9:0]  OSDV = 10'd0;
 `endif
     // ---- timing -------------------------------------------------------------------
@@ -138,7 +139,7 @@ module lcd_out (
         end
     end
     wire [9:0]  row = lv - VSTART;
-`else
+`elsif TRI_HDMI
     reg  [10:0] hc;
     reg         half;
     reg  [8:0]  info;             // {show, orow} of the pair being shown
@@ -154,30 +155,102 @@ module lcd_out (
         else begin
             vs_r <= 1'b0;
             if (line_ev && locked) begin
-                hc <= 11'd0; half <= 1'b0; info <= line_info_a;   // stable since the toggle
+                hc <= 11'd0; half <= 1'b0; info <= line_info_a;
                 lv <= lv + 10'd1;
             end else if (!half && hc == HHALF - 11'd1) begin
                 hc <= 11'd0; half <= 1'b1; lv <= lv + 10'd1;
-            end else if (half && hc == (locked ? HFREE : HHALF) - 11'd1) begin   // no line toggle: free-run
-                // (unlocked: every line HHALF long; the panel's timing controller drops lines that alternate 1072 / 1200)
+            end else if (half && hc == HFREE - 11'd1) begin
                 hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= lv + 10'd1;
             end else hc <= hc + 11'd1;
             if ((field_ev && locked) || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
         end
     end
-    wire        free_row = !locked && lv >= 10'd23 && lv < 10'd503;
-`ifdef TRI_HDMI
-    wire [9:0]  row = locked ? {vrow, half} : lv - 10'd23;
+    wire free_row = !locked && lv >= 10'd23 && lv < 10'd503;
+    wire [9:0] row = locked ? {vrow, half} : lv - 10'd23;
 `else
-    wire [9:0]  row = locked ? {1'b0, info[7:0], half} : lv - 10'd23;
-`endif
+    reg [10:0] hc;
+    reg [9:0] lv;
+    reg half;
+    reg latest_bank, line_bank, first_pending;
+    reg [2:0] start_wait;
+    reg signed [4:0] htrim, vtrim;
+    reg [10:0] line_clocks;
+    reg [9:0] frame_lines;
+    localparam [9:0] FIRST_ROW = 10'd23;
+    wire end_line = hc >= line_clocks - 11'd1;
+    wire end_frame = lv >= frame_lines - 10'd1;
+    wire new_line = line_ev && line_info_a[8];
+    wire first_source_line = new_line && line_info_a[7:0] == 8'd0;
+    // Line zero can arrive a few lines early or late on alternate fields.
+    // Rephase in the back porch, with a four-line timeout if it never comes.
+    wire align_window = locked && pal == pal_lcd && lv >= FIRST_ROW - 10'd4 && lv < FIRST_ROW;
+    wire align_start = align_window && (first_pending || first_source_line);
+    wire wait_for_start = align_window && lv == FIRST_ROW - 10'd1 && start_wait < 3'd4;
+    wire [10:0] next_line_clocks = HHALF + {10'd0, !pal_lcd} + {{6{htrim[4]}}, htrim};
+    wire [9:0] next_frame_lines = VFRAME + {{5{vtrim[4]}}, vtrim};
+
+    // The panel reads a continuous rectangle. Adjust only the porch of future
+    // lines, so a source edge or a lock change cannot truncate an active line.
+    // One analog line should end just before the next pair of LCD lines starts.
+    always @(posedge clk) begin
+        if (rst) begin
+            hc <= 11'd0; lv <= 10'd0; half <= 1'b0; pal_lcd <= 1'b0;
+            line_clocks <= 11'd1072; frame_lines <= 10'd525;
+            htrim <= 5'sd0; vtrim <= 5'sd0;
+            latest_bank <= 1'b0; line_bank <= 1'b0;
+            first_pending <= 1'b0; start_wait <= 3'd0;
+        end else begin
+            if (new_line) latest_bank <= line_info_a[0];
+            if (!align_window) first_pending <= 1'b0;
+            else if (first_source_line) first_pending <= 1'b1;
+            if (!locked || pal != pal_lcd) htrim <= 5'sd0;
+            else if (line_ev) begin
+                if (!half) htrim <= hc < 11'd8 ? 5'sd2 : 5'sd8;
+                else if (hc + 11'd12 < line_clocks) htrim <= -5'sd8;
+                else if (hc + 11'd4 < line_clocks) htrim <= -5'sd2;
+                else htrim <= 5'sd0;
+            end
+
+            // Align the first completed visible source row with the panel's
+            // first active row, by stretching or shortening vertical blanking.
+            if (!locked || pal != pal_lcd) vtrim <= 5'sd0;
+            else if (first_source_line) begin
+                if (align_window) vtrim <= 5'sd0;
+                else if (lv > FIRST_ROW + (VFRAME >> 1)) vtrim <= lv + 10'd12 < frame_lines ? -5'sd12 : -5'sd2;
+                else if (lv + 10'd2 < FIRST_ROW) vtrim <= lv + 10'd12 < FIRST_ROW ? -5'sd12 : -5'sd2;
+                else if (lv > FIRST_ROW + 10'd1) vtrim <= lv > FIRST_ROW + 10'd12 ? 5'sd12 : 5'sd2;
+                else vtrim <= 5'sd0;
+            end
+
+            if (end_line) begin
+                hc <= 11'd0;
+                line_bank <= align_start ? 1'b0 : (new_line ? line_info_a[0] : latest_bank);
+                if (end_frame) begin
+                    lv <= 10'd0;
+                    pal_lcd <= pal && locked;
+                    start_wait <= 3'd0;
+                    frame_lines <= (!locked || pal != pal_lcd) ? (pal && locked ? 10'd625 : 10'd525) : next_frame_lines;
+                end else if (align_start) begin
+                    lv <= FIRST_ROW;
+                    first_pending <= 1'b0;
+                end else if (wait_for_start) start_wait <= start_wait + 3'd1;
+                else lv <= lv + 10'd1;
+                half <= end_frame || align_start ? 1'b0 : ~half;
+                line_clocks <= end_frame ? (pal && locked ? 11'd1080 : 11'd1072) :
+                               (half || align_start) ? HHALF : next_line_clocks;
+            end else hc <= hc + 11'd1;
+        end
+    end
+    wire [9:0] row = lv - FIRST_ROW;
 `endif
     wire [9:0]  orow_v = row - OSDV;                  // the OSD's line
     wire        osd_line = orow_v < 10'd480;
 `ifdef TRI_HDMI90
     wire        row_on = row < NROW;
-`else
+`elsif TRI_HDMI
     wire        row_on = locked ? info[8] : free_row;
+`else
+    wire        row_on = row < 10'd480;
 `endif
     wire        de0 = row_on && hc >= HBP && hc < HBP + HACT;
     wire [9:0]  x = hc[9:0] - HBP[9:0];
@@ -303,8 +376,10 @@ module lcd_out (
         hq <= hcalc;
 `ifdef TRI_HDMI90
         lb_addr  <= {rs[0], hq[9:0]};           // fbuf.v holds source line rs in half rs[0]
-`else
+`elsif TRI_HDMI
         lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
+`else
+        lb_addr  <= {line_bank, hq[9:0]};
 `endif
         hv1 <= hq[10]; hv2 <= hv1;
         osd_addr <= rbase + {4'd0, cx};
@@ -313,14 +388,16 @@ module lcd_out (
 `ifdef TRI_HDMI
         vs_d <= {vs_d[3:0], lv < 10'd6};             // six lines of vertical sync
 `else
-        vs_d <= {vs_d[3:0], vs_r};
+        vs_d <= {vs_d[3:0], lv < 10'd3};              // three full lines of vertical sync
 `endif
         sx1 <= sx; sx2 <= sx1; sx3 <= sx2;
         g1 <= ing; g2 <= g1; g3 <= g2;
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
         lg1 <= lg0; lg2 <= lg1;
-        cell3 <= osd_cell; v3 <= boot ? lg2 : (locked && hv2) ? lb_data : 16'd0;
+        // unlocked: the line buffer as vid_sync's flywheel wrote it (snow, like an analog
+        // receiver), not black
+        cell3 <= osd_cell; v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
 `ifdef TRI_SEGFONT
         glyph <= seg_row(osd_cell[6:0], ry2);
 `else

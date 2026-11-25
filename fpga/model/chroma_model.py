@@ -222,12 +222,12 @@ INC_N = round(3579545.454545 / 40e6 * 2 ** 32)
 INC_P = round(4433618.75 / 40e6 * 2 ** 32)
 SIN = [round(127 * np.sin(2 * np.pi * a / 256)) for a in range(256)]
 COS = [round(127 * np.cos(2 * np.pi * a / 256)) for a in range(256)]
-BS, BE = 232, 296            # burst gate (NTSC); PAL 240..304
-BS_P, BE_P = 240, 304
-KILL = 600                   # burst amplitude below which colour is off
+BS, BE = 232, 288            # burst gate (NTSC, 5 subcarrier periods); PAL 240..303 (7): DC drops out
+BS_P, BE_P = 240, 303
+KILL_N, KILL_P = 525, 591    # burst amplitude below which colour is off (600 x gate / 64)
 NB_N, NB_P = 22, 18          # chroma boxcar: two subcarrier periods (twice), narrower and less noisy
-K_N = round(2 ** 16 * 816 / NB_N ** 2)            # G = K / A: saturation from the burst
-K_P = round(2 ** 16 * 816 / NB_P ** 2 * 1.0607)   # x 1.0607 for max + min / 2 at +-45 degrees
+K_N = round(2 ** 16 * 816 / NB_N ** 2 * 56 / 64)  # G = K / A: saturation from the burst (x gate / 64)
+K_P = round(2 ** 16 * 816 / NB_P ** 2 * 1.0607 * 63 / 64)   # x 1.0607 for max + min / 2 at +-45 degrees
 M_N = round(65536 * 8192 / (16129 * NB_N ** 2))   # chroma remodulation scale
 M_P = round(65536 * 8192 / (16129 * NB_P ** 2))
 CORDIC_LAT = 11
@@ -300,7 +300,7 @@ def hw_decode(codes, hc, pal):
             corr = -(err << 14)
             fadj = sat(fadj - err, 21)
             A = A + asr(amp - A, 3)
-            kill = A < KILL
+            kill = A < (KILL_P if p else KILL_N)
             G = 0 if kill else (K_P if p else K_N) // A
         # chroma filters (boxcar n, twice)
         hist_pu = [pu] + hist_pu[:23]; hist_pv = [pv] + hist_pv[:23]

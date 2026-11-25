@@ -62,7 +62,11 @@ module vid_sync (
         c[0] <= code;
         for (i = 1; i < 8; i = i + 1) c[i] <= c[i-1];
         y <= y + code - c[7];
-        if (rst) y <= 9'd0;
+        // the running sum and its window are cleared together: on the board the IQ
+        // clock runs during the reset and the combiner holds code 25 there, so a
+        // cleared y with a full window left y ~200 low for good (9 bits: wrapped) and
+        // the sync slicer never saw a pulse
+        if (rst) begin y <= 9'd0; for (i = 0; i < 8; i = i + 1) c[i] <= 6'd0; end
     end
     // ---- line counter -------------------------------------------------------
     wire [11:0] HT = pal ? 12'd2560 : 12'd2542;
@@ -75,7 +79,9 @@ module vid_sync (
     reg [12:0] tip_f, porch_f;              // x16 IIR state
     reg  [8:0] linemin, minprev;
     reg  [4:0] lev_n;                       // level updates so far (slicer on measured levels at 16)
-    wire [8:0] slice = lev_n[4] ? (tip + porch) >> 1 : minprev + 9'd16;
+    // The two 9-bit levels can sum to more than 511 before averaging.
+    wire [9:0] level_sum = {1'b0, tip} + {1'b0, porch};
+    wire [9:0] slice = lev_n[4] ? {1'b0, level_sum[9:1]} : {1'b0, minprev} + 10'd16;
     // sync detection on a low-passed luma (one pole, tau 16 clocks = 0.4 us,
     // on top of y's 8-sample sum): FM clicks at low C/N no longer cut a sync
     // pulse short or pull the line minimum (the slicer before the first lock)
@@ -107,7 +113,6 @@ module vid_sync (
     reg         act, show_cur;
     reg  [7:0]  orow_cur;
     reg  [9:0]  aidx;
-    reg  [2:0]  m6;
     reg  [7:0]  orow_n;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
@@ -188,14 +193,14 @@ module vid_sync (
             vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
-            aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
+            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
         end else begin
             // line counter, with the flywheel correction below
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
             // ---- sync edges ----
             ysa <= ysa + {4'd0, y} - {4'd0, yf};
             if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; end
-            else if (low && yf >= slice + 9'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
+            else if (low && yf >= slice + 10'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
             else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
                 if (lock != 4'd0 && inwin) begin
@@ -214,13 +219,14 @@ module vid_sync (
                 bpl <= 10'd0;
                 vline <= 10'd0; vguard <= 10'd200;
                 field_tog <= ~field_tog;
-                aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0;
+                aidx <= 10'd0; orow_n <= 8'd0;
             end
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
             if (yf < linemin) linemin <= yf;
-            if (hc == 12'd400 && lock >= 4'd8) begin
+            if (lock == 4'd0) lev_n <= 5'd0;
+            else if (hc == 12'd400 && lock >= 4'd8) begin
                 if (!lev_n[4]) lev_n <= lev_n + 5'd1;
                 tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);
                 porch_f <= porch_f - (porch_f >> 3) + (porch_acc[15:7] << 1);
@@ -240,7 +246,7 @@ module vid_sync (
                 locked <= lock >= 4'd8 || (keep_lock && khold != 13'd0);
                 if (vguard != 10'd0) vguard <= vguard - 10'd1;
                 if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
-                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; end
+                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0; end
                 else vline <= vline + 10'd1;
                 // the line that starts now: active?
                 if (vline + 10'd1 >= VSTART && vline + 10'd1 < VSTART + VROWS) begin
@@ -248,15 +254,15 @@ module vid_sync (
 `ifdef TRI_HDMI
                     show_cur <= 1'b1;                     // HDMI 576p shows all 288 PAL lines
 `else
-                    show_cur <= !(pal && m6 == 3'd5);
+                    // The 480-row LCD displays the middle 240 PAL source lines.
+                    show_cur <= !pal || (vline >= 10'd43 && vline < 10'd283);
 `endif
                     orow_cur <= orow_n;
 `ifdef TRI_HDMI
                     orow_n <= orow_n + 8'd1;
 `else
-                    if (!(pal && m6 == 3'd5)) orow_n <= orow_n + 8'd1;
+                    if (!pal || (vline >= 10'd43 && vline < 10'd283)) orow_n <= orow_n + 8'd1;
 `endif
-                    m6 <= m6 == 3'd5 ? 3'd0 : m6 + 3'd1;
                     aidx <= aidx + 10'd1;
                 end else act <= 1'b0;
             end

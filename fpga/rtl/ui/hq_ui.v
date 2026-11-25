@@ -192,7 +192,7 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
                              default: ch = SP;
                          endcase
             endcase
-        end else if (r1 == 5'd9 && c1 >= 7'd26 && c1 <= 7'd38 && !locked) begin             // NO SIGNAL
+        end else if (1'b0 && r1 == 5'd9 && c1 >= 7'd26 && c1 <= 7'd38 && !locked) begin     // NO SIGNAL (off: the snow stays clear)
             fi = c1 - 7'd26; bg = BG_PANEL;
             case (fi)
                 7'd0: begin ch = G_CAPL; fg = PANELFG; bg = BG_VIDEO; end

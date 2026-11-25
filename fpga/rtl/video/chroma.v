@@ -25,9 +25,14 @@ module chroma (
     output reg  signed [9:0] vg
 );
     localparam [31:0] INC_N = 32'd384350767, INC_P = 32'd476056188;
-    localparam [19:0] K_N = 20'd110490, K_P = 20'd175072;
-    localparam [15:0] KILL = 16'd600;
-    wire [11:0] BS = pal ? 12'd240 : 12'd232, BE = pal ? 12'd304 : 12'd296;
+    // burst gate: a whole number of subcarrier periods (NTSC 5 = 55.9 samples -> 56,
+    // PAL 7 = 63.2 -> 63), so the code's DC (the porch sits near code 20 on the board,
+    // not 32) drops out of the burst sums; 64 samples (5.7 / 7.1 periods) let it leak
+    // in with a sign that turns every NTSC line: A inflated, the burst PLL pulled
+    // about, no colour. K and the kill level scale with the gate (56/64, 63/64).
+    localparam [19:0] K_N = 20'd96679, K_P = 20'd172337;
+    wire [15:0] KILL = pal ? 16'd591 : 16'd525;
+    wire [11:0] BS = pal ? 12'd240 : 12'd232, BE = pal ? 12'd303 : 12'd288;
     // ---- NCO and table ----
     reg  [31:0] ph = 32'd0;
     reg  signed [20:0] fadj = 21'sd0;
@@ -130,7 +135,7 @@ module chroma (
         end
     end
     // ---- chroma filters: two boxcars of n (pipelined; filters restart on a standard change) ----
-    // The delay lines are 32-entry rings in block RAM (registered reads, the
+    // The delay lines are 32-entry RAM rings (registered reads, the
     // address one clock ahead). "Cleared" on a reset or a standard change:
     // a ring value older than that counts as 0 (age counters), exactly as the
     // shift registers' clear did.
@@ -143,7 +148,8 @@ module chroma (
     wire [4:0]  n1 = p1 ? 5'd18 : 5'd22;
     reg  [4:0]  wr = 5'd0;                          // ring write address (one entry a clock)
     reg  [4:0]  age1 = 5'd0, age2 = 5'd0;           // clocks since the stage's last clear (saturating)
-    (* ram_style = "block" *) reg [27:0] r1 [0:31]; // {pu_r, pv_r}
+    // Keep the small mixer delay in LUT RAM so the colour + HQ DVR build fits.
+    (* ram_style = "distributed" *) reg [27:0] r1 [0:31]; // {pu_r, pv_r}
     (* ram_style = "block" *) reg [35:0] r2 [0:31]; // {u1, v1}
     (* ram_style = "block" *) reg [22:0] r0 [0:31]; // {c, s, co}
     reg  [27:0] q1; reg [35:0] q2; reg [22:0] q0;
@@ -160,7 +166,8 @@ module chroma (
     wire       rst1 = rst || chg1;
     always @(posedge clk) begin
         palr <= {palr[2:0], pal};
-        pu_r <= pu; pv_r <= pv;
+        pu_r <= rst ? 14'sd0 : pu;
+        pv_r <= rst ? 14'sd0 : pv;
         wr <= wr + 5'd1;
         // ring k-entry of a shift register d (d[0] <= x each clock): d[k](t) = x(t - 1 - k),
         // written at wr(t - 1 - k) = wr(t - 1) - k: read now (wr) at wr - k for the next clock
@@ -173,7 +180,7 @@ module chroma (
     // stage 1: u1 = sum of the last n pu (python u1[k] lands here at k + 2)
     always @(posedge clk) begin
         if (rst) begin
-            u1 <= 18'sd0; v1 <= 18'sd0; pu_r <= 14'sd0; pv_r <= 14'sd0; age1 <= 5'd0;
+            u1 <= 18'sd0; v1 <= 18'sd0; age1 <= 5'd0;
         end else if (chg1) begin
             u1 <= pu_r; v1 <= pv_r; age1 <= 5'd1;
         end else begin

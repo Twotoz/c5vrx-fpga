@@ -35,7 +35,9 @@ module tb_osd;
     end
     // orow parity = (vline - 18)[0] = vline[0]: the half lcd_out reads
     wire [10:0] lb_raddr; reg [15:0] lb_rdata;
-    always @(posedge clk) lb_rdata <= lb[lb_raddr];
+    // Test the no-signal overlay with a black simulated input, the same
+    // background supplied to the reference renderer.
+    always @(posedge clk) lb_rdata <= locked ? lb[lb_raddr] : 16'd0;
     // ---- markers ----
     reg mk_tog = 0; reg [1:0] mk_src = 2'd3; reg [15:0] mk_pl = 0;
     task mark; input [1:0] src; input [15:0] pl; begin
