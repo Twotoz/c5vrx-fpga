@@ -46,6 +46,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
     output reg  [1:0]  rescue,           // Signal page: rescue PLL 0 Off, 1 Auto, 2 On
     output wire [1:0]  hz90,             // 90 Hz HDMI build, Settings: 0 Free, 1 Camera, 2 Smooth
+    output reg         boot,             // the start-up screen is up (lcd_out.v draws the logo)
     output reg         bl_pwm
 );
 `ifdef TRI_HDMI90
@@ -56,6 +57,18 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
 `else
     localparam H90 = 0;
 `endif
+    // the start-up screen: the build and its version (fpga/build.sh: the git commit)
+`ifndef TRI_VERSION
+`define TRI_VERSION 28'h0000000
+`endif
+    localparam [27:0] VER = `TRI_VERSION;
+`ifdef TRI_HDMI90
+    localparam [71:0] BUILD_S = "HDMI 90Hz";
+`elsif TRI_HDMI
+    localparam [71:0] BUILD_S = "     HDMI";
+`else
+    localparam [71:0] BUILD_S = "      LCD";
+`endif
     // ---- glyphs, colours, fields (gen_osd.py) ------------------------------------
     localparam [6:0] G_LOGO0 = 22,
                      G_CAPL = 1, G_CAPR = 2, G_DOT = 8, G_CHL = 9, G_CHR = 10, G_BARS = 13, G_SEGON = 18,
@@ -65,7 +78,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     localparam [5:0] F_CAPL = 1, F_CAPR = 2, F_LIVECH = 3, F_REC = 4, F_NOSIG = 5, F_RXBAR = 6, F_VSTD = 7, F_CHVAL = 8,
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
-                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28, F_HZ90V = 29;
+                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28, F_HZ90V = 29,
+                     F_BOOTBLD = 30, F_BOOTVER = 31, F_BOOTRX = 32, F_BOOTSD = 33;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -144,6 +158,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [9:0]  sec_ms;
     reg [3:0]  rm_t, rm_o, rs_o; reg [2:0] rs_t;    // recording time, BCD (mm:ss, minutes stop at 99)
     wire       ev = btn_ev | s2_ev;
+    // start-up screen: at least 1 s, then until there is video (or SELECT), at most 3 s
+    reg  [11:0] boot_ms; reg bskip;
     wire [3:0] b  = btn_ev ? btn : s2_btn;       // bit 0 UP, 1 SELECT, 2 DOWN, 3 long
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     wire [5:0] ch_next = channel == 6'd47 ? 6'd0 : channel + 6'd1;
@@ -154,7 +170,12 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
+            boot <= 1'b1; boot_ms <= 12'd0; bskip <= 1'b0;
         end else begin
+            if (boot && ms) begin
+                boot_ms <= boot_ms + 12'd1;
+                if ((boot_ms >= 12'd1000 && (locked || bskip)) || boot_ms >= 12'd3000) boot <= 1'b0;
+            end
             if (ms && toast_ms != 11'd0) toast_ms <= toast_ms - 11'd1;
             if (ms && cal_ms != 12'd0) cal_ms <= cal_ms - 12'd1;
             // recording time
@@ -187,7 +208,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     end else begin scan_ch <= scan_ch + 6'd1; channel <= scan_ch + 6'd1; end
                 end
             end
-            if (ev) begin
+            if (ev && boot) begin if (sel) bskip <= 1'b1; end   // buttons during the start-up screen: SELECT skips it
+            else if (ev) begin
                 link_on <= 1'b1;
                 if (!open) begin
                     if (sel) begin open <= 1'b1; page <= 3'd1; cursor <= 3'd0; edit <= 1'b0; end
@@ -267,10 +289,12 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         ra <= (rst || ra == 11'd1319) ? 11'd0 : ra + 11'd1;
         if (rst || ra == 11'd1319) begin rc <= 7'd0; rr <= 5'd0; pbase <= pg == 3'd0 ? 13'd0 : pg == 3'd1 ? 13'd1320 : pg == 3'd2 ? 13'd2640 : pg == 3'd3 ? 13'd3960 : 13'd5280; end
         else if (rc == 7'd65) begin rc <= 7'd0; rr <= rr + 5'd1; end else rc <= rc + 7'd1;
-        tw <= tmpl[pbase + {2'b0, ra}]; wa1 <= ra; rr1 <= rr; fq <= freq[channel];
+        tw <= boot ? boot_tw(rr, rc) : tmpl[pbase + {2'b0, ra}]; wa1 <= ra; rr1 <= rr; fq <= freq[channel];
     end
     // ---- field logic (gen_osd.py field_cells) ----
     function [7:0] digit; input [3:0] d; digit = 8'd48 + d; endfunction
+    function [6:0] hexd; input [3:0] d; hexd = d < 4'd10 ? 7'd48 + {3'd0, d} : 7'd87 + {3'd0, d}; endfunction
+`include "osd_boot.vh"
     function [3:0] tv; input [7:0] v;    // tens of v (0..99)
         tv = v >= 8'd90 ? 4'd9 : v >= 8'd80 ? 4'd8 : v >= 8'd70 ? 4'd7 : v >= 8'd60 ? 4'd6 : v >= 8'd50 ? 4'd5 :
              v >= 8'd40 ? 4'd4 : v >= 8'd30 ? 4'd3 : v >= 8'd20 ? 4'd2 : v >= 8'd10 ? 4'd1 : 4'd0;
@@ -286,7 +310,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 5: s = "    Ready"; 6: s = " Card err"; 7: s = "    Level"; 8: s = "     Keel"; 9: s = "     RSSI";
                 10: s = "       On"; 11: s = "      Off"; 12: s = "     Sent"; 13: s = "NO SIGNAL"; 14: s = "     REC ";
                 15: s = "     Off "; 24: s = "   No DVR"; 25: s = "      Log"; 26: s = "     Auto";
-                27: s = "     Free"; 28: s = "   Camera"; 29: s = "   Smooth";
+                27: s = "     Free"; 28: s = "   Camera"; 29: s = "   Smooth"; 30: s = BUILD_S;
                 default: s = "         ";
             endcase
             str = s[8 * (8 - i) +: 7];
@@ -318,8 +342,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg  [6:0]  fch; reg fgv, fbv; reg [2:0] ffg; reg [1:0] fbg;
     // the fixed strings: a field picks one and the character (ss, si); one str() lookup for all
     reg  [4:0]  ss; reg [3:0] si; reg su;
+    reg  [6:0]  bo; reg [1:0] bg_k;
     always @(*) begin
-        fch = fi; fgv = 1'b0; ffg = WHITE; fbv = 1'b0; fbg = BG_VIDEO; ss = 5'd31; si = 4'd0; su = 1'b0;
+        fch = fi; fgv = 1'b0; ffg = WHITE; fbv = 1'b0; fbg = BG_VIDEO; ss = 5'd31; si = 4'd0; su = 1'b0; bo = 7'd0; bg_k = 2'd0;
         case (fid)
             6'd0: fch = fi;
             F_CAPL, F_CAPR: begin
@@ -380,6 +405,18 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             F_KLOCKV, F_ASYNCV, F_NFILTV:
                      begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_RESCV: begin ss = rescue == 2'd1 ? 5'd26 : rescue == 2'd2 ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
+            F_BOOTBLD: begin ss = 5'd30; si = fi[3:0]; su = 1'b1; end
+            F_BOOTVER: fch = hexd(VER[{3'd6 - fi[2:0], 2'b00} +: 4]);
+            F_BOOTRX: begin                                // "C5 A ●   C5 B ●   C5 C ●", the dot green once the C5 is heard
+                bo = fi >= 7'd18 ? 7'd18 : fi >= 7'd9 ? 7'd9 : 7'd0;
+                bg_k = fi >= 7'd18 ? 2'd2 : fi >= 7'd9 ? 2'd1 : 2'd0;
+                case (fi - bo)
+                    7'd0: fch = "C"; 7'd1: fch = "5"; 7'd3: fch = 7'd65 + {5'd0, bg_k};
+                    7'd5: begin fch = G_DOT; fgv = 1'b1; ffg = fresh[bg_k] ? GREEN : GREY; end
+                    default: fch = SP;
+                endcase
+            end
+            F_BOOTSD: begin ss = HAS_DVR == 0 ? 5'd24 : ds2 == 2'd0 ? 5'd4 : ds2 == 2'd3 ? 5'd6 : 5'd5; si = fi[3:0]; su = 1'b1; end
             F_HZ90V: begin ss = 5'd27 + {3'd0, hz90_r}; si = fi[3:0] + 4'd1; su = 1'b1; end
             F_BRIGHTV: begin fch = fi[2:0] <= bright ? G_SEGON : G_SEGOFF; if (is_sel || is_edit) begin fgv = 1'b1; ffg = WHITE; end end
             F_CALV: begin

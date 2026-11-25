@@ -196,6 +196,9 @@ def main():
     print(('PAL' if pal else 'NTSC') + f' mode {mode}{" motion" if motion else ""}: {len(info)} frames, {checked} checked pixel for pixel, '
           f'{rate:.2f} Hz, SDRAM violations {errs}')
     print('  fields shown (last 18):', [i['fld'] for i in info[-18:]])
+    if '--diag' in sys.argv:
+        for i in info[-12:]:
+            print(f"    t {i['t']/1e9:9.3f} ms  field {i['fld']}  age {i['age']}  hh {i['hh']}  hr {i['hr']}  hv {i['hv']}  vt {i['vt']}")
     print('  frame lengths (last 18):', [i['vt'] for i in info[-18:]])
     if ages:
         print(f'  age of the shown field at the frame start: mean {np.mean(ages):.1f} ms, min {min(ages):.1f}, max {max(ages):.1f}')

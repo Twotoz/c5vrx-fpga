@@ -20,7 +20,7 @@ BASE = dict(open=True, page=1, cursor=0, edit=False, toast=False, channel=8, loc
             scan_ch=0, dvr=True, dvr_state=2, rec_s=83, age=[0, 0, 4095], sig=[78, 55, 0], cn=[1184, 1121, 0],
             gain=[54, 61, 0], flags=[1, 1, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2,
             aspect=3, wide=False, logo=True)
-SHOTS = [('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
+SHOTS = [('boot', dict(boot=True, open=False, dvr_state=1)), ('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
          ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
          ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)),
          ('signal', dict(page=4, cursor=0, aspect=2, klock=True)), ('live', dict(open=False, aspect=2)),
@@ -74,6 +74,10 @@ def main():
         hm = G.hmaps()[0 if hdmi else G.hmode(st)]       # HDMI: the 720 samples as they are
         wid = [[widen(int(v)) for v in row] for row in pic]
         video = [[wid[y // 2][hm[x]] if st['locked'] and hm[x] is not None else 0 for x in range(800)] for y in range(480)]
+        if st.get('boot'):                                # the start-up screen: the logo layer, the build
+            st['build'] = 'HDMI' if hdmi else 'LCD'
+            bv = G.boot_video()
+            video = [[widen(int(bv[y][x])) for x in range(800)] for y in range(480)]
         want = np.asarray(G.render(g, G.fill(ps, st), video)).astype(int)
         if hdmi:
             want = want[:, 40:760]

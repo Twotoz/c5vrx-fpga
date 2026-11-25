@@ -190,13 +190,14 @@ module fbuf (
     task mstart; input signed [23:0] a; input signed [7:0] bb;
         begin ma <= a; mneg <= bb[7]; mb <= bb[7] ? -bb : bb; mk <= 4'd0; macc <= 32'sd0; mrun <= 1'b1; end
     endtask
+    reg fr_ev_d; always @(posedge clk) fr_ev_d <= fr_ev;
     always @(posedge clk) begin
         if (rst) begin ms <= 3'd0; mrun <= 1'b0; sh_h <= 8'sd0; sh_r <= 8'sd0; sh_v <= 6'sd0; end
         else if (mrun) begin                          // a x |b|, b's bits one a clock
             if (mb[mk[2:0]]) macc <= macc + ($signed({{8{ma[23]}}, ma}) <<< mk);
             if (mk == 4'd7) mrun <= 1'b0; else mk <= mk + 4'd1;
         end else case (ms)
-            3'd0: if (fr_ev) begin
+            3'd0: if (fr_ev_d) begin                 // a clock after the frame start: age is this frame's
                       if (md == 2'd2 && mv) begin ms <= 3'd1; mstart({{13{fa[10]}}, fa}, $signed(pal ? KH_P : KH_N)); end
                       else begin sh_h <= 8'sd0; sh_r <= 8'sd0; sh_v <= 6'sd0; end
                   end

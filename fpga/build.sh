@@ -19,6 +19,8 @@ DEF="-DTRI_HQDVR"                                  # default: Triversity + colou
 [ "${HDMI:-0}" = 1 ] && DEF="$DEF -DTRI_HDMI -DTRI_HMAPCALC"   # HDMI=1: the HDMI output instead of the LCD -> *_hdmi.fs
 # HDMI90=1: HDMI at ~90 Hz from a field buffer in the SDRAM (no HQ DVR) -> triversity_hdmi90.fs
 [ "${HDMI90:-0}" = 1 ] && { DEF="-DTRI_HDMI -DTRI_HDMI90 -DTRI_HMAPCALC"; HDMI=1; }
+# the start-up screen shows the build's git commit
+VER="$(git -C "$HERE" rev-parse --short=7 HEAD 2>/dev/null || echo 0000000)"; DEF="$DEF -DTRI_VERSION=28'h$VER"
 CST="$HERE/boards/tang_nano_20k.cst"; [ "${HDMI:-0}" = 1 ] && CST="$HERE/boards/tang_nano_20k_hdmi.cst"
 # At ~85 % LUT not every placement routes (tools/fit.py): try placements (seed:placer density) in turn
 # until one does. PNR_OPTS set: only that one.

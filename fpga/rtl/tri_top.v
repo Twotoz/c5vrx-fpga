@@ -210,7 +210,7 @@ module tri_top (
     always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     // ---- menu and link ----
     wire o_de, o_hs, o_vs; wire [4:0] o_r, o_b; wire [5:0] o_g; wire [7:0] px_r, px_g, px_b; wire bl_pwm;
-    wire [1:0] hmode, hz90;
+    wire [1:0] hmode, hz90; wire boot;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
 `ifdef TRI_LIVEUI
     hq_ui #(.CLK_HZ(UI_HZ)) u_menu (
@@ -221,13 +221,13 @@ module tri_top (
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
-                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]), .rescue(sg_l[4:3]), .hz90(hz90),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]), .rescue(sg_l[4:3]), .hz90(hz90), .boot(boot),
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-                   .locked_a(locked), .pal_a(pal), .hmode(hmode), .lb_addr(lb_raddr), .lb_data(lb_rdata),
+                   .locked_a(locked), .pal_a(pal), .hmode(hmode), .boot(boot), .lb_addr(lb_raddr), .lb_data(lb_rdata),
                    .osd_addr(osd_raddr), .osd_cell(osd_rdata),
                    .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
                    .px_r(px_r), .px_g(px_g), .px_b(px_b)

@@ -52,7 +52,8 @@ BANDS = 'RABEFL'
 
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
-          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V']
+          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V',
+          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -313,6 +314,70 @@ def pages(h90=False):
     return [live, main, rx, st, sg]
 
 
+# ---- start-up screen (menu.v boot, lcd_out.v logo layer) ---------------------------------
+# The Triversity logo (docs/logo.png) at 300 x 79, shown twice as large (600 x 158) at
+# x 100, y 60 of the 800 x 480 grid; run-length coded, 9 bits a run: {class, length - 1}
+# (classes: background, blue half / full, white half / full; runs of 1..64 pixels, every
+# row complete). The RTL colours (RGB565):
+BOOT_LX, BOOT_LY, BOOT_W, BOOT_H = 100, 60, 300, 79
+BOOT_RGB565 = [0x0842, 0x0b50, 0x0aff, 0x7bf0, 0xef9e]   # bg, blue half, blue, white half, white
+BOOT_LOGO = HERE.parent.parent / 'docs' / 'logo.png'
+
+
+def boot_classes():
+    im = Image.open(BOOT_LOGO).convert('RGB').resize((BOOT_W, BOOT_H), Image.LANCZOS)
+    out = []
+    for y in range(BOOT_H):
+        row = []
+        for x in range(BOOT_W):
+            r, g, b = im.getpixel((x, y))
+            cov = min(1.0, max(0.0, (250 - min(r, g, b)) / 200))   # distance from the white page
+            q = round(cov * 2)                               # 0, half, full
+            row.append(0 if q == 0 else (q if b - r > 60 else 2 + q))
+        out.append(row)
+    return out
+
+
+def boot_runs():
+    runs = []
+    for row in boot_classes():
+        x = 0
+        while x < BOOT_W:
+            n = 1
+            while x + n < BOOT_W and row[x + n] == row[x] and n < 64:
+                n += 1
+            runs.append(row[x] << 6 | (n - 1))
+            x += n
+    assert len(runs) <= 2048, len(runs)
+    return runs
+
+
+def boot_video(rev=BOOT_H * 2 + 2):
+    """The start-up screen's picture (RGB565 per pixel, 800 x 480) as lcd_out.v draws it:
+    rows of the logo below rev shown, the two rows at rev a white scan line."""
+    cls = boot_classes()
+    out = [[BOOT_RGB565[0]] * 800 for _ in range(480)]
+    for y in range(2 * BOOT_H):
+        for x in range(2 * BOOT_W):
+            c = cls[y // 2][x // 2] if y < rev else (4 if y // 2 == rev // 2 else 0)
+            out[BOOT_LY + y][BOOT_LX + x] = BOOT_RGB565[c]
+    return out
+
+
+def boot_page():
+    """Below the logo: the C5s found, then a small table (label left, value right)."""
+    p = Page()
+    p.field(10, 21, 'BOOTRX', 24, fg=WHITE, bg=BG_VIDEO)
+    for r, label in ((12, 'Build'), (13, 'Channel'), (14, 'SD card'), (15, 'Video')):
+        p.put(r, 21, label, fg=GREY, bg=BG_VIDEO)
+    p.field(12, 28, 'BOOTBLD', 9, fg=WHITE, bg=BG_VIDEO)
+    p.field(12, 38, 'BOOTVER', 7, fg=GREY, bg=BG_VIDEO)
+    p.field(13, 36, 'LIVECH', 9, fg=WHITE, bg=BG_VIDEO)
+    p.field(14, 36, 'BOOTSD', 9, fg=WHITE, bg=BG_VIDEO)
+    p.field(15, 37, 'VSTD', 8, fg=WHITE, bg=BG_VIDEO)
+    return p
+
+
 # ---- reference field logic (rtl/ui/menu.v does the same) -----------------------------
 def rjust(s, w):
     s = list(s)
@@ -385,6 +450,20 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['Level', 'Keel', 'RSSI'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
+    if name == 'BOOTBLD':
+        return K(rjust(st.get('build', 'LCD'), w))
+    if name == 'BOOTVER':
+        return K(st.get('version', '0000000'))
+    if name == 'BOOTRX':
+        out = []
+        for k in range(3):
+            alive = st['age'][k] < 3000
+            out += K('C5 ' + 'ABC'[k] + ' ') + [(DOT, GREEN if alive else GREY, None)] + (K('   ') if k < 2 else [])
+        return out
+    if name == 'BOOTSD':
+        if not st.get('has_dvr', True):
+            return K(rjust('No DVR', w))
+        return K(rjust(['No card', 'Ready', 'Ready', 'Card err'][st['dvr_state']], w))
     if name == 'HZ90V':
         return K(rjust(['Free', 'Camera', 'Smooth'][st.get('hz90', 0)], w))
     if name == 'RESCV':
@@ -439,6 +518,8 @@ def fill(ps, st):
     p = ps[st['page']] if st['open'] else ps[0]
     page = st['page'] if st['open'] else 0
     sel_row = ITEM0 + (4 if page == 2 else st['cursor']) if page else (1 if st['toast'] else -1)
+    if st.get('boot'):
+        p, page, sel_row = boot_page(), 0, -1
     cells = [[None] * COLS for _ in range(ROWS)]
     for r in range(ROWS):
         c = 0
@@ -539,6 +620,18 @@ def emit(g, ps):
                 h90.append(f"    tmpl[{k * COLS * ROWS + r * COLS + c}] = 18'h{p.t[r][c]:05x};")
     h90 += [l for l in lines if 'freq[' in l] + ['end']
     (RTL / 'osd_pages_h90.vh').write_text('\n'.join(h90) + '\n')
+    bp = boot_page()                                # the start-up screen's cells: a function, no block RAM
+    bl = head + ['function [17:0] boot_tw; input [4:0] r; input [6:0] c;', '    case ({r, c})']
+    for r in range(ROWS):
+        for c in range(COLS):
+            if bp.t[r][c]:
+                bl.append(f"        12'h{r << 7 | c:03x}: boot_tw = 18'h{bp.t[r][c]:05x};")
+    bl += ['        default: boot_tw = 18\'h0;', '    endcase', 'endfunction']
+    (RTL / 'osd_boot.vh').write_text('\n'.join(bl) + '\n')
+    runs = boot_runs()
+    (RTL.parent / 'video' / 'boot_logo.vh').write_text('\n'.join(head + ['initial begin'] +
+        [f"    logo[{i}] = 9'h{v:03x};" for i, v in enumerate(runs)] + ['end']) + '\n')
+    print('boot logo', len(runs), 'runs')
     (RTL / 'osd_freq.vh').write_text('\n'.join(head + ['initial begin'] + [l for l in lines if 'freq[' in l] + ['end']) + '\n')
     lines = head + ['initial begin']
     for m, mp in enumerate(hmaps()):

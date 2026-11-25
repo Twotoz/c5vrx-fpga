@@ -48,7 +48,7 @@ module tb_osd;
     wire osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
     initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;
     always @(posedge clk) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
-    wire dvr; wire [1:0] mode;
+    wire dvr, boot; wire [1:0] mode;
 `ifdef TRI_LIVEUI
     hq_ui u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s2_n(1'b1),
 `else
@@ -56,10 +56,10 @@ module tb_osd;
 `endif
         .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state), .wide_a(1'b0),
         .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
-        .dvr(dvr), .mode(mode), .hmode(hm), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
+        .dvr(dvr), .mode(mode), .hmode(hm), .boot(boot), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
     lcd_out u_lcd (.clk(clk), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
-        .locked_a(locked), .pal_a(pal), .hmode(hm), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
+        .locked_a(locked), .pal_a(pal), .hmode(hm), .boot(boot), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
         .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r), .lcd_g(g), .lcd_b(b));
     // ---- frame capture ----
     integer f, nshot = 0, row, col; reg cap = 0, de_p = 0, vs_p = 1, armed = 0;
@@ -104,6 +104,8 @@ module tb_osd;
         mark(2'd0, {4'd5, 12'd8});                                   // C5 A: channel A1
         mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd1}); mark(2'd0, {4'd6, 12'd78});
         mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd1}); mark(2'd1, {4'd6, 12'd55});
+        u_lcd.rev = 9'd160; shot;                                    // 0 start-up screen (the logo revealed)
+        u_menu.boot = 1'b0; repeat (20) @(posedge clk);              // (it would end after 1 s with video)
         press(5'b00010);                                             // open
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Record: on
         dvr_state = 2'd2; repeat (20) @(posedge clk); u_menu.rm_t = 4'd0; u_menu.rm_o = 4'd1; u_menu.rs_t = 3'd2; u_menu.rs_o = 4'd3; u_menu.sec_ms = 10'd0;
