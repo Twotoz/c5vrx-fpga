@@ -24,8 +24,8 @@
 // TRI_HDMI90 (with TRI_HDMI, without TRI_HQDVR) HDMI at ~90 Hz from a field buffer in the SDRAM
 module tri_top (
     input  wire       xtal,          // 27 MHz
-    input  wire       s1,            // Tang S1, active high (pressed = 1): DOWN (menu)
-    input  wire       s2,            // Tang S2, active high: SELECT
+    input  wire       key_s1,        // Tang S1, active high (pressed = 1): DOWN (menu)
+    input  wire       key_s2,        // Tang S2, active high: SELECT
     input  wire       a_clk, b_clk, c_clk,
     input  wire [6:1] a_d, b_d, c_d, // XIAO pads D1..D6
     output wire       link_tx,       // to D10 of all three C5s (inverted UART)
@@ -218,7 +218,7 @@ module tri_top (
 `else
     menu #(.HAS_DVR(HAS_DVR), .CLK_HZ(UI_HZ)) u_menu (
 `endif
-                 .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(~s1), .s2_n(~s2),
+                 .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(~key_s1), .s2_n(~key_s2),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
