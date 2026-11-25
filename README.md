@@ -57,15 +57,28 @@ USB debugger). Every push to `main` that changes the firmware or the FPGA
 design publishes a release (`release.yml`); `pages.yml` mirrors the newest
 releases into the flasher.
 
-Two bitstreams with the same receiver, one per output: `triversity.fs` for
-the 800x480 RGB LCD, `triversity_hdmi.fs` for HDMI (720x480p60 NTSC,
-720x576p50 PAL with all 288 lines; the LCD and HDMI share the Tang's pins).
-Both: three C5s fused (Single, Diversity or Triversity), colour, the full menu
-and the HQ DVR at the same time. The DVR
-buffers the fields in the Tang's built-in 8 MB SDRAM (block order, up to
-four fields), so recording never takes block RAM or time from the picture.
-Fit: 84 % (LCD) / 85 % (HDMI) LUT4, 45 / 42 of 46 BSRAM, timing met (`fpga/build.sh` tries
-placements, seed and density, until one routes: at 85 % not every one does).
+Three bitstreams with the same receiver; the LCD and HDMI share the Tang's
+pins, so flash the one for your screen:
+
+| | `triversity.fs` | `triversity_hdmi.fs` | `triversity_hdmi90.fs` |
+|---|:---:|:---:|:---:|
+| Output | 800x480 RGB LCD | HDMI 720x480p60 / 720x576p50 | HDMI 720x480 @ 89.9 Hz / 720x576 @ 90 Hz |
+| Picture locked to the camera, line by line (no frame buffer) | ✅ | ✅ | ❌ field buffer in the SDRAM |
+| Extra delay | none | none | up to a field + a frame |
+| Three C5s fused (Single / Diversity / Triversity) | ✅ | ✅ | ✅ |
+| Colour (NTSC / PAL) | ✅ | ✅ | ✅ |
+| Full menu and OSD | ✅ | ✅ | ✅ |
+| Rescue, Noise filter, Keep lock, Adaptive | ✅ | ✅ | ✅ |
+| Aspect (4:3 / 16:9 / Stretch / Auto) | ✅ | ❌ the screen scales | ❌ the screen scales |
+| HQ DVR (colour JPEG of every field to the TF card) | ✅ | ✅ | ❌ |
+| Link log (with the DVR) | ✅ | ✅ | ❌ |
+| LUT4 / BSRAM used | 83 % / 45 of 46 | 84 % / 42 of 46 | 66 % / 31 of 46 |
+
+The HQ DVR buffers the fields in the Tang's built-in 8 MB SDRAM (block order,
+up to four fields), so recording never takes block RAM or time from the
+picture; the 90 Hz build uses that SDRAM for its field buffer instead. Timing
+is met in all three (`fpga/build.sh` tries placements, seed and density, until
+one routes: at 85 % not every one does).
 
 ## Experimental hardware — flight safety warning
 
