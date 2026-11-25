@@ -463,7 +463,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 endcase
             end
             F_NOSIG: begin
-                if (locked) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
+                // no NO SIGNAL label: the picture (or snow) stays clear
+                if (1'b1) begin fch = 7'd0; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi == 7'd0 || fi == 7'd12) begin fch = fi == 7'd0 ? G_CAPL : G_CAPR; fgv = 1'b1; ffg = PANELFG; fbv = 1'b1; fbg = BG_VIDEO; end
                 else if (fi >= 7'd2 && fi <= 7'd10) begin ss = 5'd13; si = fi[3:0] - 4'd2; su = 1'b1; end
                 else fch = SP;
