@@ -158,7 +158,8 @@ module lcd_out (
                 lv <= lv + 10'd1;
             end else if (!half && hc == HHALF - 11'd1) begin
                 hc <= 11'd0; half <= 1'b1; lv <= lv + 10'd1;
-            end else if (half && hc == HFREE - 11'd1) begin   // no line toggle: free-run
+            end else if (half && hc == (locked ? HFREE : HHALF) - 11'd1) begin   // no line toggle: free-run
+                // (unlocked: every line HHALF long; the panel's timing controller drops lines that alternate 1072 / 1200)
                 hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= lv + 10'd1;
             end else hc <= hc + 11'd1;
             if ((field_ev && locked) || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
