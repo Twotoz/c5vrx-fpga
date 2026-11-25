@@ -3,13 +3,27 @@ name: FPGA
 on:
   push:
     branches: [main]
-    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml", ".github/actions/**"]
   pull_request:
-    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml", ".github/actions/**"]
   workflow_dispatch:
+    inputs:
+      variant:
+        description: Bitstream to build
+        type: choice
+        default: lcd
+        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90]
+      placement:
+        description: Exact placement (e.g. 3:0.8), empty for automatic
+        type: string
+
+concurrency:
+  group: fpga-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   simulate:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,50 +88,30 @@ jobs:
         run: python fpga/sim/run_video_tb.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
 
-  bitstream:
+  smoke-bitstream:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [lcd-live, hdmi-live, hdmi90]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/build-fpga
         with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build
-        run: fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream
-          path: fpga/build/triversity.fs
+          variant: ${{ matrix.variant }}
+          artifact: fpga-${{ matrix.variant }}
+          pnr-timeout: 6m
 
-  bitstream-hdmi:
+  manual-bitstream:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/build-fpga
         with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build (HDMI)
-        run: HDMI=1 fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream-hdmi
-          path: fpga/build/triversity_hdmi.fs
-
-  bitstream-hdmi90:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build (HDMI 90 Hz)
-        run: HDMI90=1 fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream-hdmi90
-          path: fpga/build/triversity_hdmi90.fs
+          variant: ${{ inputs.variant }}
+          placement: ${{ inputs.placement }}
+          artifact: fpga-${{ inputs.variant }}

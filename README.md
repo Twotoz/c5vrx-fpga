@@ -78,7 +78,12 @@ The HQ DVR buffers the fields in the Tang's built-in 8 MB SDRAM (block order,
 up to four fields), so recording never takes block RAM or time from the
 picture; the 90 Hz build uses that SDRAM for its field buffer instead. Timing
 is met in all three (`fpga/build.sh` tries placements, seed and density, until
-one routes: at 85 % not every one does).
+one routes: at 85 % not every one does). `PLACEMENT=3:0.8 fpga/build.sh` builds
+exactly one placement; every build writes `fpga/build/placement.txt` (commit,
+placement, Yosys and nextpnr versions). CI and releases use the same pinned OSS
+CAD Suite (2026-11-24, `.github/actions/build-fpga`), so a placement that routed
+locally can be given to the Release (or FPGA) workflow's manual run and gives the
+same bitstream; each release carries a `.placement.txt` per bitstream.
 
 ## Experimental hardware — flight safety warning
 
