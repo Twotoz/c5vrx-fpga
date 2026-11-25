@@ -25,7 +25,7 @@ module tb_video;
     lcd_out u_lcd (.clk(clk_l), .rst(rst), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
         .locked_a(locked), .pal_a(pal), .hmode(hm), .boot(boot), .lb_addr(lb_raddr), .lb_data(lb_rdata), .osd_addr(osd_raddr), .osd_cell(osd_rdata),
         .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r), .lcd_g(g), .lcd_b(b));
-    integer n, k, f, frame = 0, row = 0, col = 0; reg de_p = 0;
+    integer n, k, f, frame = 0, row = 0, col = 0; reg de_p = 0, vs_p = 1;
     initial begin
         if (!$value$plusargs("n=%d", n)) n = 1000;
         $readmemh("code.hex", mem);
@@ -36,9 +36,9 @@ module tb_video;
         $fclose(f); $finish;
     end
     always @(posedge clk_l) begin
-        if (!vs) begin frame = frame + 1; row = 0; end
+        if (vs_p && !vs) begin frame = frame + 1; row = 0; end
         if (de) begin $fwrite(f, "%0d %0d %0d %0d %0d %0d\n", frame, row, col, r, g, b); col = col + 1; end
         if (de_p && !de) begin row = row + 1; col = 0; end
-        de_p = de;
+        de_p = de; vs_p = vs;
     end
 endmodule

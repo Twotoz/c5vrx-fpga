@@ -111,7 +111,6 @@ module vid_sync (
     reg         act, show_cur;
     reg  [7:0]  orow_cur;
     reg  [9:0]  aidx;
-    reg  [2:0]  m6;
     reg  [7:0]  orow_n;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
@@ -192,7 +191,7 @@ module vid_sync (
             vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
-            aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
+            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
         end else begin
             // line counter, with the flywheel correction below
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
@@ -218,7 +217,7 @@ module vid_sync (
                 bpl <= 10'd0;
                 vline <= 10'd0; vguard <= 10'd200;
                 field_tog <= ~field_tog;
-                aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0;
+                aidx <= 10'd0; orow_n <= 8'd0;
             end
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
@@ -244,7 +243,7 @@ module vid_sync (
                 locked <= lock >= 4'd8 || (keep_lock && khold != 13'd0);
                 if (vguard != 10'd0) vguard <= vguard - 10'd1;
                 if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
-                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; m6 <= 3'd0; orow_n <= 8'd0; end
+                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0; end
                 else vline <= vline + 10'd1;
                 // the line that starts now: active?
                 if (vline + 10'd1 >= VSTART && vline + 10'd1 < VSTART + VROWS) begin
@@ -252,15 +251,15 @@ module vid_sync (
 `ifdef TRI_HDMI
                     show_cur <= 1'b1;                     // HDMI 576p shows all 288 PAL lines
 `else
-                    show_cur <= !(pal && m6 == 3'd5);
+                    // The 480-row LCD displays the middle 240 PAL source lines.
+                    show_cur <= !pal || (vline >= 10'd43 && vline < 10'd283);
 `endif
                     orow_cur <= orow_n;
 `ifdef TRI_HDMI
                     orow_n <= orow_n + 8'd1;
 `else
-                    if (!(pal && m6 == 3'd5)) orow_n <= orow_n + 8'd1;
+                    if (!pal || (vline >= 10'd43 && vline < 10'd283)) orow_n <= orow_n + 8'd1;
 `endif
-                    m6 <= m6 == 3'd5 ? 3'd0 : m6 + 3'd1;
                     aidx <= aidx + 10'd1;
                 end else act <= 1'b0;
             end

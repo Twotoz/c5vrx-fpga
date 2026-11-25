@@ -43,6 +43,10 @@ jobs:
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
         run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hdmi && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
+      - name: LCD raster through video lock and standard changes
+        run: |
+          iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_raster -o "$RUNNER_TEMP/lcd_raster" fpga/sim/tb_lcd_raster.v fpga/rtl/video/lcd_out.v
+          vvp -n "$RUNNER_TEMP/lcd_raster"
       - name: TMDS encoder (HDMI), against the model
         run: python fpga/sim/run_tmds_tb.py
       - name: 90 Hz HDMI, field buffer to pixels (NTSC and PAL)
