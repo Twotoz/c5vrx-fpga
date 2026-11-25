@@ -352,14 +352,13 @@ def boot_runs():
     return runs
 
 
-def boot_video(rev=BOOT_H * 2 + 2):
-    """The start-up screen's picture (RGB565 per pixel, 800 x 480) as lcd_out.v draws it:
-    rows of the logo below rev shown, the two rows at rev a white scan line."""
+def boot_video():
+    """The start-up screen's picture (RGB565 per pixel, 800 x 480) as lcd_out.v draws it."""
     cls = boot_classes()
     out = [[BOOT_RGB565[0]] * 800 for _ in range(480)]
     for y in range(2 * BOOT_H):
         for x in range(2 * BOOT_W):
-            c = cls[y // 2][x // 2] if y < rev else (4 if y // 2 == rev // 2 else 0)
+            c = cls[y // 2][x // 2]
             out[BOOT_LY + y][BOOT_LX + x] = BOOT_RGB565[c]
     return out
 

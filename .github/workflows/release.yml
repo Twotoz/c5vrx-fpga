@@ -31,29 +31,40 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: c5, path: out/ }
 
+  # At ~85 % LUT not every placement routes and one try takes up to an hour:
+  # the LCD and HDMI bitstreams try eight placements at once (seed:density),
+  # each on its own runner; publish takes one that routed.
   fpga:
     runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        try: ["default", "3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "2:0.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - run: fpga/build.sh
+      - run: TRIES="${{ matrix.try }}" fpga/build.sh
       - uses: actions/upload-artifact@v4
-        with: { name: fpga, path: fpga/build/triversity.fs }
-
-
+        with: { name: "fpga-lcd-${{ strategy.job-index }}", path: fpga/build/triversity.fs }
 
   fpga-hdmi:
     runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        try: ["3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "8:0.8", "2:0.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - run: HDMI=1 fpga/build.sh
+      - run: HDMI=1 TRIES_HDMI="${{ matrix.try }}" fpga/build.sh
       - uses: actions/upload-artifact@v4
-        with: { name: fpga-hdmi, path: fpga/build/triversity_hdmi.fs }
+        with: { name: "fpga-hdmi-${{ strategy.job-index }}", path: fpga/build/triversity_hdmi.fs }
 
   fpga-hdmi90:
     runs-on: ubuntu-latest
@@ -74,7 +85,17 @@ jobs:
       actions: write
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: out, merge-multiple: true }
+        with: { path: all }
+      - name: One bitstream of each
+        run: |
+          mkdir out
+          cp all/c5/* out/
+          cp all/fpga-hdmi90/triversity_hdmi90.fs out/
+          lcd=$(ls all/fpga-lcd-*/triversity.fs 2>/dev/null | head -1)
+          hdmi=$(ls all/fpga-hdmi-*/triversity_hdmi.fs 2>/dev/null | head -1)
+          [ -n "$lcd" ] && [ -n "$hdmi" ] || { echo "no LCD or no HDMI placement routed"; exit 1; }
+          echo "LCD from $lcd, HDMI from $hdmi"
+          cp "$lcd" "$hdmi" out/
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -189,8 +189,7 @@ module lcd_out (
         ry <= rrem[4:0];
     end
     // ---- start-up screen: the Triversity logo (gen_osd.boot_runs: 300 x 79, run-length
-    //      coded, shown twice as large at x 100, y 60 of the 800 x 480 grid), revealed from
-    //      the top 6 rows a frame behind a white scan line; dark around it ----
+    //      coded, shown twice as large at x 100, y 60 of the 800 x 480 grid); dark around it ----
 `ifndef TRI_LIVEUI
     reg  [8:0]  logo [0:2047];
 `include "boot_logo.vh"
@@ -204,22 +203,15 @@ module lcd_out (
     wire        lrow_in = lrow < 10'd158;
     reg  [10:0] lptr, lrs;                          // the run shown, the first run of this logo row
     reg  [8:0]  lq, lcur; reg [5:0] lrem; reg lph;
-    reg  [8:0]  rev; reg [9:0] orow_p;
     always @(posedge clk) lq <= logo[lptr + 11'd1];  // the next run, always ready
     wire        lin_x = de0 && x >= LX && x < LX + 10'd600;
     reg  [15:0] lg0;
     always @(*) begin
         lg0 = BC0;
-        if (lin_x && lrow_in) begin
-            if (lrow < {1'b0, rev})
-                case (lcur[8:6]) 3'd1: lg0 = BC1; 3'd2: lg0 = BC2; 3'd3: lg0 = BC3; 3'd4: lg0 = BC4; default: lg0 = BC0; endcase
-            else if (lrow[9:1] == {1'b0, rev[8:1]}) lg0 = BC4;
-        end
+        if (lin_x && lrow_in)
+            case (lcur[8:6]) 3'd1: lg0 = BC1; 3'd2: lg0 = BC2; 3'd3: lg0 = BC3; 3'd4: lg0 = BC4; default: lg0 = BC0; endcase
     end
     always @(posedge clk) begin
-        if (hc == 11'd0) orow_p <= orow_v;
-        if (rst || !boot) rev <= 9'd0;
-        else if (hc == 11'd0 && orow_v == 10'd0 && orow_p != 10'd0 && rev < 9'd160) rev <= rev + 9'd6;
         if (lrow_in && hc == 11'd2) begin               // a logo row: from its first run (twice each)
             if (lrow == 10'd0) begin lrs <= 11'd0; lptr <= 11'h7ff; end
             else if (lrow[0]) lptr <= lrs - 11'd1;
