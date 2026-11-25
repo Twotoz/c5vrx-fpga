@@ -213,6 +213,8 @@ goggle or range result.
 
 ## Wiring
 
+FPGA board: [Sipeed Tang Nano 20K](https://link.amazon/B0cnSBh4M) (affiliate link).
+
 ![Triversity wiring: Tang Nano 20K with three XIAO ESP32-C5](docs/wiring.png)
 
 | XIAO pad | signal | C5 A | C5 B | C5 C |
