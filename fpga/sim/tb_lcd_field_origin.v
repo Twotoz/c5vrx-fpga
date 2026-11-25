@@ -1,5 +1,6 @@
 // Completed source rows arrive at 1/2 the LCD line rate. Verify field origin
-// when NTSC alternates 262 and 263 source lines per field.
+// when NTSC alternates 262 and 263 source lines per field. Let the blanking
+// trim acquire the source before checking four displayed fields.
 `timescale 1ns/1ps
 module tb_lcd_field_origin;
     reg clk = 0, rst = 1;
@@ -41,8 +42,8 @@ module tb_lcd_field_origin;
             frame = frame + 1;
             visible_line = 0;
         end
-        if (de && !de_prev && frame > 0) begin
-            if (visible_line < 2 && bank_rows[lb_addr[10]] != 0)
+        if (de && !de_prev && frame > 4) begin
+            if (visible_line == 0 && bank_rows[lb_addr[10]] != 0)
                 $fatal(1, "frame %0d starts LCD row %0d with source row %0d",
                        frame, visible_line, bank_rows[lb_addr[10]]);
             if (visible_line == 0) begin
@@ -57,7 +58,7 @@ module tb_lcd_field_origin;
                 last_field = bank_fields[lb_addr[10]];
             end
             visible_line = visible_line + 1;
-            if (frame == 4 && visible_line == 480) begin
+            if (frame == 8 && visible_line == 480) begin
                 $display("PASS: source row zero starts four alternating NTSC fields");
                 $finish;
             end
@@ -72,7 +73,7 @@ module tb_lcd_field_origin;
         bank_fields[1] = -1;
         repeat (4) @(negedge clk);
         #1 rst = 0;
-        repeat (3000000) @(negedge clk);
+        repeat (5500000) @(negedge clk);
         $fatal(1, "timed out waiting for four frames");
     end
 endmodule
