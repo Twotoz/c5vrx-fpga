@@ -320,7 +320,9 @@ module lcd_out (
         ry1 <= ry; ry2 <= ry1;
         // n+2: cell and video
         lg1 <= lg0; lg2 <= lg1;
-        cell3 <= osd_cell; v3 <= boot ? lg2 : (locked && hv2) ? lb_data : 16'd0;
+        // unlocked: the line buffer as vid_sync's flywheel wrote it (snow, like an analog
+        // receiver), not black
+        cell3 <= osd_cell; v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
 `ifdef TRI_SEGFONT
         glyph <= seg_row(osd_cell[6:0], ry2);
 `else
