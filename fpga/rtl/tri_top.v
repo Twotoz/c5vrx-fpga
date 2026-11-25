@@ -76,10 +76,13 @@ module tri_top (
         .PSDA(4'd0), .DUTYDA(4'd0), .FDLY(4'd0), .CLKOUT(clk_lcd), .LOCK(pll_lock), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3());
 `endif
     // ---- capture on each C5's own clock ----
-    reg [5:0] cap_a, cap_b, cap_c, ra;
-    always @(posedge a_clk) cap_a <= word(a_d);
-    always @(posedge b_clk) cap_b <= word(b_d);
-    always @(posedge c_clk) cap_c <= word(c_d);
+    // The pads are registered in the I/O cells (IDDR, both edges) and the cleaner
+    // edge is picked per C5 (iq_cap.v): a fabric flip-flop let the six bits take
+    // different routes, and on the board part of the samples mixed two IQ words.
+    wire [5:0] cap_a, cap_b, cap_c; reg [5:0] ra;
+    iq_cap u_capa (.clk(a_clk), .d(word(a_d)), .q(cap_a), .sel(), .jumps0(), .jumps1());
+    iq_cap u_capb (.clk(b_clk), .d(word(b_d)), .q(cap_b), .sel(), .jumps0(), .jumps1());
+    iq_cap u_capc (.clk(c_clk), .d(word(c_d)), .q(cap_c), .sel(), .jumps0(), .jumps1());
     always @(posedge a_clk) ra <= cap_a;
     // ---- resets ----
     reg [1:0] bs = 2'b00; reg [11:0] por = 12'd0;
