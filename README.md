@@ -360,6 +360,15 @@ the DVR records the same pixels; the OSD is the LCD's grid cropped to
 columns 3..62 (`run_osd_tb.py --hdmi` checks it pixel for pixel, the TMDS
 encoder `run_tmds_tb.py`).
 
+HDMI at 90 Hz (`HDMI90=1 fpga/build.sh` -> `triversity_hdmi90.fs`, for screens
+that need 90 Hz; without the HQ DVR): the output free-runs from the crystal at
+48.6 MHz, 720x480 at 89.88 Hz (NTSC, 1030 x 525) or 720x576 at 90.00 Hz (PAL,
+864 x 625), and shows the newest complete field from a three-slot field buffer
+in the SDRAM (`rtl/video/fbuf.v`), each line twice. The fields are shown once
+or twice in turn (59.94 / 50 Hz into 90 Hz), never two in one frame; the
+buffer adds up to a field and a frame of delay. `run_hdmi90_tb.py [--pal]`
+checks it from the source to the pixels.
+
 Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`,
 `run_link_tx_tb.py`, `run_chroma_tb.py` (colour, bit-exact),
 `run_dvr_tb.py` (SD card model with a FAT32 image, fast and slow card), `run_osd_tb.py` (OSD pixel for pixel against `gen/gen_osd.py`; `--hq` the HQ build's screen),
@@ -368,6 +377,7 @@ Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`
 `run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`; `--log` with the link log, read back with `tools/trilog.py`),
 `run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter), `perf_rescue.py` (Rescue Off / Auto / On; `run_tb3.py` checks the PLL bit-exact, on and switching),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
+`run_hdmi90_tb.py` (the 90 Hz HDMI output: field buffer, SDRAM and output, every pixel, NTSC and PAL),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
 `research/` next to this repo or in `$C5VRX_RESEARCH`).
 

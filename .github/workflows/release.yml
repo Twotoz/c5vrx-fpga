@@ -55,8 +55,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: fpga-hdmi, path: fpga/build/triversity_hdmi.fs }
 
+  fpga-hdmi90:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
+      - run: HDMI90=1 fpga/build.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: fpga-hdmi90, path: fpga/build/triversity_hdmi90.fs }
+
   publish:
-    needs: [c5, fpga, fpga-hdmi]
+    needs: [c5, fpga, fpga-hdmi, fpga-hdmi90]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -73,6 +84,6 @@ jobs:
           sha256sum * > SHA256SUMS
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Triversity $TAG" \
-            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (Triversity, colour, menu and HQ DVR; triversity.fs for the LCD, triversity_hdmi.fs for HDMI), built from ${GITHUB_SHA}. Flash with the web flasher." \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (Triversity, colour, menu and HQ DVR; triversity.fs for the LCD, triversity_hdmi.fs for HDMI; triversity_hdmi90.fs HDMI at 90 Hz without the HQ DVR), built from ${GITHUB_SHA}. Flash with the web flasher." \
             *
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

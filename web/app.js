@@ -55,6 +55,9 @@ function showRelease() {
   const hd = asset(rel, 'triversity_hdmi.fs');
   $('dlFsHdmi').href = hd ? assetUrl(hd) : '#';
   $('dlFsHdmi').toggleAttribute('aria-disabled', !hd);
+  const h9 = asset(rel, 'triversity_hdmi90.fs');
+  $('dlFsHdmi90').href = h9 ? assetUrl(h9) : '#';
+  $('dlFsHdmi90').toggleAttribute('aria-disabled', !h9);
   $('infoName').textContent = rel ? (rel.name || rel.tag) : '-';
   $('infoDate').textContent = rel ? new Date(rel.published_at).toLocaleString() : '-';
   $('infoAssets').textContent = rel ? rel.assets.map(a => a.name).join(', ') : '-';

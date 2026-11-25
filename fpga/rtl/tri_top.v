@@ -11,9 +11,16 @@
 // Adapted from the Tripleversity work in C5VRX
 // (https://github.com/Twotoz/C5VRX, hardware_experiments/tang9k_dual).
 `default_nettype none
+`ifdef TRI_HQDVR
+`define TRI_SDRAM
+`endif
+`ifdef TRI_HDMI90
+`define TRI_SDRAM
+`endif
 // Build options (fpga/build.sh sets them): TRI_HQDVR the HQ DVR, TRI_NO_C without
 // C5 C, TRI_LIVEUI the live-view OSD (hq_ui.v) instead of the menu, TRI_SEGFONT
-// 7-segment glyphs from logic, TRI_HMAPCALC the aspect column map computed
+// 7-segment glyphs from logic, TRI_HMAPCALC the aspect column map computed,
+// TRI_HDMI90 (with TRI_HDMI, without TRI_HQDVR) HDMI at ~90 Hz from a field buffer in the SDRAM
 module tri_top (
     input  wire       xtal,          // 27 MHz
     input  wire       s1_n,          // reset
@@ -31,8 +38,8 @@ module tri_top (
 `endif
     output wire       sd_cs, sd_sck, sd_mosi,   // TF card, SPI mode (DVR)
     input  wire       sd_miso
-`ifdef TRI_HQDVR
-    ,                                           // the GW2AR's built-in SDRAM (field buffers of the HQ DVR)
+`ifdef TRI_SDRAM
+    ,                                           // the GW2AR's built-in SDRAM (field buffers of the HQ DVR / the 90 Hz output)
     output wire        O_sdram_clk, O_sdram_cke, O_sdram_cs_n, O_sdram_ras_n, O_sdram_cas_n, O_sdram_wen_n,
     output wire [10:0] O_sdram_addr,
     output wire [1:0]  O_sdram_ba,
@@ -45,7 +52,15 @@ module tri_top (
     function [7:0] nib; input [5:0] r; nib = {r[5:3], 1'b0, r[2:0], 1'b0}; endfunction   // align_b's nibbles
     // ---- LCD clock: 27 MHz * 5 / 4 = 33.75 MHz (VCO 540 MHz) ----
     wire clk_lcd, pll_lock;
-`ifdef TRI_HDMI
+`ifdef TRI_HDMI90
+    // 90 Hz HDMI: 27 MHz * 9 = 243 MHz TMDS bit clock (VCO 972 MHz; both edges: 486 Mbit/s), / 5 = 48.6 MHz pixels
+    localparam UI_HZ = 48600000;
+    wire clk_tmds;
+    rPLL #(.FCLKIN("27"), .IDIV_SEL(0), .FBDIV_SEL(8), .ODIV_SEL(4), .DEVICE("GW2AR-18C")) u_pll (
+        .CLKIN(xtal), .CLKFB(1'b0), .RESET(1'b0), .RESET_P(1'b0), .FBDSEL(6'd0), .IDSEL(6'd0), .ODSEL(6'd0),
+        .PSDA(4'd0), .DUTYDA(4'd0), .FDLY(4'd0), .CLKOUT(clk_tmds), .LOCK(pll_lock), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3());
+    CLKDIV #(.DIV_MODE("5")) u_pdiv (.CLKOUT(clk_lcd), .HCLKIN(clk_tmds), .RESETN(pll_lock), .CALIB(1'b0));
+`elsif TRI_HDMI
     // HDMI: 27 MHz * 5 = 135 MHz TMDS bit clock (both edges: 270 Mbit/s), / 5 = the 27 MHz pixel clock
     localparam UI_HZ = 27000000;
     wire clk_tmds;
@@ -177,7 +192,18 @@ module tri_top (
     assign sd_cs = 1'b1; assign sd_sck = 1'b0; assign sd_mosi = 1'b1; assign dvr_state = 2'd0;
 `endif
     wire [10:0] lb_raddr; wire [15:0] lb_rdata;
+`ifdef TRI_HDMI90
+    // 90 Hz: every field into the SDRAM, the display reads the newest one (fbuf.v)
+    wire fb_frame, fb_fetch; wire [8:0] fb_line;
+    fbuf u_fb (.clk(a_clk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
+               .field_tog(field_tog), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+               .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
+               .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
+               .O_sdram_cas_n(O_sdram_cas_n), .O_sdram_wen_n(O_sdram_wen_n), .O_sdram_addr(O_sdram_addr), .O_sdram_ba(O_sdram_ba),
+               .O_sdram_dqm(O_sdram_dqm), .IO_sdram_dq(IO_sdram_dq));
+`else
     linebuf u_lb (.wclk(a_clk), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata));
+`endif
     // ---- OSD cell RAM {bg, fg, glyph} (menu writes, lcd_out reads) ----
     reg  [11:0] osd [0:2047];
     wire        osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
@@ -204,7 +230,11 @@ module tri_top (
                    .locked_a(locked), .pal_a(pal), .hmode(hmode), .lb_addr(lb_raddr), .lb_data(lb_rdata),
                    .osd_addr(osd_raddr), .osd_cell(osd_rdata),
                    .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
-                   .px_r(px_r), .px_g(px_g), .px_b(px_b));
+                   .px_r(px_r), .px_g(px_g), .px_b(px_b)
+`ifdef TRI_HDMI90
+                   , .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
+`endif
+                   );
 `ifdef TRI_HDMI
     // ---- HDMI: TMDS (blue carries the syncs, active low) and the serialisers ----
     wire [9:0] s0, s1, s2;

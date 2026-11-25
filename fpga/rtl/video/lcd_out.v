@@ -33,6 +33,12 @@ module lcd_out (
     output reg  [5:0]  lcd_g,
     output reg  [4:0]  lcd_b,
     output reg  [7:0]  px_r, px_g, px_b   // the same pixel, 8 bits a channel (HDMI)
+`ifdef TRI_HDMI90
+    ,
+    output reg         frame_tog,      // to fbuf.v: a frame starts (latch the newest field)
+    output reg         fetch_tog,      // to fbuf.v: fetch source line fetch_line
+    output reg  [8:0]  fetch_line
+`endif
 );
     // ---- clock-domain crossing ------------------------------------------------
     reg [2:0] lt, ft; reg [1:0] lk, pl;
@@ -42,7 +48,21 @@ module lcd_out (
     end
     wire line_ev = lt[2] ^ lt[1], field_ev = ft[2] ^ ft[1];
     wire locked = lk[1], pal = pl[1];
-`ifdef TRI_HDMI
+`ifdef TRI_HDMI90
+    // 90 Hz HDMI build: free-running from the crystal at 48.6 MHz, the field from
+    // the SDRAM field buffer (fbuf.v), each source line twice. NTSC 720x480 in
+    // 1030 x 525 (89.88 Hz), PAL 720x576 in 864 x 625 (90.00 Hz); syncs and back
+    // porches as 480p / 576p, the wider NTSC line is front porch.
+    wire [10:0] HBP = pal ? 11'd132 : 11'd122;
+    localparam  HACT = 11'd720;
+    wire [10:0] HHALF = pal ? 11'd864 : 11'd1030, HFREE = HHALF;
+    wire [10:0] HSYNC = pal ? 11'd64 : 11'd62;
+    wire [10:0] GSTART = HBP - 11'd37;
+    wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
+    wire [9:0]  VSTART = pal ? 10'd44 : 10'd36;       // 6 sync lines, then the back porch
+    wire [9:0]  NROW = pal ? 10'd576 : 10'd480;
+    wire [9:0]  OSDV = pal ? 10'd48 : 10'd0;
+`elsif TRI_HDMI
     // HDMI build: 720x480p59.94 / 720x576p50 at 27 MHz, half a line 858 / 864
     // clocks (twice the analog line rate, genlocked like the LCD); sync 62 / 64,
     // video from 122 / 132; the OSD grid cropped to columns 3..62
@@ -62,6 +82,22 @@ module lcd_out (
     wire [9:0]  OSDV = 10'd0;
 `endif
     // ---- timing -------------------------------------------------------------------
+`ifdef TRI_HDMI90
+    reg  [10:0] hc;
+    reg  [9:0]  lv;
+    wire [9:0]  nr = lv + 10'd3 - VSTART;           // two output rows after the line starting next
+    always @(posedge clk) begin
+        if (rst) begin hc <= 11'd0; lv <= 10'd0; frame_tog <= 1'b0; fetch_tog <= 1'b0; fetch_line <= 9'd0; end
+        else if (hc == HHALF - 11'd1) begin
+            hc <= 11'd0;
+            lv <= lv >= VFRAME - 10'd1 ? 10'd0 : lv + 10'd1;
+            if (lv >= VFRAME - 10'd1) frame_tog <= ~frame_tog;
+            // line lv + 1 starts: fetch the source line of output row lv + 3 - VSTART (even rows)
+            if (nr < NROW && !nr[0]) begin fetch_line <= nr[9:1]; fetch_tog <= ~fetch_tog; end
+        end else hc <= hc + 11'd1;
+    end
+    wire [9:0]  row = lv - VSTART;
+`else
     reg  [10:0] hc;
     reg         half;
     reg  [8:0]  info;             // {show, orow} of the pair being shown
@@ -93,9 +129,14 @@ module lcd_out (
 `else
     wire [9:0]  row = locked ? {1'b0, info[7:0], half} : lv - 10'd23;
 `endif
+`endif
     wire [9:0]  orow_v = row - OSDV;                  // the OSD's line
     wire        osd_line = orow_v < 10'd480;
+`ifdef TRI_HDMI90
+    wire        row_on = row < NROW;
+`else
     wire        row_on = locked ? info[8] : free_row;
+`endif
     wire        de0 = row_on && hc >= HBP && hc < HBP + HACT;
     wire [9:0]  x = hc[9:0] - HBP[9:0];
     // ---- cell row of this line: row / 24, row % 24, row / 24 * 66, by subtraction

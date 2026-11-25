@@ -17,13 +17,15 @@ DEF="-DTRI_HQDVR"                                  # default: Triversity + colou
 [ "${HQDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR -DTRI_NO_C -DTRI_LIVEUI -DTRI_HMAPCALC"   # HQDVR=1: Diversity + HQ DVR, live view -> triversity_hqdvr.fs
 [ "${TRIDVR:-0}" = 1 ] && DEF="-DTRI_HQDVR -DTRI_TRIDVR -DTRI_LIVEUI -DTRI_SEGFONT -DTRI_HMAPCALC"   # TRIDVR=1: compact 7-segment OSD variant -> triversity_dvr.fs
 [ "${HDMI:-0}" = 1 ] && DEF="$DEF -DTRI_HDMI -DTRI_HMAPCALC"   # HDMI=1: the HDMI output instead of the LCD -> *_hdmi.fs
+# HDMI90=1: HDMI at ~90 Hz from a field buffer in the SDRAM (no HQ DVR) -> triversity_hdmi90.fs
+[ "${HDMI90:-0}" = 1 ] && { DEF="-DTRI_HDMI -DTRI_HDMI90 -DTRI_HMAPCALC"; HDMI=1; }
 CST="$HERE/boards/tang_nano_20k.cst"; [ "${HDMI:-0}" = 1 ] && CST="$HERE/boards/tang_nano_20k_hdmi.cst"
 # At ~85 % LUT not every placement routes (tools/fit.py): try placements (seed:placer density) in turn
 # until one does. PNR_OPTS set: only that one.
 TRIES="${TRIES:-default 3:0.8 1:0.8 1:0.7 5:0.8 6:0.8 7:0.8 8:0.8 2:0.7 3:0.7}"
 [ "${HDMI:-0}" = 1 ] && TRIES="${TRIES_HDMI:-3:0.8 1:0.8 1:0.7 5:0.8 6:0.8 7:0.8 8:0.8 2:0.7 3:0.7 4:0.7}"
 [ -n "${PNR_OPTS+x}" ] && TRIES="opts"
-OUT="triversity"; [ "${HQDVR:-0}" = 1 ] && OUT="triversity_hqdvr"; [ "${TRIDVR:-0}" = 1 ] && OUT="triversity_dvr"; [ "${HDMI:-0}" = 1 ] && OUT="${OUT}_hdmi"
+OUT="triversity"; [ "${HQDVR:-0}" = 1 ] && OUT="triversity_hqdvr"; [ "${TRIDVR:-0}" = 1 ] && OUT="triversity_dvr"; [ "${HDMI:-0}" = 1 ] && OUT="${OUT}_hdmi"; [ "${HDMI90:-0}" = 1 ] && OUT="triversity_hdmi90"
 "$YOSYS" -q -l "$B/yosys.log" -p "read_verilog $DEF $INC $SRC; synth_gowin -family gw2a ${SYNTH_OPTS--nodsp} -top tri_top -json $B/triversity.json"
 ok=0
 for t in $TRIES; do
