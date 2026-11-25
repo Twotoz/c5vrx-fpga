@@ -53,16 +53,17 @@ def widen(p):
 def main():
     docs = '--docs' in sys.argv
     tri = '--tridvr' in sys.argv
-    hdmi = '--hdmi' in sys.argv           # the HDMI build's output: 720 x 480, the 800-wide reference cropped at x 40
+    h90 = '--hdmi90' in sys.argv          # the 90 Hz HDMI build's menu (Settings: 90 Hz instead of Brightness)
+    hdmi = '--hdmi' in sys.argv or h90          # the HDMI build's output: 720 x 480, the 800-wide reference cropped at x 40
     hq = '--hq' in sys.argv or tri
     shots, base = (TRI_SHOTS, TRI_BASE) if tri else (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
-    g, ps = G.seg_glyphs() if tri else G.glyphs_vh(), G.pages()
+    g, ps = G.seg_glyphs() if tri else G.glyphs_vh(), G.pages(h90=h90)
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'video.hex').write_text('\n'.join(f'{v:04x}' for v in pic.ravel()) + '\n')
-        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR', '-DTRI_LIVEUI', '-DTRI_HMAPCALC'] if hq else []), *(['-DTRI_TRIDVR', '-DTRI_SEGFONT'] if tri else []), *(['-DTRI_HDMI', '-DTRI_HMAPCALC'] if hdmi else []), *rtl_.inc(), '-o', str(t / 'tb'),
+        subprocess.run(['iverilog', '-g2012', *(['-DTRI_HQDVR', '-DTRI_LIVEUI', '-DTRI_HMAPCALC'] if hq else []), *(['-DTRI_TRIDVR', '-DTRI_SEGFONT'] if tri else []), *(['-DTRI_HDMI', '-DTRI_HMAPCALC'] if hdmi else []), *(['-DTRI_MENU_H90'] if h90 else []), *rtl_.inc(), '-o', str(t / 'tb'),
                         str(HERE / 'tb_osd.v'), *rtl_.src('hq_ui.v' if hq else 'menu.v', 'lcd_out.v')], check=True)
         r = subprocess.run(['vvp', '-n', str(t / 'tb')], cwd=t, capture_output=True, text=True)
         print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-2000:])

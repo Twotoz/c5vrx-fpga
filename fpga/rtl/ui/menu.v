@@ -45,8 +45,17 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg  [7:0]  f_seq,
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
     output reg  [1:0]  rescue,           // Signal page: rescue PLL 0 Off, 1 Auto, 2 On
+    output wire [1:0]  hz90,             // 90 Hz HDMI build, Settings: 0 Free, 1 Camera, 2 Smooth
     output reg         bl_pwm
 );
+`ifdef TRI_HDMI90
+`define TRI_MENU_H90
+`endif
+`ifdef TRI_MENU_H90
+    localparam H90 = 1;
+`else
+    localparam H90 = 0;
+`endif
     // ---- glyphs, colours, fields (gen_osd.py) ------------------------------------
     localparam [6:0] G_LOGO0 = 22,
                      G_CAPL = 1, G_CAPR = 2, G_DOT = 8, G_CHL = 9, G_CHR = 10, G_BARS = 13, G_SEGON = 18,
@@ -56,7 +65,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     localparam [5:0] F_CAPL = 1, F_CAPR = 2, F_LIVECH = 3, F_REC = 4, F_NOSIG = 5, F_RXBAR = 6, F_VSTD = 7, F_CHVAL = 8,
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
-                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28;
+                     F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28, F_HZ90V = 29;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -123,6 +132,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [2:0]  page;                      // 1 menu, 2 receivers, 3 settings, 4 signal (while open)
     reg [2:0]  cursor;
     reg [2:0]  bright;
+    reg [1:0]  hz90_r;                    // 90 Hz HDMI build: 0 Free, 1 Camera, 2 Smooth
+    assign hz90 = hz90_r;
     reg [1:0]  aspect;                    // 0 4:3, 1 16:9, 2 Stretch, 3 Auto
     reg        logo;                      // small logo in the live view
     reg [5:0]  scan_ch, best_ch, orig_ch;
@@ -140,7 +151,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire [2:0] n_items = page == 3'd2 ? 3'd1 : page == 3'd4 ? 3'd5 : 3'd7;
     always @(posedge clk) begin
         if (rst) begin
-            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
+            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
         end else begin
@@ -223,7 +234,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         default: begin page <= 3'd1; cursor <= 3'd5; end
                     endcase
                     default: case (cursor)
-                        3'd0, 3'd2, 3'd4: edit <= 1'b1;
+                        3'd0, 3'd2: edit <= 1'b1;
+                        3'd4: if (H90) hz90_r <= hz90_r == 2'd2 ? 2'd0 : hz90_r + 2'd1;   // Free -> Camera -> Smooth
+                              else edit <= 1'b1;
                         3'd1: begin afc <= ~afc; a_set <= 1'b1; end
                         3'd3: logo <= ~logo;
                         3'd5: begin f_seq <= f_seq + 8'd1; cal_ms <= 12'd3000; end
@@ -240,7 +253,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     // ---- renderer: template -> fields -> cell RAM --------------------------------------
     reg [17:0] tmpl [0:6599];
     reg [15:0] freq [0:47];
+`ifdef TRI_MENU_H90
+`include "osd_pages_h90.vh"
+`else
 `include "osd_pages.vh"
+`endif
     reg [10:0] ra; reg [6:0] rc; reg [4:0] rr;      // cell address, column, row
     reg [12:0] pbase;                               // page * 1320
     reg [17:0] tw; reg [10:0] wa1; reg [4:0] rr1;
@@ -269,6 +286,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 5: s = "    Ready"; 6: s = " Card err"; 7: s = "    Level"; 8: s = "     Keel"; 9: s = "     RSSI";
                 10: s = "       On"; 11: s = "      Off"; 12: s = "     Sent"; 13: s = "NO SIGNAL"; 14: s = "     REC ";
                 15: s = "     Off "; 24: s = "   No DVR"; 25: s = "      Log"; 26: s = "     Auto";
+                27: s = "     Free"; 28: s = "   Camera"; 29: s = "   Smooth";
                 default: s = "         ";
             endcase
             str = s[8 * (8 - i) +: 7];
@@ -362,6 +380,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             F_KLOCKV, F_ASYNCV, F_NFILTV:
                      begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_RESCV: begin ss = rescue == 2'd1 ? 5'd26 : rescue == 2'd2 ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
+            F_HZ90V: begin ss = 5'd27 + {3'd0, hz90_r}; si = fi[3:0] + 4'd1; su = 1'b1; end
             F_BRIGHTV: begin fch = fi[2:0] <= bright ? G_SEGON : G_SEGOFF; if (is_sel || is_edit) begin fgv = 1'b1; ffg = WHITE; end end
             F_CALV: begin
                 if (cal_ms == 12'd0) fch = SP;

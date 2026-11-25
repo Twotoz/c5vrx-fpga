@@ -35,6 +35,10 @@ module lcd_out (
     output reg  [7:0]  px_r, px_g, px_b   // the same pixel, 8 bits a channel (HDMI)
 `ifdef TRI_HDMI90
     ,
+    input  wire [1:0]  hz90,           // menu: 0 Free (crystal), 1 Camera (locked to the fields), 2 Smooth
+    input  wire signed [7:0] sh_h,     // fbuf.v, Smooth: shift at the middle row (pixels), its slope (1/256 px a row),
+    input  wire signed [7:0] sh_r,     //   the vertical shift (source lines); set at each frame start (other domain,
+    input  wire signed [5:0] sh_v,     //   read two lines later)
     output reg         frame_tog,      // to fbuf.v: a frame starts (latch the newest field)
     output reg         fetch_tog,      // to fbuf.v: fetch source line fetch_line
     output reg  [8:0]  fetch_line
@@ -85,16 +89,52 @@ module lcd_out (
 `ifdef TRI_HDMI90
     reg  [10:0] hc;
     reg  [9:0]  lv;
-    wire [9:0]  nr = lv + 10'd3 - VSTART;           // two output rows after the line starting next
+    // Camera / Smooth: lock the frames to the fields, 3 frames to 2 fields (NTSC) or
+    // 9 to 5 (PAL). Once a cycle, at a field start, the frame should be at line
+    // PT, so the next frame starts when fbuf.v may already show this field (288 /
+    // 523 output lines later); the frame length moves by up to 4 lines to get there.
+    reg  signed [3:0] corr;
+    reg  [2:0]  fcyc;
+    wire [9:0]  VT = VFRAME + {{6{corr[3]}}, corr};
+    wire [9:0]  PT = pal ? 10'd102 : 10'd237;
+    wire signed [10:0] e0 = $signed({1'b0, lv}) - $signed({1'b0, PT});
+    wire signed [10:0] eh = e0 > $signed({2'b0, VFRAME[9:1]}) ? e0 - $signed({1'b0, VFRAME}) :
+                            e0 < -$signed({2'b0, VFRAME[9:1]}) ? e0 + $signed({1'b0, VFRAME}) : e0;
     always @(posedge clk) begin
-        if (rst) begin hc <= 11'd0; lv <= 10'd0; frame_tog <= 1'b0; fetch_tog <= 1'b0; fetch_line <= 9'd0; end
-        else if (hc == HHALF - 11'd1) begin
-            hc <= 11'd0;
-            lv <= lv >= VFRAME - 10'd1 ? 10'd0 : lv + 10'd1;
-            if (lv >= VFRAME - 10'd1) frame_tog <= ~frame_tog;
-            // line lv + 1 starts: fetch the source line of output row lv + 3 - VSTART (even rows)
-            if (nr < NROW && !nr[0]) begin fetch_line <= nr[9:1]; fetch_tog <= ~fetch_tog; end
-        end else hc <= hc + 11'd1;
+        if (rst || hz90 == 2'd0 || !locked) begin corr <= 4'sd0; fcyc <= 3'd0; end
+        else if (field_ev) begin
+            fcyc <= fcyc >= (pal ? 3'd4 : 3'd1) ? 3'd0 : fcyc + 3'd1;
+            if (fcyc == 3'd0)
+                corr <= eh > 11'sd32 ? 4'sd4 : eh > 11'sd2 ? 4'sd1 : eh < -11'sd32 ? -4'sd4 : eh < -11'sd2 ? -4'sd1 : 4'sd0;
+        end
+    end
+    // Smooth: this frame's shifts (fbuf.v sets them at the frame start), the
+    // horizontal one per row: h(row) = sh_h + sh_r / 256 x (row - rows / 2)
+    reg  signed [7:0]  hh, hr; reg signed [5:0] hv;
+    reg  signed [16:0] hacc;                      // 1/256 pixel
+    reg  [8:0]  hn;
+    reg  signed [7:0]  hrow;
+    wire [9:0]  nr = lv + 10'd3 - VSTART;           // two output rows after the line starting next
+    wire signed [10:0] fl = $signed({2'b0, nr[9:1]}) - $signed({{5{hv[5]}}, hv});   // its source line
+    wire [9:0]  nsrc = pal ? 10'd288 : 10'd240;
+    always @(posedge clk) begin
+        if (rst) begin hc <= 11'd0; lv <= 10'd0; frame_tog <= 1'b0; fetch_tog <= 1'b0; fetch_line <= 9'd0; hn <= 9'd0; end
+        else begin
+            if (hc == HHALF - 11'd1) begin
+                hc <= 11'd0;
+                lv <= lv >= VT - 10'd1 ? 10'd0 : lv + 10'd1;
+                if (lv >= VT - 10'd1) frame_tog <= ~frame_tog;
+                // line lv + 1 starts: fetch the source line of output row lv + 3 - VSTART (even rows)
+                if (nr < NROW && !nr[0] && !fl[10] && fl < $signed({1'b0, nsrc})) begin fetch_line <= fl[8:0]; fetch_tog <= ~fetch_tog; end
+                if (lv == 10'd1) begin hh <= sh_h; hr <= sh_r; hv <= sh_v; end
+                if (lv == 10'd2) begin hacc <= {{1{hh[7]}}, hh, 8'd0}; hn <= NROW[9:1]; end
+                // a row starts: its shift
+                if (lv + 10'd1 - VSTART < NROW) begin hrow <= (hacc + 17'sd128) >>> 8; hacc <= hacc + {{9{hr[7]}}, hr}; end
+            end else begin
+                hc <= hc + 11'd1;
+                if (hn != 9'd0) begin hacc <= hacc - {{9{hr[7]}}, hr}; hn <= hn - 9'd1; end   // to row 0: - rows / 2 x slope
+            end
+        end
     end
     wire [9:0]  row = lv - VSTART;
 `else
@@ -183,7 +223,13 @@ module lcd_out (
 `else
     wire [1:0] hm = hmode;
 `endif
-`ifdef TRI_HMAPCALC
+`ifdef TRI_HDMI90
+    // the shifted source: column x - h(row), line row / 2 - v; outside: black
+    wire signed [10:0] xs = $signed({1'b0, xn}) - $signed({{3{hrow[7]}}, hrow});
+    wire signed [10:0] rs = $signed({2'b0, row[9:1]}) - $signed({{5{hv[5]}}, hv});
+    wire        xs_ok = !xs[10] && xs < 11'sd720, rs_ok = !rs[10] && rs < $signed({1'b0, nsrc});
+    wire [10:0] hcalc = {xs_ok && rs_ok, xs[9:0]};
+`elsif TRI_HMAPCALC
     // HQ DVR build: full width or 4:3 only, computed (the map's BSRAM goes to the DVR)
     wire [9:0]  xb = xn - 10'd80;
     wire [11:0] xb5 = {xb, 2'b0} + {2'b0, xb};
@@ -211,7 +257,11 @@ module lcd_out (
     // x 171 >> 9 as shift-adds on carry chains (the DSP blocks go to the receive path)
     always @(posedge clk) begin
         hq <= hcalc;
+`ifdef TRI_HDMI90
+        lb_addr  <= {rs[0], hq[9:0]};           // fbuf.v holds source line rs in half rs[0]
+`else
         lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
+`endif
         hv1 <= hq[10]; hv2 <= hv1;
         osd_addr <= rbase + {4'd0, cx};
         de_d <= {de_d[3:0], de0};

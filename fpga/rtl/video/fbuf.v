@@ -27,6 +27,11 @@ module fbuf (
     input  wire        line_tog,
     input  wire [8:0]  line_info,      // {show, orow} of the line just written
     input  wire        field_tog,
+    input  wire        pal,
+    input  wire [1:0]  mode_p,         // display domain (menu): 0 Free, 1 Camera, 2 Smooth
+    output reg  signed [7:0] sh_h,     // Smooth: this frame's shift, pixels (+ right), at the middle row
+    output reg  signed [7:0] sh_r,     //   its change per output row (1/256 pixel)
+    output reg  signed [5:0] sh_v,     //   and its vertical shift, source lines (+ down)
     input  wire        frame_tog_p,    // display domain: a frame starts
     input  wire        fetch_tog_p,    // display domain: fetch source line fetch_line_p
     input  wire [8:0]  fetch_line_p,
@@ -85,15 +90,27 @@ module fbuf (
     wire [31:0] s_wd = s_next ? sr[1] : sr[0];
     integer i;
     wire fr_ev = frs[2] != frs[1];
+    // ---- Camera / Smooth: show the field still coming in when enough of it is
+    // in that the display cannot overtake it (racing the beam; the display reads
+    // a source line two output lines before it shows it): lines written >= 74 of
+    // 240 (NTSC) / 122 of 288 (PAL), 4 lines of margin ----
+    reg  [1:0] md_m, md;
+    always @(posedge clk) begin md_m <= mode_p; md <= md_m; end
+    wire       race = md != 2'd0 && wrow >= (pal ? 9'd122 : 9'd74);
+    wire [1:0] nrs = race ? wslot : latest;          // the slot a frame starting now shows
+    reg  [9:0] lcnt, pfl;                            // source lines since the field started, the last field's
+    reg  [9:0] age;                                  // lines from the start of the shown field to the frame start
     always @(posedge clk) begin
         rl_we <= 1'b0;
         frs <= {frs[1:0], frame_tog_p}; fes <= {fes[1:0], fetch_tog_p};
         if (rst) begin
-            wslot <= 2'd0; latest <= 2'd0; rslot <= 2'd0; lat_ok <= 1'b0; rvalid <= 1'b0; wrow <= 9'd0; wp <= 2'b00; rp <= 1'b0;
+            wslot <= 2'd0; latest <= 2'd0; rslot <= 2'd0; lat_ok <= 1'b0; rvalid <= 1'b0; lcnt <= 10'd0; pfl <= 10'd262; age <= 10'd0; wrow <= 9'd0; wp <= 2'b00; rp <= 1'b0;
             lt_p <= line_tog; ft_p <= field_tog; est <= E_IDLE; wact <= 1'b0;
         end else begin
             // ---- write side ----
             lt_p <= line_tog; ft_p <= field_tog;
+            if (lt_p != line_tog && lcnt != 10'h3ff) lcnt <= lcnt + 10'd1;
+            if (ft_p != field_tog) begin lcnt <= 10'd0; pfl <= lcnt; end
             if (lt_p != line_tog && line_info[8] && wrow < 9'd288) begin
                 wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot;
                 wrow <= wrow + 9'd1;
@@ -101,10 +118,10 @@ module fbuf (
             if (ft_p != field_tog) begin
                 wrow <= 9'd0;
                 // the slot the display reads from now on (a frame may start in this very clock)
-                if (wrow != 9'd0) begin latest <= wslot; lat_ok <= 1'b1; wslot <= third(wslot, fr_ev && lat_ok ? latest : rslot); end
+                if (wrow != 9'd0) begin latest <= wslot; lat_ok <= 1'b1; wslot <= third(wslot, fr_ev && (lat_ok || race) ? nrs : rslot); end
             end
             // ---- display requests ----
-            if (fr_ev && lat_ok) begin rslot <= latest; rvalid <= 1'b1; end
+            if (fr_ev && (lat_ok || race)) begin rslot <= nrs; rvalid <= 1'b1; age <= race ? lcnt : lcnt + pfl; end
             if (fes[2] != fes[1]) begin rp <= 1'b1; rq_line <= fetch_line_p; end
             // ---- engine ----
             case (est)
@@ -142,6 +159,53 @@ module fbuf (
                 rl_we <= 1'b1; rl_wa <= {rline[0], rcnt}; rl_wd <= rj_valid ? s_rd : 32'd0; rcnt <= rcnt + 9'd1;
             end
         end
+    end
+    // ---- Smooth: whole-picture motion (motion.v) and this frame's shifts ----
+    wire signed [5:0] vh0, vh1, vh2, vh3, vv; wire mv;
+    motion u_mo (.clk(clk), .rst(rst), .pal(pal), .px_we(wr_en), .px_x(wr_addr[9:0]), .px_g(wr_data[10:5]),
+                 .row(wrow), .row_done(lt_p != line_tog && line_info[8] && wrow < 9'd288), .field_ev(ft_p != field_tog),
+                 .vh0(vh0), .vh1(vh1), .vh2(vh2), .vh3(vh3), .vv(vv), .valid(mv));
+    // Shift = motion a field x (age - reference age) / field: the picture is put
+    // where the scene is at a fixed delay after capture, so every output frame
+    // moves by the same step. With f = age - LREF (source lines):
+    //   sh_h = sum(vh) x f x KH >> 16    (mean of the bands, 2 px a bin, / 2 field lines)
+    //   sh_r = (-3 vh0 - vh1 + vh2 + 3 vh3) x f x KR >> 16   (slope over the bands, per output row, 1/256 px)
+    //   sh_v = vv x f x KH >> 16          (half lines a field -> lines)
+    // KH = 65536 / (2 x field lines), KR = 65536 x 2/10 x 256/band rows / field lines.
+    localparam [7:0] KH_N = 8'd125, KH_P = 8'd105, KR_N = 8'd107, KR_P = 8'd75;
+    wire [9:0]  lref = pal ? 10'd142 : 10'd92;     // the age of a frame that races the field
+    reg  [2:0]  ms;                                 // step: 0 idle, 1..5 the products
+    reg  signed [23:0] ma; reg [7:0] mb; reg mneg; reg [3:0] mk; reg signed [31:0] macc;
+    reg  signed [23:0] fkh, fkr;
+    reg         mrun;
+    wire signed [7:0] sumv = vh0 + vh1 + vh2 + vh3;
+    wire signed [7:0] numr = -(vh0 + vh0 + vh0) - vh1 + vh2 + vh3 + vh3 + vh3;
+    wire signed [10:0] fa = $signed({1'b0, age}) - $signed({1'b0, lref});
+    wire signed [31:0] pm = mneg ? -macc : macc;    // the product with b's sign
+    wire signed [31:0] rnd = pm + 32'sd32768;
+    wire signed [15:0] r16 = rnd[31:16];
+    function signed [7:0] cl8; input signed [15:0] v; input [6:0] m;
+        cl8 = v > $signed({9'd0, m}) ? $signed({1'b0, m}) : v < -$signed({9'd0, m}) ? -$signed({1'b0, m}) : v[7:0];
+    endfunction
+    task mstart; input signed [23:0] a; input signed [7:0] bb;
+        begin ma <= a; mneg <= bb[7]; mb <= bb[7] ? -bb : bb; mk <= 4'd0; macc <= 32'sd0; mrun <= 1'b1; end
+    endtask
+    always @(posedge clk) begin
+        if (rst) begin ms <= 3'd0; mrun <= 1'b0; sh_h <= 8'sd0; sh_r <= 8'sd0; sh_v <= 6'sd0; end
+        else if (mrun) begin                          // a x |b|, b's bits one a clock
+            if (mb[mk[2:0]]) macc <= macc + ($signed({{8{ma[23]}}, ma}) <<< mk);
+            if (mk == 4'd7) mrun <= 1'b0; else mk <= mk + 4'd1;
+        end else case (ms)
+            3'd0: if (fr_ev) begin
+                      if (md == 2'd2 && mv) begin ms <= 3'd1; mstart({{13{fa[10]}}, fa}, $signed(pal ? KH_P : KH_N)); end
+                      else begin sh_h <= 8'sd0; sh_r <= 8'sd0; sh_v <= 6'sd0; end
+                  end
+            3'd1: begin fkh <= pm[23:0]; ms <= 3'd2; mstart({{13{fa[10]}}, fa}, $signed(pal ? KR_P : KR_N)); end
+            3'd2: begin fkr <= pm[23:0]; ms <= 3'd3; mstart(fkh, sumv); end
+            3'd3: begin sh_h <= cl8(r16, 7'd96); ms <= 3'd4; mstart(fkr, numr); end
+            3'd4: begin sh_r <= cl8(r16, 7'd127); ms <= 3'd5; mstart(fkh, {{2{vv[5]}}, vv}); end
+            default: begin sh_v <= cl8(r16, 7'd24); ms <= 3'd0; end
+        endcase
     end
     sdram u_ram (.clk(clk), .rst(rst), .ready(), .req(s_req), .req_we(s_we), .req_addr(s_addr), .req_len(s_len),
                  .req_ack(s_ack), .busy(), .wr_data(s_wd), .wr_next(s_next), .rd_valid(s_rv), .rd_data(s_rd),

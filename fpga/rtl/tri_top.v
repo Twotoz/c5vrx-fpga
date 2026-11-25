@@ -194,9 +194,9 @@ module tri_top (
     wire [10:0] lb_raddr; wire [15:0] lb_rdata;
 `ifdef TRI_HDMI90
     // 90 Hz: every field into the SDRAM, the display reads the newest one (fbuf.v)
-    wire fb_frame, fb_fetch; wire [8:0] fb_line;
+    wire fb_frame, fb_fetch; wire [8:0] fb_line; wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
     fbuf u_fb (.clk(a_clk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
-               .field_tog(field_tog), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+               .field_tog(field_tog), .pal(pal), .mode_p(hz90), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
                .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
                .O_sdram_cas_n(O_sdram_cas_n), .O_sdram_wen_n(O_sdram_wen_n), .O_sdram_addr(O_sdram_addr), .O_sdram_ba(O_sdram_ba),
@@ -210,7 +210,7 @@ module tri_top (
     always @(posedge clk_lcd) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     // ---- menu and link ----
     wire o_de, o_hs, o_vs; wire [4:0] o_r, o_b; wire [5:0] o_g; wire [7:0] px_r, px_g, px_b; wire bl_pwm;
-    wire [1:0] hmode;
+    wire [1:0] hmode, hz90;
     wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
 `ifdef TRI_LIVEUI
     hq_ui #(.CLK_HZ(UI_HZ)) u_menu (
@@ -221,7 +221,7 @@ module tri_top (
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
-                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]), .rescue(sg_l[4:3]),
+                 .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]), .rescue(sg_l[4:3]), .hz90(hz90),
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
@@ -232,7 +232,7 @@ module tri_top (
                    .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
                    .px_r(px_r), .px_g(px_g), .px_b(px_b)
 `ifdef TRI_HDMI90
-                   , .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
+                   , .hz90(hz90), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
 `endif
                    );
 `ifdef TRI_HDMI

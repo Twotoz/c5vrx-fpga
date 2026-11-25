@@ -52,7 +52,7 @@ BANDS = 'RABEFL'
 
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
-          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV']
+          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -65,7 +65,9 @@ SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filte
              ('Back', None)]
 SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
-W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6)
+# the 90 Hz HDMI build (rtl/ui/osd_pages_h90.vh): the output mode instead of the LCD's brightness
+SET_ITEMS_H90 = [(('90 Hz', 'HZ90V') if v == 'BRIGHTV' else (l, v)) for l, v in SET_ITEMS]
+W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
 N_ITEMS = [0, 7, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
@@ -276,7 +278,7 @@ def menu_frame(p, title, right=None):
     p.put(BOT - 1, P0 + 2, [ARR_U, ARR_D] + list(' Move  ') + [DOT] + list(' Select  Hold: close'), fg=GREY)
 
 
-def pages():
+def pages(h90=False):
     live = Page()                                   # inside columns 3..62: the HDMI build shows those (720 px)
     live.bar(1, 3, 13, BG_VIDEO)                    # channel pill, accent after a change
     live.field(1, 4, 'LIVECH', 9, fg=WHITE, bg=BG_BAR)
@@ -302,7 +304,7 @@ def pages():
 
     st = Page()
     menu_frame(st, 'Settings')
-    for k, (label, val) in enumerate(SET_ITEMS):
+    for k, (label, val) in enumerate(SET_ITEMS_H90 if h90 else SET_ITEMS):
         st.item(ITEM0 + k, label, val, chevron=False)
     sg = Page()
     menu_frame(sg, 'Signal')
@@ -383,6 +385,8 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['Level', 'Keel', 'RSSI'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
+    if name == 'HZ90V':
+        return K(rjust(['Free', 'Camera', 'Smooth'][st.get('hz90', 0)], w))
     if name == 'RESCV':
         return K(rjust(['Off', 'Auto', 'On'][st.get('rescue', 1)], w))
     if name in ('KLOCKV', 'ASYNCV', 'SPIKEV', 'WEAKV', 'NFILTV'):
@@ -528,6 +532,13 @@ def emit(g, ps):
     lines += [f"    freq[{i}] = 16'h{int(str(f), 16):04x};" for i, f in enumerate(FREQS)]
     lines.append('end')
     (RTL / 'osd_pages.vh').write_text('\n'.join(lines) + '\n')
+    h90 = head + ['initial begin']                  # the 90 Hz HDMI build's pages
+    for k, p in enumerate(pages(h90=True)):
+        for r in range(ROWS):
+            for c in range(COLS):
+                h90.append(f"    tmpl[{k * COLS * ROWS + r * COLS + c}] = 18'h{p.t[r][c]:05x};")
+    h90 += [l for l in lines if 'freq[' in l] + ['end']
+    (RTL / 'osd_pages_h90.vh').write_text('\n'.join(h90) + '\n')
     (RTL / 'osd_freq.vh').write_text('\n'.join(head + ['initial begin'] + [l for l in lines if 'freq[' in l] + ['end']) + '\n')
     lines = head + ['initial begin']
     for m, mp in enumerate(hmaps()):
@@ -539,7 +550,7 @@ def emit(g, ps):
 def main():
     emit(glyphs(), pages())
     emit_seg()
-    print('wrote rtl/ui/osd_font.vh, osd_pages.vh, osd_freq.vh, rtl/video/hmap.vh')
+    print('wrote rtl/ui/osd_font.vh, osd_pages.vh, osd_pages_h90.vh, osd_freq.vh, rtl/video/hmap.vh')
 
 
 if __name__ == '__main__':
