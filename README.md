@@ -114,6 +114,20 @@ receiver's own.
 | Select | open menu | open / toggle / edit | done |
 | Hold Select | | close | close |
 
+The main menu ends with **Exit**. The Tang's own buttons work too: S1 is Down,
+S2 Select (held: close), so with Down wrapping round and Exit the whole menu
+works without the buttons on C5 A (S1 is no longer a reset).
+
+**Start-up screen** (the menu builds): the Triversity logo, revealed from the
+top, and below it C5 A / B / C, the build and its git commit, the channel, the
+SD card and the video. A C5's dot is green once it is heard, red when it
+reports its DC fault or is still silent after 1 s. The screen stays at least
+1 s, then goes when there is video or on Select, after 3 s at the latest (also
+with no C5 at all: then the picture is black and the menu still works). Leaving
+it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
+
+![Start-up screen](docs/osd_boot.png)
+
 - **Channel**: all 48 (R, A, B, E, F, L); the pill lights up after a change.
 - **Mode**: how many C5s are fused: Single (A), Diversity (A + B, IQ fusion)
   or Triversity (A + B + C, IQ fusion). C5s left out keep running and show
@@ -161,7 +175,15 @@ receiver's own.
     PLL always (softer picture on a good signal). The link log records when
     it is in use.
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
-  brightness, calibrate (filter and DC on every C5).
+  brightness, calibrate (filter and DC on every C5). The 90 Hz HDMI build has
+  **90 Hz** in place of brightness: Free (the output runs on the crystal, the
+  newest complete field; the default), Camera (the frames are locked to the
+  fields, 3 to 2 NTSC / 9 to 5 PAL, and a field is shown while it is still
+  coming in once the display cannot overtake it: ~12 ms less delay in NTSC),
+  Smooth (Camera, and each frame is shifted to where the scene is at that
+  moment: whole-picture motion per field, horizontal in four bands and
+  vertical, `rtl/video/motion.v`; a 4 px a field pan moves 2 / 3 / 3 px a
+  frame instead of 0 / 4 / 4). `sim/run_hdmi90_tb.py --mode=1 / 2 --motion`.
 - **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
   (full width, for 16:9 cameras), Stretch (a 4:3 picture over the full width:
   true geometry in the middle, the edges stretched), Auto (16:9 when the camera
@@ -238,6 +260,7 @@ Buttons, C5 A only, on its free side pads (each to GND, internal pull-up):
 | D7 | 12 | Down |
 
 The XIAO's own B (BOOT) button still flashes as usual and can act as Select.
+On the Tang: S1 Down, S2 Select (see Menu).
 C5 A forwards a press in-band in its IQ stream; the FPGA drops C5 A from the
 combination for those few microseconds (B and C cover it) and handles the menu.
 
