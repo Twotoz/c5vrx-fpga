@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include "driver/gpio.h"
 #include "driver/parlio_rx.h"
 #include "esp_attr.h"
 #include "esp_cache.h"
@@ -77,6 +78,9 @@ static esp_err_t prepare_rx(void)
     };
     esp_err_t err = parlio_new_rx_unit(&cfg, &s_rx);
     if (err != ESP_OK) return err;
+    /* The sample clock to the FPGA at the weakest pad drive (~5 mA): slower
+     * edges ring less on the wire (the IQ pads: rf.c route_modem_iq). */
+    (void)gpio_set_drive_capability(RF_RX_CLK_GPIO, GPIO_DRIVE_CAP_0);
     const parlio_rx_soft_delimiter_config_t delim = {
         .sample_edge = PARLIO_SAMPLE_EDGE_POS,
         .bit_pack_order = PARLIO_BIT_PACK_ORDER_LSB,

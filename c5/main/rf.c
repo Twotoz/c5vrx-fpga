@@ -114,6 +114,9 @@ static esp_err_t route_modem_iq(unsigned lane)
     };
     esp_err_t err = gpio_config(&cfg);
     if (err != ESP_OK) return err;
+    /* Weakest pad drive (~5 mA): slower edges ring less on the wires to the
+     * FPGA (Triversity bring-up: the FPGA read the IQ at the wrong moment). */
+    for (unsigned k = 0; k < 8; ++k) (void)gpio_set_drive_capability(s_iq_pins[k], GPIO_DRIVE_CAP_0);
     for (unsigned k = 0; k < 8; ++k)
         esp_rom_gpio_connect_out_signal(s_iq_pins[k], MODEM_DIAG0_IDX + s_lane_diag[lane][k], false, false);
     gpio_reset_pin(RF_IQ_LED_GPIO);
