@@ -135,7 +135,7 @@ module chroma (
         end
     end
     // ---- chroma filters: two boxcars of n (pipelined; filters restart on a standard change) ----
-    // The delay lines are 32-entry rings in block RAM (registered reads, the
+    // The delay lines are 32-entry RAM rings (registered reads, the
     // address one clock ahead). "Cleared" on a reset or a standard change:
     // a ring value older than that counts as 0 (age counters), exactly as the
     // shift registers' clear did.
@@ -148,7 +148,8 @@ module chroma (
     wire [4:0]  n1 = p1 ? 5'd18 : 5'd22;
     reg  [4:0]  wr = 5'd0;                          // ring write address (one entry a clock)
     reg  [4:0]  age1 = 5'd0, age2 = 5'd0;           // clocks since the stage's last clear (saturating)
-    (* ram_style = "block" *) reg [27:0] r1 [0:31]; // {pu_r, pv_r}
+    // Keep the small mixer delay in LUT RAM so the colour + HQ DVR build fits.
+    (* ram_style = "distributed" *) reg [27:0] r1 [0:31]; // {pu_r, pv_r}
     (* ram_style = "block" *) reg [35:0] r2 [0:31]; // {u1, v1}
     (* ram_style = "block" *) reg [22:0] r0 [0:31]; // {c, s, co}
     reg  [27:0] q1; reg [35:0] q2; reg [22:0] q0;
