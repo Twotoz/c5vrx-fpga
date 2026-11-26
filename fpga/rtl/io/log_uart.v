@@ -16,8 +16,9 @@
 //          known), IQ lane u ultrafine / f fine / c coarse (STRONG LANE) or
 //          n Native AGC, signal 0..100; "-" when no marker for 3 s
 //
-// Reads the marker bus itself (as menu.v / hq_ui.v), so it works in every
-// build. All inputs are slow and read as they are while a line goes out (one
+// Only in DEBUG=1 builds (fpga/build.sh, TRI_DEBUG): the normal builds are
+// full. Reads the marker bus itself (as menu.v / hq_ui.v), so it works with
+// either UI. All inputs are slow and read as they are while a line goes out (one
 // flop for the buses): a value that changes mid-line may show torn once,
 // which a status line can afford, and it saves a snapshot of everything.
 // sim/run_log_uart_tb.py decodes the serial output and checks the text.
