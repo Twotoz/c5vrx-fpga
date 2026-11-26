@@ -230,6 +230,16 @@ static void fold_measure(dg_observation_t *o, const uint8_t *samples, unsigned n
  * the control epoch invalidates what was observed on the old lane. */
 static strong_lane_t s_strong;
 unsigned receiver_strong_lane(void) { return s_strong.steps; }
+/* Every lane move into the flight log: the FPGA sees 2x / 4x coarser IQ steps
+ * on the fine / coarse lane, so close-range picture trouble can be matched
+ * against it (FLOG_E_LANE). */
+static void strong_log(uint8_t released)
+{
+    const uint8_t d[8] = {(uint8_t)rf_lane(), s_current_gain, (uint8_t)s_strong.steps,
+                          (uint8_t)s_strong.ups, (uint8_t)(s_strong.ups >> 8),
+                          (uint8_t)s_strong.downs, (uint8_t)(s_strong.downs >> 8), released};
+    flightlog_event(FLOG_E_LANE, d, sizeof(d));
+}
 static void strong_route(int step, uint64_t observed_us)
 {
     /* The observation's own clock: the next ticks compare against it. */
@@ -238,6 +248,7 @@ static void strong_route(int step, uint64_t observed_us)
     ++s_control_epoch;
     printf("STRONG_LANE lane=%s gain=G%u ups=%lu downs=%lu\n", rf_lane_name(rf_lane()), s_current_gain,
            (unsigned long)s_strong.ups, (unsigned long)s_strong.downs);
+    strong_log(0);
 }
 /* Back to the ultrafine lane at once: a pause owner (calibration, scan), a
  * fixed gain, the pair sweep or STRONG LANE = OFF. */
@@ -250,6 +261,7 @@ static void strong_release(void)
     rf_reroute_lane(RF_LANE_ULTRAFINE);
     ++s_control_epoch;
     printf("STRONG_LANE lane=ultrafine released\n");
+    strong_log(1);
 }
 static bool strong_allowed(uint8_t mode)
 {
