@@ -6,18 +6,8 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", ".github/workflows/release.yml", ".github/actions/**"]
+    paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", "fpga/placements.txt", ".github/workflows/release.yml", ".github/actions/**"]
   workflow_dispatch:
-    inputs:
-      lcd_dvr_placement:
-        description: "LCD-DVR: exact placement (seed or seed:beta, e.g. 3:0.8, from a local build's placement.txt); empty tries eight"
-        type: string
-      hdmi_dvr_placement:
-        description: "HDMI-DVR: exact placement; empty tries eight"
-        type: string
-      hdmi90_placement:
-        description: "HDMI 90 Hz: exact placement; empty for the build script's list"
-        type: string
 
 concurrency:
   group: release
@@ -41,65 +31,18 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: c5, path: out/ }
 
-  # The standard builds (README "Bitstreams"): LCD, LCD-DVR, HDMI, HDMI-DVR,
-  # HDMI90, LCD-DEBUG, HDMI-DEBUG. The DVR builds sit at ~85 % LUT, where not
-  # every placement routes and one try can take most of an hour: each tries eight
-  # placements at once (seed:beta), each on its own runner, and publish takes one
-  # that routed. A manual run can pin one exact placement (the one a local build
-  # reported in placement.txt); the toolchain is pinned in
-  # .github/actions/build-fpga, so the same commit and placement give the same
+  # The standard builds (README "Bitstreams"), one job each: the placement in
+  # fpga/placements.txt first (the one that routed last), the build script's
+  # list after it only if that one no longer routes. The toolchain is pinned
+  # in .github/actions/build-fpga: the same commit and placement give the same
   # bitstream.
-  fpga-lcd-dvr:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        placement: ${{ fromJSON(inputs.lcd_dvr_placement != '' && format('["{0}"]', inputs.lcd_dvr_placement) || '["default", "3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "2:0.7"]') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: lcd-dvr
-          placement: ${{ matrix.placement }}
-          artifact: fpga-lcd-dvr-${{ strategy.job-index }}
-
-  fpga-hdmi-dvr:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        placement: ${{ fromJSON(inputs.hdmi_dvr_placement != '' && format('["{0}"]', inputs.hdmi_dvr_placement) || '["3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "8:0.8", "2:0.7"]') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: hdmi-dvr
-          placement: ${{ matrix.placement }}
-          artifact: fpga-hdmi-dvr-${{ strategy.job-index }}
-
-  fpga-hdmi90:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: hdmi90
-          placement: ${{ inputs.hdmi90_placement }}
-          artifact: fpga-hdmi90
-
-  # LCD (buffered), HDMI and the two debug builds: one try each
   fpga:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        variant: [lcd, hdmi, lcd-debug, hdmi-debug]
+        variant: [lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug, hdmi-debug]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga
@@ -108,7 +51,7 @@ jobs:
           artifact: fpga-${{ matrix.variant }}
 
   publish:
-    needs: [c5, fpga, fpga-lcd-dvr, fpga-hdmi-dvr, fpga-hdmi90]
+    needs: [c5, fpga]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -120,13 +63,7 @@ jobs:
         run: |
           mkdir out
           cp all/c5/* out/
-          cp all/fpga-hdmi90/triversity_hdmi90.fs* out/
-          for v in lcd hdmi lcd-debug hdmi-debug; do cp all/fpga-$v/*.fs* out/; done
-          lcd=$(ls all/fpga-lcd-dvr-*/triversity_lcd_dvr.fs 2>/dev/null | head -1)
-          hdmi=$(ls all/fpga-hdmi-dvr-*/triversity_hdmi_dvr.fs 2>/dev/null | head -1)
-          [ -n "$lcd" ] && [ -n "$hdmi" ] || { echo "no LCD-DVR or no HDMI-DVR placement routed"; exit 1; }
-          echo "LCD-DVR from $lcd, HDMI-DVR from $hdmi"
-          cp "$lcd" "$lcd.placement.txt" "$hdmi" "$hdmi.placement.txt" out/
+          for d in all/fpga-*; do cp $d/*.fs* out/; done
           for f in out/*.placement.txt; do echo "== ${f#out/}"; cat "$f"; done
       - name: Release
         env:

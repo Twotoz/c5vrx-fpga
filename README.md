@@ -60,22 +60,25 @@ releases into the flasher.
 ### Bitstreams
 
 The standard builds. All have the same receiver (three C5s fused: Single /
-Diversity / Triversity, the Rescue PLL, colour NTSC / PAL, the full menu and
-OSD, Noise filter, Keep lock, Adaptive sync). The LCD and HDMI share the Tang's
-pins, so flash the one for your screen:
+Diversity / Triversity, the Rescue PLL, colour NTSC / PAL, Noise filter, Keep
+lock, Adaptive sync). The LCD and HDMI share the Tang's pins, so flash the one
+for your screen:
 
-| build | file | output | picture | DVR | `fpga/build.sh` |
-|---|---|---|---|:---:|---|
-| **LCD** | `triversity_lcd.fs` | 800x480 RGB LCD | fixed panel timing from an SDRAM field buffer, ~3 ms behind the camera | ❌ | `NODVR=1 LCDBUF=1` |
-| **LCD-DVR** | `triversity_lcd_dvr.fs` | 800x480 RGB LCD | locked to the camera, line by line | ✅ | (default) |
-| **HDMI** | `triversity_hdmi.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | ❌ | `HDMI=1 NODVR=1` |
-| **HDMI-DVR** | `triversity_hdmi_dvr.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | ✅ | `HDMI=1` |
-| **HDMI90** | `triversity_hdmi90.fs` | HDMI 720x480 @ 89.9 Hz / 720x576 @ 90 Hz | field buffer, up to a field + a frame late | ❌ | `HDMI90=1` |
-| **LCD-DEBUG** | `triversity_lcd_debug.fs` | as LCD | as LCD, plus the live status on the Tang's USB serial | ❌ | `NODVR=1 LCDBUF=1 DEBUG=1` |
-| **HDMI-DEBUG** | `triversity_hdmi_debug.fs` | as HDMI | as HDMI, plus the live status | ❌ | `HDMI=1 NODVR=1 DEBUG=1` |
+| build | file | output | picture | OSD | DVR | `fpga/build.sh` |
+|---|---|---|---|---|:---:|---|
+| **LCD** | `triversity_lcd.fs` | 800x480 RGB LCD | fixed panel timing from an SDRAM field buffer, ~3 ms behind the camera | full menu | ❌ | `NODVR=1 LCDBUF=1` |
+| **LCD-DVR** | `triversity_lcd_dvr.fs` | 800x480 RGB LCD | locked to the camera, line by line | compact | ✅ | `TRIDVR=1` |
+| **HDMI** | `triversity_hdmi.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | full menu | ❌ | `HDMI=1 NODVR=1` |
+| **HDMI-DVR** | `triversity_hdmi_dvr.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | compact | ✅ | `TRIDVR=1 HDMI=1` |
+| **HDMI90** | `triversity_hdmi90.fs` | HDMI 720x480 @ 89.9 Hz / 720x576 @ 90 Hz | field buffer, up to a field + a frame late | full menu | ❌ | `HDMI90=1` |
+| **LCD-DEBUG** | `triversity_lcd_debug.fs` | as LCD | as LCD, plus the live status on the Tang's USB serial | full menu | ❌ | `NODVR=1 LCDBUF=1 DEBUG=1` |
+| **HDMI-DEBUG** | `triversity_hdmi_debug.fs` | as HDMI | as HDMI, plus the live status | full menu | ❌ | `HDMI=1 NODVR=1 DEBUG=1` |
 
-DVR: the HQ DVR, a colour JPEG of every field to the TF card, with the link
-log. Aspect (4:3 / 16:9 / Stretch / Auto) on the LCD builds; on HDMI the screen
+DVR: the HQ DVR, a colour JPEG of every field to the TF card. The full menu
+does not fit next to it, so the DVR builds have the compact OSD (`hq_ui.v`,
+7-segment glyphs, the live view only): UP / DOWN channel, SELECT record on /
+off, SELECT held Triversity -> Diversity -> Single; Keep lock, Adaptive sync
+and Noise filter on, Direct Gain and AFC as the C5s keep them. Aspect (4:3 / 16:9 / Stretch / Auto) on the LCD builds; on HDMI the screen
 scales. The LCD buffer and the DVR both use the SDRAM, so LCD-DVR is not
 buffered. CI builds all seven on every pull request; every release carries
 them (`release.yml`).

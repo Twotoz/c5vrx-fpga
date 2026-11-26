@@ -1,0 +1,12 @@
+# The placement (nextpnr seed:placer-beta, or default) each standard build
+# routed with last. CI and releases try it first and fall back to
+# fpga/build.sh's list only if it no longer routes (after a design change);
+# a build's placement.txt then names the one that did: put that here.
+# variant     placement
+lcd           default
+lcd-dvr       default
+hdmi          3:0.8
+hdmi-dvr      3:0.8
+hdmi90        default
+lcd-debug     default
+hdmi-debug    3:0.8
