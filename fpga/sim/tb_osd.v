@@ -112,8 +112,8 @@ module tb_osd;
         #100 rst = 0;
         repeat (100) @(posedge clk);
         mark(2'd0, {4'd5, 12'd8});                                   // C5 A: channel A1
-        mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd1}); mark(2'd0, {4'd6, 12'd78});
-        mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd1}); mark(2'd1, {4'd6, 12'd55});
+        mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd33}); mark(2'd0, {4'd6, 12'd78});   // A: locked, ultrafine lane
+        mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd17}); mark(2'd1, {4'd6, 12'd55});   // B: locked, fine lane
         shot;                                                        // 0 start-up screen
         locked = 0; u_menu.boot_ms = 12'd1500; shot; locked = 1;      // 1 after 1 s without C5 C: its dot red
         u_menu.boot = 1'b0; repeat (20) @(posedge clk);              // (it would end after 1 s with video)
