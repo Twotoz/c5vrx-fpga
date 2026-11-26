@@ -9,7 +9,7 @@ module tb_cvbs_fields;
     wire pal;
     always #12.5 clk = ~clk;
     vid_sync rx (.clk(clk), .rst(rst), .code(code), .keep_lock(keep), .adapt(1'b0),
-                 .ans(1'b0), .d3_on(1'b0), .d3_degrade(2'd0), .pal(pal));
+                 .ans(1'b0), .pal(pal));
     initial begin
         if (!$value$plusargs("n=%d", n) || !$value$plusargs("keep=%d", k)) $fatal(1, "missing trace arguments");
         keep = k != 0;

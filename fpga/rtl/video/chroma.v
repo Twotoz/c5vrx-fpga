@@ -22,8 +22,7 @@ module chroma (
     input  wire              pal,
     output reg  [9:0]        y8u,        // luma, sum-of-8-codes units (vid_sync's y)
     output reg  signed [9:0] ug,         // U, V in gray units (255 = 100 IRE), V sign-corrected
-    output reg  signed [9:0] vg,
-    output reg  [2:0] burst_quality
+    output reg  signed [9:0] vg
 );
     localparam [31:0] INC_N = 32'd384350767, INC_P = 32'd476056188;
     // burst gate: a whole number of subcarrier periods (NTSC 5 = 55.9 samples -> 56,
@@ -102,16 +101,6 @@ module chroma (
     wire [15:0] dcm = t_cur - ang;
     wire        swp = dcm != 16'd0 && !dcm[15];          // 0 < d < 32768
     wire        ev = hc == BE + 12'd24;
-    // Phase error and amplitude are independent of the luma noise metric.
-    // Two credible lines bring full colour back after confidence reaches zero.
-    wire burst_ok = amp >= KILL && err >= -17'sd10923 && err <= 17'sd10923;
-    always @(posedge clk) begin
-        if (rst) burst_quality <= 3'd0;
-        else if (ev) begin
-            if (burst_ok) burst_quality <= burst_quality >= 3'd2 ? 3'd4 : burst_quality + 3'd2;
-            else if (burst_quality != 0) burst_quality <= burst_quality - 1'b1;
-        end
-    end
     wire signed [21:0] fsum = {fadj[20], fadj} - {{5{err[16]}}, err};
     wire signed [20:0] fadj_n = !ev ? fadj : fsum > 22'sd1048575 ? 21'sd1048575 : fsum < -22'sd1048576 ? -21'sd1048576 : fsum[20:0];
     wire [31:0] corr = ev ? -({{15{err[16]}}, err} << 14) : 32'd0;

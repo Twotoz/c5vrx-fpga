@@ -23,8 +23,8 @@ module tb_fade_failover;
         .clk(clk), .rst(rst), .raw_a({a[7:5], a[3:1]}),
         .raw_b({b[7:5], b[3:1]}), .raw_c({c[7:5], c[3:1]}),
         .en_b(en_b), .en_c(en_c), .avail_b(alive_b), .avail_c(alive_c),
-        .va(valid[0]), .vb(valid[1]), .vc(valid[2]), .rmode(2'd1),
-        .code(code), .ract(), .d3_degrade(), .ref_lost(ref_lost), .wts());
+        .va(valid[0]), .vb(valid[1]), .vc(valid[2]),
+        .code(code), .ref_lost(ref_lost), .wts());
     initial begin
         if (!$value$plusargs("n=%d", n)) $fatal(1, "missing sample count");
         $readmemh("fade.hex", stimulus, 0, n - 1);

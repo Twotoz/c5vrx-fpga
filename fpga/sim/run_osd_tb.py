@@ -19,13 +19,13 @@ import gen_osd as G  # noqa: E402
 BASE = dict(open=True, page=1, cursor=0, edit=False, toast=False, channel=8, locked=True, pal=False, scanning=False,
             scan_ch=0, dvr=True, dvr_state=2, rec_s=83, age=[0, 0, 4095], sig=[78, 55, 0], cn=[1184, 1121, 0],
             gain=[54, 61, 0], flags=[33, 17, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2,
-            aspect=3, wide=False, logo=True, fps=59, pred=2,
-            klock=True, nfilt=True, rescue=2, **{'async': True})   # Signal defaults (menu.v)
+            aspect=3, wide=False, logo=True,
+            klock=True, nfilt=True, **{'async': True})   # Signal defaults (menu.v)
 SHOTS = [('boot', dict(boot=True, open=False, dvr_state=1)),
          ('boot_missing', dict(boot=True, open=False, dvr_state=1, boot_ms=1500, locked=False)), ('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
          ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
          ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)),
-         ('settings_ultra', dict(page=3, cursor=2, aspect=2, gain_model=3)),
+         ('settings_ultra', dict(page=3, cursor=2, aspect=2, gain_model=1)),
          ('signal', dict(page=4, cursor=0, aspect=2, klock=True)), ('live', dict(open=False, aspect=2)),
          ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
          ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]

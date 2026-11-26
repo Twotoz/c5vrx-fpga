@@ -28,15 +28,13 @@
 //    64 fields without a code. Checked against a model of both waveforms
 //    (sim/run_aspect_tb.py); not yet seen from a real FPV camera.
 `default_nettype none
-module vid_sync #(parameter D3_ADAPT = 0) (
+module vid_sync (
     input  wire        clk,
     input  wire        rst,
     input  wire [5:0]  code,          // 40 MS/s (20 MS/s unique) demodulator codes
     input  wire        keep_lock,     // menu Signal: hold the picture through sync dropouts (~0.5 s)
     input  wire        adapt,         // menu Signal: steadier line phase once locked (e/8 instead of e/4)
     input  wire        ans,           // menu Signal: adaptive noise suppression on the luma
-    input  wire        d3_on,
-    input  wire [1:0]  d3_degrade,
     output wire [1:0]  ans_lev,       // logger: the noise level 0..3 (the filter's strength when on)
     output reg         wr_en,
     output reg  [10:0] wr_addr,       // {bank, px[9:0]}
@@ -51,7 +49,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
     output reg         wide,          // the camera signals 16:9 (CGMS-A / WSS)
     output wire        fields_real,   // the last 6 field events were all real vertical syncs on the trusted grid (none predicted)
-    output reg  [6:0]  fps_real,      // field events in the last second from a real vertical sync (menu Receivers: Video n/s)
+    output reg  [6:0]  fps_real,      // DEBUG=1 builds (log_uart.v): field events in the last second from a real vertical sync
     output reg  [6:0]  fps_pred,      //   and those the flywheel predicted (no usable vertical sync): the display ran on
     output wire [15:0] gain_k8,       // the video gain in use (k8, log_uart.v)
     // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
@@ -154,21 +152,29 @@ module vid_sync #(parameter D3_ADAPT = 0) (
                         (raw_start && (!field_armed || (missed_fields == 5'd31 && same_interval)));
     wire field_coast = field_age >= period + V_WINDOW && !field_accept;
     wire field_event = field_accept || field_coast;
+    // fields per second, real (accepted vertical sync) and predicted (flywheel):
+    // only the DEBUG=1 builds' live status (log_uart.v) shows them
+`ifdef TRI_DEBUG
+    always @(posedge clk) begin
+        if (rst) begin
+            fps_tim <= 0; fps_rc <= 0; fps_pc <= 0; fps_real <= 0; fps_pred <= 0;
+        end else if (fps_tim == 26'd39999999) begin
+            fps_tim <= 0; fps_real <= fps_rc; fps_pred <= fps_pc;
+            fps_rc <= {6'd0, field_accept}; fps_pc <= {6'd0, field_coast};
+        end else begin
+            fps_tim <= fps_tim + 1'b1;
+            if (field_accept && !(&fps_rc)) fps_rc <= fps_rc + 1'b1;
+            if (field_coast && !(&fps_pc)) fps_pc <= fps_pc + 1'b1;
+        end
+    end
+`else
+    always @(posedge clk) begin fps_real <= 7'd0; fps_pred <= 7'd0; end
+`endif
     always @(posedge clk) begin
         if (rst) begin
             field_age <= 0; raw_age <= 20'hfffff; broad_gap <= 12'hfff; missed_fields <= 0;
             other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
-            fps_tim <= 0; fps_rc <= 0; fps_pc <= 0; fps_real <= 0; fps_pred <= 0;
         end else begin
-            // fields per second: real (accepted vertical sync) and predicted (flywheel)
-            if (fps_tim == 26'd39999999) begin
-                fps_tim <= 0; fps_real <= fps_rc; fps_pred <= fps_pc;
-                fps_rc <= {6'd0, field_accept}; fps_pc <= {6'd0, field_coast};
-            end else begin
-                fps_tim <= fps_tim + 1'b1;
-                if (field_accept && !(&fps_rc)) fps_rc <= fps_rc + 1'b1;
-                if (field_coast && !(&fps_pc)) fps_pc <= fps_pc + 1'b1;
-            end
             if (broad) broad_gap <= 0;
             else if (!(&broad_gap)) broad_gap <= broad_gap + 1'b1;
             if (raw_start) raw_age <= 0;
@@ -263,8 +269,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     wire        lev_line_ok = lev_shape_ok && (lev_deep || lev_miss == 7'd96);
     // ---- colour (chroma.v) and the pixel stage ----
     wire [9:0] cy8u; wire signed [9:0] cug, cvg;
-    wire [2:0] burst_quality;
-    chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg), .burst_quality(burst_quality));
+    chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg));
     // ---- adaptive noise suppression (menu Signal: Noise filter) ----
     // noise: the sum of |Y - Y four clocks before| over hc 320..367 (the flat
     // back porch) of 64 lines; level 0..3 from it (one step per 64 lines);
@@ -277,30 +282,14 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg  [21:0] nacc = 22'd0;
     reg  [5:0]  nln = 6'd0;
     reg  [1:0]  nlev = 2'd0;
-    wire d3_video = D3_ADAPT && d3_on;
-    // Only the displayed luma is filtered. Large local edges bypass the
-    // smoothing at modest noise levels. During severe fades use the filter.
-    wire [1:0] requested_level = ans && nlev > d3_degrade ? nlev : d3_degrade;
-    wire [1:0] fast_level = ydf > 10'd32 && requested_level < 2'd3 ? 2'd0 : requested_level;
-    wire [1:0] ylevel = d3_video ? fast_level : nlev;
-    assign ans_lev = d3_video ? requested_level : nlev;
+    wire [1:0] ylevel = nlev;
+    assign ans_lev = nlev;
     reg  [12:0] yacc = 13'd0;
     wire signed [13:0] ydel = $signed({1'b0, cy8u, 3'd0}) - $signed({1'b0, yacc});
     wire signed [13:0] ystep = ydel >>> ylevel;
-    wire [9:0]  ny = (d3_video ? fast_level != 0 : ans) ? yacc[12:3] : cy8u;
-    function automatic signed [9:0] scale_uv;
-        input signed [9:0] uv;
-        input [2:0] level;
-        case (level)
-            3'd0: scale_uv = 0;
-            3'd1: scale_uv = uv >>> 2;
-            3'd2: scale_uv = uv >>> 1;
-            3'd3: scale_uv = (uv >>> 1) + (uv >>> 2);
-            default: scale_uv = uv;
-        endcase
-    endfunction
-    wire signed [9:0] show_u = d3_video ? scale_uv(cug, burst_quality) : cug;
-    wire signed [9:0] show_v = d3_video ? scale_uv(cvg, burst_quality) : cvg;
+    wire [9:0]  ny = ans ? yacc[12:3] : cy8u;
+    wire signed [9:0] show_u = cug;
+    wire signed [9:0] show_v = cvg;
     wire [8:0]  nhi = nacc[21:13];            // the noise sum in units of 8192 (mean |dY| x 2.67)
     wire [1:0]  ntgt = nhi >= 9'd12 ? 2'd3 : nhi >= 9'd5 ? 2'd2 : nhi >= 9'd3 ? 2'd1 : 2'd0;
     wire        nwin = hc[11:6] == 6'd5 && hc[5:4] != 2'd3;   // hc 320..367

@@ -12,13 +12,11 @@ module tb_mrc3_core;
     reg [5:0] raw_a = 0, raw_b = 0, raw_c = 0;
     reg [2:0] vv = 3'b111;
     reg en_b, en_c;
-    reg [1:0] rmode;
     wire [5:0] code;
     integer n, k, f;
-    // a short look-ahead (16 pairs) and steady window (64 x 4 pairs) so Auto switches often within the test
-    mrc3_core #(.RS_WSH(4), .RS_K(12'd2), .RS_SSH(2), .RS_T(7'd16)) dut ( .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
+    mrc3_core dut ( .clk(clk), .rst(rst), .raw_a(raw_a), .raw_b(raw_b), .raw_c(raw_c),
                    .en_b(en_b), .en_c(en_c),
-                   .va(vv[0]), .vb(vv[1]), .vc(vv[2]), .rmode(rmode), .code(code), .ract(), .wts());
+                   .va(vv[0]), .vb(vv[1]), .vc(vv[2]), .code(code), .wts());
     always #12.5 clk = ~clk;
     initial begin
         if (!$value$plusargs("n=%d", n)) n = 1000;
@@ -26,8 +24,6 @@ module tb_mrc3_core;
         en_b = k;
         if (!$value$plusargs("en_c=%d", k)) k = 1;
         en_c = k;
-        if (!$value$plusargs("rescue=%d", k)) k = 0;
-        rmode = k;
         $readmemh("raw_a.hex", mem_a);
         $readmemh("raw_b.hex", mem_b);
         $readmemh("raw_c.hex", mem_c);

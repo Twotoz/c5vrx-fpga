@@ -1,14 +1,15 @@
 // C5VRX by Twotoz and the C5VRX contributors: three-branch ("Tripleversity")
 // combiner and demodulator. Pre-detection maximal-ratio combining of C5 A
 // with up to two more C5s (3-bit I/Q each: the top three bits of their 4-bit
-// lane), a cross-product phase tracker per extra branch, then the CORDIC FM
-// discriminator. The arithmetic and pipeline of mrc_core.v, generalised;
-// bit-exact with fpga/model/mrc3_model.py run(..., disc=True, valid=...)
+// lane), a cross-product phase tracker per extra branch, then the CORDIC angle
+// and the Rescue PLL, the only demodulator. The arithmetic and pipeline of
+// mrc_core.v, generalised; bit-exact with fpga/model/mrc3_model.py
+// run(..., disc=True, valid=..., rescue=2)
 // (fpga/sim/run_tb3.py). raw_b / raw_c must be aligned to raw_a (align_b.v).
 // va/vb/vc: the sample of that C5 is IQ (0 while it sends a marker): weight 0,
 // its moments hold, a tracker holds while its branch or C5 A is invalid.
-// Discriminator: the D32-R2 rule on the combined 16-bit angle (1024 sectors,
-// 50 ns step, 0.7 of a step outside the video window), one code per 50 ns.
+// The PLL's code comes from the D32-R2 table (1024 sectors, 0.7 of a step
+// outside the video window), one code per sample.
 `default_nettype none
 
 // tracker and rotation of one extra branch k against A (the mrc_core.v B path)
@@ -77,10 +78,7 @@ module mrc3_trk (
     end
 endmodule
 
-module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
-                   parameter HAS_D3 = 1,                            // 0: no D3 (rmode 3 is Rescue On), for builds at the size limit
-                   parameter RS_WSH = 10, parameter [11:0] RS_K = 12'd2,    // rescue Auto: look-ahead 2^RS_WSH sample pairs, RS_K clicks
-                   parameter RS_SSH = 12, parameter [6:0] RS_T = 7'd48) (   //   steady: RS_T of 64 sub-windows of 2^RS_SSH pairs with a click
+module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0) (   // HAS_C 0: two C5s (A, B), C's tracker and products left out
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
@@ -90,11 +88,7 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
     input  wire       en_c,
     input  wire       avail_b, avail_c, // live receiver & selected in the menu, independent of A alignment
     input  wire       va, vb, vc,   // per sample, with raw_*
-    input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2 on, 3 experimental D3
-    output reg  [5:0] code,
-    output reg        ract,         // rescue PLL in use (for the code going out)
-    output reg        click_ev = 1'b0,   // one clock per discriminator click (live status, log_uart.v)
-    output wire [1:0] d3_degrade,
+    output reg  [5:0] code,         // the Rescue PLL's code (the only demodulator)
     output wire       ref_lost,
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
@@ -325,6 +319,8 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
     end else begin : nopc
     assign c_i = 36'd0; assign c_q = 36'd0;
     end endgenerate
+    reg valid4;
+    reg [11:0] run_d;                  // run, carried along zi4 and the CORDIC (below)
     always @(posedge clk) begin
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;
@@ -337,8 +333,7 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
         zq4 <= source_n != 0 ? $signed({{7{raw_q[4]}}, raw_q, 12'd0}) : $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
     end
 
-    // ---- discriminator: D32-R2 rule on the combined angle (mrc3_model.disc50) ----
-    reg valid4;
+    // ---- combined angle and the Rescue PLL (mrc3_model.rescue50) ----
     reg [10:0] valid_d;
     reg [10:0] source_b_d, source_c_d;
     always @(posedge clk) begin
@@ -362,26 +357,14 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
         end
     end
     cordic_angle #(.W(18), .N(10)) u_phi (.clk(clk), .x_in(zi4[23:6]), .y_in(zq4[23:6]), .ang(phi_raw));
-    // sample parity and run, carried along zi4 (1) and the CORDIC (N + 1 = 11)
-    reg [11:0] ev_d, run_d;
-    always @(posedge clk) begin
-        ev_d  <= {ev_d[10:0], ~idx3[0]};
-        run_d <= rst ? 12'd0 : {run_d[10:0], run3};
-    end
-    wire        ev_phi = ev_d[11] & run_d[11];
-    wire [9:0]  tok = phi[15:6] ^ 10'h200;          // ((phi + 32768) >> 6) & 1023
-    reg  [9:0]  st_s;
-    reg         st_ok;
-    wire signed [9:0]  d = tok - st_s;               // wrapped to -512..511
-    // step and code per d from a table in block RAM (gen_tables.disc_rom: the same
-    // arithmetic as mrc3_model.disc50); read at ev_phi, applied the clock after
-    // (ev_phi comes every other clock, so st_s is updated before the next d)
+    // run, carried along zi4 (1) and the CORDIC (N + 1 = 11)
+    always @(posedge clk) run_d <= rst ? 12'd0 : {run_d[10:0], run3};
+    // code table in block RAM (gen_tables.disc_rom: mrc3_model.disc50's arithmetic);
+    // the PLL reads it at its step, d = (fo + fo[k-1]) / 4
     reg [15:0] disc [0:1023];
 `include "disc_rom.vh"
-    reg [15:0] dq; reg dv; reg [5:0] dcode;
-    // rescue PLL on phi[15:4] (mrc3_model.rescue50): e = p - th, fo = F/128 + e/4,
-    // F += e (saturating, 17 bits), th += fo (all from 0 at reset); its code is the
-    // discriminator table's for d = (fo + fo[k-1]) / 4 (a second read port)
+    // Rescue PLL on phi[15:4] (mrc3_model.rescue50): e = p - th, fo = F/128 + e/4,
+    // F += e (saturating, 17 bits), th += fo (all from 0 at reset)
     reg  [11:0] th;
     reg  signed [16:0] F;
     reg  signed [10:0] fo_r;
@@ -400,200 +383,6 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
             fo_r <= fo;
         end
     end
-    // disc50's out-of-window steps (clicks), one per sample pair
-    wire        click = st_ok && (d < -10'sd312 || d > 10'sd384);
-    reg         ckr;
-    // the two candidate streams, one sample a clock: s_d the discriminator's code,
-    // s_p the PLL's, s_f marks a pair's first sample, s_c that pair's click
-    reg  [5:0]  s_d, s_p; reg s_f, s_c;
-    always @(posedge clk) begin
-        dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
-        dv <= 1'b0;
-        if (rst) begin st_ok <= 1'b0; dcode <= 6'd25; ckr <= 1'b0; s_d <= 6'd25; s_p <= 6'd25; s_f <= 1'b0; s_c <= 1'b0; end
-        else begin
-            if (ev_phi) begin
-                if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; end
-                else dv <= 1'b1;
-                ckr <= click;
-            end
-            click_ev <= ev_phi && st_ok && click;
-            if (dv) begin st_s <= st_s + dq[15:6]; dcode <= dq[5:0]; end
-            s_d <= dv ? dq[5:0] : dcode; s_p <= pq[5:0]; s_f <= dv; s_c <= ckr;
-        end
-    end
-    // Auto, look-ahead (mrc3_model.rescue50): both streams wait 2^RS_WSH pairs in
-    // block RAM; a pair goes out as the PLL's when the 2^(RS_WSH+1) pairs around it
-    // (2^RS_WSH - 1 before, 2^RS_WSH after) hold RS_K clicks or more. Off and On go
-    // through the same delay. Per pair: at its first sample the slots are read, at
-    // its second written (the pair W before comes out of the RAM).
-    // Steady clicks: every 64 sub-windows of 2^RS_SSH pairs the PLL goes on for
-    // all pairs when RS_T of them held a click (a very weak signal), else off;
-    // pairs are numbered from 1 (the first one sets the discriminator's start).
-    localparam integer W = 1 << RS_WSH;
-    reg  [17:0] lram [0:W-1];                     // {disc code, PLL first, PLL second}
-    reg  [RS_WSH-1:0] la_wa;
-    reg  [17:0] la_q, la_o;
-    reg  [11:0] la_a; reg la_c;
-    reg         la_sel, la_p;                 // la_p: a pair's first sample came, its second is next
-    reg  [RS_SSH+5:0] st_pc;                      // pair number in the 64 sub-windows
-    reg         st_occ, st_on;
-    reg  [6:0]  st_n;
-    always @(posedge clk) begin
-        if (s_f) la_q <= lram[la_wa];
-        if (!s_f && la_p) lram[la_wa] <= {la_a, s_p};
-    end
-    // Only the threshold matters, so keep the age of the last RS_K clicks
-    // instead of a BSRAM bit for every pair in the 2W window.
-    wire enough_clicks;
-    generate if (RS_K == 0) begin : clicks_always
-        assign enough_clicks = 1'b1;
-    end else begin : clicks_recent
-        localparam [RS_WSH+1:0] EXPIRED = 2 * W;
-        reg [RS_WSH+1:0] age [0:RS_K-1];
-        integer i;
-        always @(posedge clk) begin
-            if (rst) for (i = 0; i < RS_K; i = i + 1) age[i] <= EXPIRED;
-            else if (!s_f && la_p) begin
-                age[0] <= la_c ? 0 : age[0] == EXPIRED ? EXPIRED : age[0] + 1'b1;
-                for (i = 1; i < RS_K; i = i + 1)
-                    if (la_c) age[i] <= age[i-1] == EXPIRED ? EXPIRED : age[i-1] + 1'b1;
-                    else if (age[i] != EXPIRED) age[i] <= age[i] + 1'b1;
-            end
-        end
-        assign enough_clicks = age[RS_K-1] != EXPIRED;
-    end endgenerate
-    wire [5:0] d3_code;
-    generate if (HAS_D3) begin : d3
-    reg [15:0] d3_phi;
-    reg d3_run, d3_valid, d3_even, d3_click, d3_steady;
-    always @(posedge clk) begin
-        d3_phi <= phi;
-        d3_run <= run_phi && !rst;
-        d3_valid <= valid_d[10];
-        d3_even <= ev_phi;
-        d3_click <= click && ev_phi && valid_d[10] && !seam;
-        d3_steady <= st_on;
-    end
-    d3_fm u_d3 (.clk(clk), .rst(rst), .run(d3_run), .valid(d3_valid),
-               .even_sample(d3_even), .phi(d3_phi), .click(d3_click),
-               .steady(d3_steady), .degrade(d3_degrade), .code(d3_code));
-    end else begin : no_d3
-    assign d3_code = 6'd0;
-    assign d3_degrade = 2'd0;
-    end endgenerate
-    reg [5:0] rescue_code;
-    always @* code = HAS_D3 && rmode == 2'd3 ? d3_code : rescue_code;
-    wire        sel_n = rmode[1] || (rmode == 2'd1 && (enough_clicks || st_on));
-    always @(posedge clk) begin
-        if (rst) begin
-            la_wa <= 0; la_o <= {3{6'd25}}; la_sel <= 1'b0; la_p <= 1'b0; la_c <= 1'b0;
-            st_pc <= 1; st_occ <= 1'b0; st_on <= 1'b0; st_n <= 7'd0;
-            rescue_code <= 6'd25; ract <= 1'b0;
-        end else if (s_f) begin
-            la_a <= {s_d, s_p}; la_c <= s_c; la_p <= 1'b1;
-            rescue_code <= sel_n ? la_o[11:6] : la_o[17:12]; la_sel <= sel_n; ract <= sel_n && rmode != 2'd3;
-        end else if (la_p) begin
-            la_p <= 1'b0;
-            la_wa <= la_wa + 1'b1;
-            la_o <= la_q;
-            st_pc <= st_pc + 1'b1;
-            if (&st_pc[RS_SSH-1:0]) begin
-                st_occ <= 1'b0;
-                if (&st_pc[RS_SSH+5:RS_SSH]) begin st_on <= st_n + (st_occ | la_c) >= RS_T; st_n <= 7'd0; end
-                else st_n <= st_n + (st_occ | la_c);
-            end else st_occ <= st_occ | la_c;
-            rescue_code <= la_sel ? la_o[5:0] : la_o[17:12];
-        end
-    end
+    always @(posedge clk) code <= rst ? 6'd25 : pq[5:0];
 endmodule
 `default_nettype wire
-
-// Causal D3 experiment, one estimator at 40 MS/s. Phase and frequency use
-// 16-bit turn units (16 units per 12-bit phase cell). Four 512-pair buckets
-// retain 1536..2047 causal pairs, saturating each bucket at four clicks.
-module d3_fm (
-    input wire clk, rst, run, valid, even_sample,
-    input wire [15:0] phi,
-    input wire click, steady,
-    output wire [1:0] degrade,
-    output wire [5:0] code
-);
-    reg [8:0] pos;
-    reg [2:0] n0, n1, n2, n3;
-    wire [4:0] nc = {2'b0, n0} + {2'b0, n1} + {2'b0, n2} + {2'b0, n3};
-    wire [12:0] target = steady || nc >= 5'd4 ? 13'd4096 : {nc[1:0], 10'd0};
-    reg [12:0] bad;
-    wire [12:0] attack = target - bad, release_delta = bad - target;
-    wire [6:0] gain_bad = bad[12:6];
-    assign degrade = gain_bad >= 7'd56 ? 2'd3 : gain_bad >= 7'd32 ? 2'd2 : gain_bad >= 7'd12 ? 2'd1 : 2'd0;
-    always @(posedge clk) begin
-        if (rst || !run) begin
-            pos <= 0; n0 <= 0; n1 <= 0; n2 <= 0; n3 <= 0; bad <= 0;
-        end else begin
-            if (even_sample) begin
-                pos <= pos + 1'b1;
-                if (&pos) begin
-                    n3 <= n2; n2 <= n1; n1 <= n0 + (click && n0 < 3'd4); n0 <= 0;
-                end else if (click && n0 < 3'd4) n0 <= n0 + 1'b1;
-            end
-            if (target > bad) bad <= bad + (attack >> 6) + (|attack[5:0]);
-            else if (target < bad) bad <= bad - (release_delta >> 8) - (|release_delta[7:0]);
-        end
-    end
-
-    reg [15:0] theta;
-    reg signed [14:0] freq;
-    reg signed [17:0] last_advance;
-    reg [3:0] missed;
-    reg [1:0] fresh;
-    wire signed [15:0] innovation = phi - theta;
-    wire [35:0] scaled_bits;
-    mul18 u_correction (.a({{2{innovation[15]}}, innovation}), .b({11'd0, gain_bad}), .y(scaled_bits));
-    wire signed [22:0] scaled = scaled_bits[22:0];
-    wire signed [16:0] damp = scaled >>> 8;
-    wire signed [17:0] phase_adjust = freq - damp - (damp <<< 1);
-    wire signed [17:0] advance = innovation + phase_adjust;
-    wire signed [15:0] freq_n = freq + ((scaled + 23'sd4096) >>> 13);
-    wire signed [18:0] pair_advance = advance + last_advance;
-    wire signed [12:0] pair_step = pair_advance >>> 6;
-    reg signed [12:0] even_step;
-    // Intermediate 25 ns estimate from the same loop. Interpolate the
-    // pair-averaged advance with five multiplier-free gains.
-    wire signed [13:0] step_delta = $signed({pair_step[12], pair_step}) - even_step;
-    wire signed [13:0] half_delta = step_delta >>> 1;
-    wire signed [13:0] quarter_delta = step_delta >>> 2;
-    wire signed [13:0] odd_correction = gain_bad >= 7'd56 ? step_delta :
-        gain_bad >= 7'd40 ? half_delta + quarter_delta :
-        gain_bad >= 7'd24 ? half_delta : gain_bad >= 7'd8 ? quarter_delta : 14'sd0;
-    reg signed [13:0] step;
-    wire signed [13:0] limited = step > 14'sd511 ? 14'sd511 : step < -14'sd512 ? -14'sd512 : step;
-    wire [9:0] address = limited[9:0];
-    (* ram_style = "block" *) reg [15:0] disc [0:1023];
-`include "disc_rom.vh"
-    reg [5:0] result;
-    assign code = result;
-    always @(posedge clk) begin
-        result <= disc[address][5:0];
-        if (rst || !run) begin
-            theta <= 0; freq <= 0; last_advance <= 0; missed <= 4'd9; fresh <= 0;
-            even_step <= 0; step <= 0;
-        end else if (!valid) begin
-            fresh <= 0;
-            if (missed < 4'd9) missed <= missed + 1'b1;
-            if (missed < 4'd8) begin theta <= theta + freq; step <= freq >>> 5; end
-            else step <= 0;  // neutral after 200 ns without any usable IQ
-        end else if (missed == 4'd9) begin
-            theta <= phi; freq <= 0; last_advance <= 0; missed <= 0; fresh <= 2'd1; step <= 0;
-        end else begin
-            missed <= 0;
-            if (fresh < 2'd3) fresh <= fresh + 1'b1;
-            // theta + wrapped innovation == phi modulo one turn.
-            theta <= phi + phase_adjust[15:0];
-            freq <= freq_n > 16'sd8192 ? 15'sd8192 : freq_n < -16'sd8192 ? -15'sd8192 : freq_n[14:0];
-            last_advance <= advance;
-            if (fresh == 0) begin even_step <= pair_step; step <= 0; end
-            else if (even_sample) begin even_step <= pair_step; step <= pair_step; end
-            else if (fresh >= 2) step <= even_step + odd_correction;
-        end
-    end
-endmodule

@@ -62,9 +62,6 @@ module tb_osd;
     menu u_menu (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(1'b1), .s2_n(1'b1),
 `endif
         .locked_a(locked), .pal_a(pal), .sync_q_a(16'd0), .dvr_state_a(dvr_state), .wide_a(1'b0),
-`ifndef TRI_LIVEUI
-        .fps_real_a(7'd59), .fps_pred_a(7'd2),          // run_osd_tb.py BASE fps, pred
-`endif
         .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
         .dvr(dvr), .mode(mode), .hmode(hm), .boot(boot), .channel(), .link_on(), .g_set(), .a_set(), .gain_model(), .afc(), .f_seq(), .bl_pwm());
     wire de, hs, vs; wire [4:0] r, b; wire [5:0] g;
@@ -134,7 +131,7 @@ module tb_osd;
         press(5'b00100); press(5'b00100); shot;                      // 5 settings, Aspect
         press(5'b00010); press(5'b00100); shot;                      // 6 editing Aspect: Stretch
         press(5'b00010);                                             // done
-        u_menu.direct_model = 2'd3; repeat (20) @(posedge clk); shot;   // 7 Direct Gain: Ultra (experimental)
+        u_menu.direct_model = 2'd1; repeat (20) @(posedge clk); shot;   // 7 Direct Gain: Ultra (experimental)
         u_menu.direct_model = 2'd0;
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Back
         press(5'b00001); press(5'b00010); press(5'b00010); press(5'b00010); shot;   // 8 Signal page, Keep lock off and on again

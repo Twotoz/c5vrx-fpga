@@ -1,10 +1,12 @@
-# Fade recovery and experimental gain/demodulator modes
+# Fade recovery and experimental gain modes
 
-This work builds on PR #7 and addresses issues #6, #8, #9 and #10. Signal → Demod /
-Rescue defaults to Auto. Select **D3*** for a fixed-point, causal A/B candidate.
-The full menu also has **Signal → Native AGC (EXP)**. The compact live UI builds
-use Rescue Auto. Native gain ownership is available from the C5 USB console
-with `N` when a full FPGA menu is unavailable.
+This work builds on PR #7 and addresses issues #6, #8, #9 and #10. The
+demodulator is the Rescue PLL only (2026-11-26: Auto, the discriminator and the
+D3 experiment of #9 were removed; D3 scored +0.008 dB against Auto in 32
+matched one-C5 trials, see the git history for its RTL, model and scripts).
+The full menu has **Signal → Native AGC (EXP)**. Native gain ownership is
+available from the C5 USB console with `N` when a full FPGA menu is
+unavailable.
 
 ## A-reference fade (#6)
 
@@ -56,26 +58,6 @@ heuristic. A full clock outage on A stalls the design.
   verified choice of DIAG bit. This experiment can degrade video even with
   multiple receivers.
 
-## Causal D3 experiment (#9)
-
-D3 uses one 40 MS/s phase/frequency state. D32 phase innovation supplies click
-evidence. Four saturating 512-pair buckets cover 1,536–2,047 prior pairs
-(~38–51 µs), with the steady-click estimate from PR #7. The confidence changes
-with ~1.6 µs attack and ~6.4 µs release time constants. As confidence drops,
-the same estimator reduces direct phase correction and increases the
-integrator contribution. It also restores intermediate 25 ns frequency
-estimates during low confidence. With no valid selected IQ it coasts for at
-most eight samples (200 ns), then outputs neutral until it can reseed. A
-complete RF blackout without a validity witness may still produce noise.
-
-In D3, the fast confidence level controls display luma smoothing with an
-edge bypass at modest noise levels. Chroma uses a separate measure of burst
-amplitude and phase consistency and fades colour over four bad lines. The
-H/V sync logic still consumes demodulated composite video ahead of these
-display filters. The causal path skips PR #7's 1,024-pair, 51.2 µs look-ahead.
-Switching modes changes video timing by about one line. This is demodulator
-buffer delay, separate from end-to-end display/DVR latency.
-
 ## Field validation and output cadence (#10)
 
 The receive field grid runs in IQ-clock units: 667,333 samples for NTSC and
@@ -118,7 +100,7 @@ The cadence RTL test checked exact horizontal and vertical periods, full
 after restoring the synthetic source during active output. This tests digital
 line delivery, separate from RF recovery, display blanking delay and HDMI
 sink lock. Full IQ fade replays for NTSC and PAL held over one field and
-accepted the next in both Rescue Auto with Keep Lock on and D3 with it off.
+accepted the next with Keep Lock on and off.
 The largest receive interval error was the expected 150 µs at the edge of
 the holdover window.
 
@@ -127,23 +109,12 @@ the holdover window.
 Run the C5 host tests from `c5/test`. FPGA results can be rerun with:
 
 ```sh
-python fpga/sim/run_d3_tb.py
 python fpga/sim/run_fade_failover_tb.py
 python fpga/sim/run_field_timing_tb.py
-C5VRX_RESEARCH=/path/to/C5VRX/research python fpga/sim/fading/compare_d3.py
-C5VRX_RESEARCH=/path/to/C5VRX/research python fpga/sim/fading/replay_field_fades.py
 ```
 
-The 32 matched one-C5 trials (NTSC/PAL, static 30/6 dB and 30/100/300 Hz fading
-at 14/20 dB) gave mean D3 minus Auto SINAD of +0.008 dB (−0.065 to +0.258 dB).
-Over the 24 fading cases the mean was +0.016 dB. The largest sync-lock score
-change was 0.17 percentage points. These scores compare the fixed-point
-demodulator using the same synthetic IQ and goggle model. Display filtering,
-moving scenes, corresponding PHY gain behavior and scope-measured latency
-are outside these scores.
-
 For board A/B, use the same VTX, attenuation waveform, antennas, frequency
-and cables. Record one C5 with Rescue Off/Auto/On/D3, Keep lock Off/On, and
+and cables. Record one C5 with Keep lock Off/On, and
 Direct/Native gain. Then fade A only while B/C stay healthy, swap the faded
 branch and repeat with near-simultaneous outages. Record IQ, branch selection,
 gain transitions, sync-lock fraction, luma SINAD and recovery time. Perform

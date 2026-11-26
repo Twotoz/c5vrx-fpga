@@ -10,7 +10,7 @@ module tb_field_grid;
     localparam NTSC = 667333, PAL = 800000, WIN = 6000;
     always #12.5 clk = ~clk;
     vid_sync rx (.clk(clk), .rst(rst), .code(6'd25), .keep_lock(1'b1), .adapt(1'b0),
-                 .ans(1'b0), .d3_on(1'b0), .d3_degrade(2'd0), .pal(pal), .field_tog(field_tog));
+                 .ans(1'b0), .pal(pal), .field_tog(field_tog));
 
     integer n_acc = 0, n_pred = 0;   // field events this test made, for fps_real / fps_pred
     task candidate;
