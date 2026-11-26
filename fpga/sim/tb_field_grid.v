@@ -20,6 +20,7 @@ module tb_field_grid;
             @(negedge clk);
             rx.field_age = trusted_elapsed;
             rx.raw_age = raw_elapsed;
+            rx.broad_gap = 12'd1275;
             half_line = !half_line;
             pulse = 1;
             old = field_tog;

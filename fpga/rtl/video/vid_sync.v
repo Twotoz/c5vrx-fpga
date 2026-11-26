@@ -104,6 +104,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     localparam [19:0] NTSC_PERIOD = 20'd667333, PAL_PERIOD = 20'd800000;
     localparam [19:0] V_WINDOW = 20'd6000;  // +/- 150 us
     reg [19:0] field_age, raw_age;
+    reg [11:0] broad_gap;
     reg [4:0] missed_fields;
     reg [1:0] other_count;
     reg field_armed, field_parity;
@@ -112,23 +113,29 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     wire [11:0] half_ht = HT >> 1;
     wire half_edge = hc_cross >= half_ht - 12'd128 && hc_cross <= half_ht + 12'd128;
     wire line_edge = hc_cross <= 12'd128 || hc_cross >= HT - 12'd128;
-    wire v_candidate = low && low_len == 12'd700 && (line_edge || half_edge) &&
-                       (lock >= 4'd8 || khold >= 13'd7980);
-    wire raw_start = v_candidate && raw_age >= 20'd500000;
+    wire broad = low && low_len == 12'd700;
+    wire v_candidate = broad && (line_edge || half_edge) && (lock >= 4'd8 || khold >= 13'd7980);
+    // Acquisition is independent of the old H line period: two broad
+    // pulses at half-line spacing identify a serrated vertical train.
+    wire serrated = broad && broad_gap >= 12'd1100 && broad_gap <= 12'd1440;
+    wire raw_start = serrated && raw_age >= 20'd500000;
     wire other_interval = raw_start && raw_age >= other_period - V_WINDOW && raw_age <= other_period + V_WINDOW;
     wire standard_change = other_interval && other_count == 2'd2;
     wire in_field = field_age >= period - V_WINDOW && field_age <= period + V_WINDOW;
     // An off-grid candidate can establish a fresh anchor after a long loss
     // without itself changing the video standard.
-    wire field_accept = v_candidate && (!field_armed || in_field || standard_change ||
-                        (missed_fields == 5'd31 && raw_start && raw_age >= period - V_WINDOW && raw_age <= period + V_WINDOW));
+    wire same_interval = raw_age >= period - V_WINDOW && raw_age <= period + V_WINDOW;
+    wire field_accept = (field_armed && in_field && (v_candidate || raw_start)) || standard_change ||
+                        (raw_start && (!field_armed || (missed_fields == 5'd31 && same_interval)));
     wire field_coast = field_age >= period + V_WINDOW && !field_accept;
     wire field_event = field_accept || field_coast;
     always @(posedge clk) begin
         if (rst) begin
-            field_age <= 0; raw_age <= 20'hfffff; missed_fields <= 0;
+            field_age <= 0; raw_age <= 20'hfffff; broad_gap <= 12'hfff; missed_fields <= 0;
             other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
         end else begin
+            if (broad) broad_gap <= 0;
+            else if (!(&broad_gap)) broad_gap <= broad_gap + 1'b1;
             if (raw_start) raw_age <= 0;
             else if (!(&raw_age)) raw_age <= raw_age + 1'b1;
             if (raw_start) other_count <= other_interval && !standard_change ? other_count + 1'b1 : 2'd0;
