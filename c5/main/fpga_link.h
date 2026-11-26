@@ -12,7 +12,8 @@
  * own. One-shot requests carry a sequence number and act when it changes.
  *     'C' channel index (band * 8 + channel)           absolute
  *     'G' Direct Gain model 0 LEVEL, 1 KEEL, 2 RSSI    absolute
- *         3 Native AGC, 4 restore saved Direct Gain (reboot on ownership change)
+ *         3 Native AGC, 4 restore saved Direct Gain (reboot on ownership change),
+ *         5 ULTRA (experimental Direct Gain model, agc.h)
  *     'A' AFC 0 off, 1 on                              absolute
  *     'F' calibrate the current filter (console F)     sequence number
  *     'B' full RF optimisation (console B)             sequence number
@@ -36,7 +37,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { FPGA_GAIN_NATIVE = 3, FPGA_GAIN_DIRECT_RESTORE = 4, FPGA_FLAG_NATIVE = 1u << 7 };
+enum { FPGA_GAIN_NATIVE = 3, FPGA_GAIN_DIRECT_RESTORE = 4, FPGA_GAIN_ULTRA = 5, FPGA_FLAG_NATIVE = 1u << 7 };
 
 /* Interpret a gain frame against the current owner. Keep the old 0..2
  * firmware-policy selections, while 4 rolls back without altering prefs. */
@@ -44,9 +45,9 @@ enum { FPGA_GAIN_IGNORE, FPGA_GAIN_POLICY, FPGA_GAIN_TO_NATIVE, FPGA_GAIN_TO_DIR
 static inline unsigned fpga_link_gain_action(uint8_t value, int native_active)
 {
     if (value == FPGA_GAIN_NATIVE) return native_active ? FPGA_GAIN_IGNORE : FPGA_GAIN_TO_NATIVE;
-    if (value > FPGA_GAIN_DIRECT_RESTORE) return FPGA_GAIN_IGNORE;
+    if (value > FPGA_GAIN_ULTRA) return FPGA_GAIN_IGNORE;
     if (native_active) return FPGA_GAIN_TO_DIRECT;
-    return value < FPGA_GAIN_NATIVE ? FPGA_GAIN_POLICY : FPGA_GAIN_IGNORE;
+    return value < FPGA_GAIN_NATIVE || value == FPGA_GAIN_ULTRA ? FPGA_GAIN_POLICY : FPGA_GAIN_IGNORE;
 }
 
 #define FPGA_LINK_SYNC 0xC5u

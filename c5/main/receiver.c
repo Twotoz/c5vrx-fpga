@@ -44,9 +44,9 @@ static esp_timer_handle_t s_gain_timer;
 static TaskHandle_t s_observer, s_sentinel;
 static volatile uint8_t s_gain_mode = GAIN_MODE_DEFAULT;
 
-/* Menu/console cycle: LEVEL (the default), KEEL (KEEL-1), RSSI, MAX, then
- * fixed G78 down to G24. */
-static const uint8_t s_gain_modes[] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI, GAIN_MODE_MAX,
+/* Menu/console cycle: LEVEL (the default), KEEL (KEEL-1), RSSI, ULTRA
+ * (experimental), MAX, then fixed G78 down to G24. */
+static const uint8_t s_gain_modes[] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI, GAIN_MODE_ULTRA, GAIN_MODE_MAX,
                                        78, 72, 66, 60, 54, 48, 42, 36, 30, 24};
 
 uint8_t receiver_gain_mode(void) { return s_gain_mode; }
@@ -79,6 +79,7 @@ const char *receiver_gain_mode_name(uint8_t mode, char *buf, unsigned size)
     if (mode == GAIN_MODE_AUTO) return "KEEL";
     if (mode == GAIN_MODE_LEVEL) return "LEVEL";
     if (mode == GAIN_MODE_RSSI) return "RSSI";
+    if (mode == GAIN_MODE_ULTRA) return "ULTRA";
     if (mode == GAIN_MODE_MAX) return "MAX";
     snprintf(buf, size, "G%u", mode);
     return buf;
@@ -196,10 +197,12 @@ static uint8_t agc_decision(uint8_t mode, const dg_observation_t *o)
         s_agc_control = s_control_epoch;
         s_agc_rows = s_gain_rows_measured;
         printf("AGC model=%s bound top=G%u noise_top=%.2f cells2 noise_src=%s homes_from=G%u rows_measured=%u\n",
-               mode == GAIN_MODE_LEVEL ? "LEVEL" : "RSSI", t->max_index, (double)n,
+               mode == GAIN_MODE_LEVEL ? "LEVEL" : mode == GAIN_MODE_ULTRA ? "ULTRA" : "RSSI", t->max_index, (double)n,
                map_x16 ? "map" : s_gain_th[t->max_index] > 0.0f ? "gtab" : "default",
                mode == GAIN_MODE_LEVEL ? s_agc.level.top_index : t->max_index, s_gain_rows_measured);
     }
+    if (mode == GAIN_MODE_ULTRA)
+        return agc_ultra_tick(&s_agc.rssi, o, s_current_gain, o->observed_us, (uint64_t)s_last_gain_write_us);
     return mode == GAIN_MODE_LEVEL ? agc_level_tick(&s_agc.level, o, s_current_gain, o->observed_us)
                                    : agc_rssi_tick(&s_agc.rssi, o, s_current_gain, o->observed_us);
 }
@@ -266,7 +269,7 @@ static uint8_t gain_decision(const dg_observation_t *o)
         }
     }
     if (s_pair_active) return pair_decision(o);
-    if (mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI) {
+    if (mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI || mode == GAIN_MODE_ULTRA) {
         const uint8_t t = mode == GAIN_MODE_AUTO ? dg_tick(&s_gain, o) : agc_decision(mode, o);
         if (strong_allowed(mode) && rf_lane() == RF_LANE_ULTRAFINE &&
             strong_lane_tick(&s_strong, strong_lane_no_room(s_current_gain, t), agc_folded(o),
@@ -1224,9 +1227,9 @@ void receiver_print(void)
                (unsigned long)s_agc.level.decisions, (unsigned long)s_agc.level.moves, (unsigned long)s_agc.level.folds,
                (unsigned long)s_agc.level.learned, (unsigned long)s_agc.level.jumps, (unsigned long)s_fold_taken,
                (unsigned long)s_fold_rejected, (unsigned long)s_fold_noisy, (unsigned)agc_level_fold_radius_used());
-    else if (s_gain_mode == GAIN_MODE_RSSI)
-        printf("AGC model=RSSI moves=%lu folds=%lu (agc.c)\n", (unsigned long)s_agc.rssi.moves,
-               (unsigned long)s_agc.rssi.folds);
+    else if (s_gain_mode == GAIN_MODE_RSSI || s_gain_mode == GAIN_MODE_ULTRA)
+        printf("AGC model=%s moves=%lu folds=%lu (agc.c)\n", s_gain_mode == GAIN_MODE_ULTRA ? "ULTRA" : "RSSI",
+               (unsigned long)s_agc.rssi.moves, (unsigned long)s_agc.rssi.folds);
     const rx_level_t lv = s_level;
     if (lv.valid)
         printf("RX_LEVEL carrier_dbm=%.1f input_dbm=%.1f noise_dbm=%.1f noise_learned=%u noise_src=%s noise_row=%u cn_db=%.1f above_noise=%u exact=%u gains=%u-%u probes=%lu clipped_pm=%u "
@@ -1282,7 +1285,7 @@ void receiver_print(void)
            "obs_windows=%lu obs_us_max=%lu\n",
            s_paused ? "paused" :
            s_gain_mode == GAIN_MODE_AUTO ? "keel1" : s_gain_mode == GAIN_MODE_LEVEL ? "level" :
-           s_gain_mode == GAIN_MODE_RSSI ? "rssi" : "manual",
+           s_gain_mode == GAIN_MODE_RSSI ? "rssi" : s_gain_mode == GAIN_MODE_ULTRA ? "ultra" : "manual",
            receiver_gain_mode_name(s_gain_mode, mode, sizeof(mode)),
            s_current_gain, (unsigned)s_gain.state, s_obs_p50, s_obs_p95, s_obs_coherence, s_obs_env_ratio_x100,
            (unsigned)s_obs_stuck, receiver_obs_cn_x10(),

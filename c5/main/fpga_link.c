@@ -112,7 +112,7 @@ static void link_frame(const fpga_link_frame_t *f)
         }
         break;
     case 'G': {
-        static const uint8_t modes[3] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI};
+        static const uint8_t modes[6] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI, 0, 0, GAIN_MODE_ULTRA};
         switch (fpga_link_gain_action(f->value, rf_native_agc())) {
         case FPGA_GAIN_TO_NATIVE: queue(CMD_AGC_OWNER + 1); break;
         case FPGA_GAIN_TO_DIRECT: queue(CMD_AGC_OWNER); break;

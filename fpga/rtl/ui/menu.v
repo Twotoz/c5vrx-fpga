@@ -43,7 +43,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg  [5:0]  channel,
     output reg         link_on,
     output reg         g_set, a_set,
-    output wire [2:0]  gain_model,       // 0 LEVEL, 1 KEEL, 2 RSSI, 3 native, 4 restore Direct
+    output wire [2:0]  gain_model,       // 0 LEVEL, 1 KEEL, 2 RSSI, 3 native, 4 restore Direct, 5 ULTRA (experimental)
     output reg         afc,
     output reg  [7:0]  f_seq,
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
@@ -108,9 +108,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [11:0] st_cn [0:2];
     reg [7:0]  st_flags [0:2];
     reg [6:0]  st_sig [0:2];
-    reg [1:0] direct_model;
+    reg [1:0] direct_model;              // 0 Level, 1 Keel, 2 RSSI, 3 Ultra (link 'G' 5)
     reg native_requested, owner_set;
-    assign gain_model = owner_set ? (native_requested ? 3'd3 : 3'd4) : {1'b0, direct_model};
+    assign gain_model = owner_set ? (native_requested ? 3'd3 : 3'd4) : direct_model == 2'd3 ? 3'd5 : {1'b0, direct_model};
     reg [11:0] owner_age [0:2];           // age of the actual mode, independently of other markers
     reg [11:0] st_age [0:2];             // ms since the last marker, saturating
     reg [3:0]  btn; reg btn_ev;
@@ -257,8 +257,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         if (dn) mode <= mode == 2'd0 ? 2'd2 : mode - 2'd1;
                     end
                     else if (cursor == 3'd0) begin
-                        if (up) direct_model <= direct_model == 2'd2 ? 2'd0 : direct_model + 2'd1;
-                        if (dn) direct_model <= direct_model == 2'd0 ? 2'd2 : direct_model - 2'd1;
+                        if (up) direct_model <= direct_model + 2'd1;     // Level, Keel, RSSI, Ultra
+                        if (dn) direct_model <= direct_model - 2'd1;
                         owner_set <= 1'b0; g_set <= 1'b1;
                     end else if (cursor == 3'd2) begin
                         if (up) aspect <= aspect + 2'd1;
@@ -356,7 +356,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 5: s = "    Ready"; 6: s = " Card err"; 7: s = "    Level"; 8: s = "     Keel"; 9: s = "     RSSI";
                 10: s = "       On"; 11: s = "      Off"; 12: s = "     Sent"; 13: s = "NO SIGNAL"; 14: s = "     REC ";
                 15: s = "     Off "; 24: s = "   No DVR"; 25: s = "      Log"; 26: s = "     Auto";
-                27: s = "     Free"; 28: s = "   Camera"; 29: s = "   Smooth"; 30: s = BUILD_S;
+                27: s = "     Free"; 28: s = "   Camera"; 29: s = "   Smooth"; 30: s = BUILD_S; 31: s = "    Ultra";
                 default: s = "         ";
             endcase
             str = s[8 * (8 - i) +: 7];
@@ -448,7 +448,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 else begin fch = G_LOGO0 + fi - 7'd1; fgv = 1'b1; ffg = fi <= 7'd4 ? ACCENT : WHITE; end
             end
             F_RXCNT: fch = fi == 7'd0 ? digit({2'b0, nact}) : fi == 7'd1 ? "/" : "3";
-            F_GAINV: begin ss = 5'd7 + {3'd0, direct_model}; si = fi[3:0] + 4'd4; su = 1'b1; end
+            F_GAINV: begin ss = direct_model == 2'd3 ? 5'd31 : 5'd7 + {3'd0, direct_model}; si = fi[3:0] + 4'd4; su = 1'b1; end
             F_AFCV:  begin ss = afc ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_KLOCKV, F_ASYNCV, F_NFILTV:
                      begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end

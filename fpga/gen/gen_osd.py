@@ -447,7 +447,7 @@ def field_cells(name, w, st, row, sel, edit):
         n = sum(a < 3000 for a in st['age'])
         return K(f'{n}/3')
     if name == 'GAINV':
-        return K(rjust(['Level', 'Keel', 'RSSI'][st['gain_model']], w))
+        return K(rjust(['Level', 'Keel', 'RSSI', 'Ultra'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
     if name == 'BOOTBLD':

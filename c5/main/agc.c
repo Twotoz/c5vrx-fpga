@@ -460,6 +460,32 @@ static uint8_t rssi_row(const agc_rssi_t *a, int want_q8)
     return a->home[best];
 }
 
+/* ---- ULTRA (agc.h) ---- */
+#ifndef ULTRA_TARGET_X16
+#define ULTRA_TARGET_X16 (20u * 16u)   /* mean power 20 cells^2: radius ~4.5, ~5 dB under a fold */
+#endif
+#ifndef ULTRA_DEADBAND_Q8
+#define ULTRA_DEADBAND_Q8 (3 * 128)    /* 1.5 dB */
+#endif
+
+uint8_t agc_ultra_tick(agc_rssi_t *a, const dg_observation_t *o, uint8_t current, uint64_t now_us, uint64_t last_write_us)
+{
+    if (!a->homes || current > a->max_index) return current;
+    /* the window may still be from before the last write: decide on a fresh one */
+    if (now_us >= last_write_us && now_us - last_write_us < ULTRA_SETTLE_US) return current;
+    if (agc_folded(o)) {
+        ++a->folds;
+        const uint8_t to = rssi_row(a, a->rel_q8[current] - RSSI_FOLD_DROP_Q8);
+        if (to != current) ++a->moves;
+        return to;
+    }
+    const int err = agc_db_q8(o->pwr_x16 ? o->pwr_x16 : 1u) - agc_db_q8(ULTRA_TARGET_X16);
+    if (err > -ULTRA_DEADBAND_Q8 && err < ULTRA_DEADBAND_Q8) return current;
+    const uint8_t to = rssi_row(a, a->rel_q8[current] - err);
+    if (to != current) ++a->moves;
+    return to;
+}
+
 uint8_t agc_rssi_tick(agc_rssi_t *a, const dg_observation_t *o, uint8_t current, uint64_t now_us)
 {
     if (!a->homes || current > a->max_index) return current;

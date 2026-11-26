@@ -47,7 +47,7 @@ static void status(void)
     printf("TRIVERSITY_C5 version=%s lane=%s gain_owner=%s uptime_s=%lld heap_internal=%u heap_largest=%u heap_min=%u "
            "heap_dma=%u heap_lp=%u fw=%s\n",
            esp_app_get_description()->version, rf_lane_name(rf_lane()),
-           rf_native_agc() ? "native_exp" : gm == GAIN_MODE_AUTO ? "keel1" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : "manual",
+           rf_native_agc() ? "native_exp" : gm == GAIN_MODE_AUTO ? "keel1" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : gm == GAIN_MODE_ULTRA ? "ultra" : "manual",
            esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
