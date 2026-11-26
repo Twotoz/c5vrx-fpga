@@ -169,7 +169,7 @@ module tri_top (
     always @(posedge a_gclk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
-    wire [23:0] lg_w; wire [1:0] ans_lev, d3_degrade; wire ract;
+    wire [23:0] lg_w; wire [1:0] ans_lev, d3_degrade; wire ract, click_ev;
 `ifdef TRI_NO_C
     mrc3_core #(.HAS_C(0), .FAILOVER(1)) u_core (
 `else
@@ -177,7 +177,7 @@ module tri_top (
 `endif
                       .clk(a_gclk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
                       .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c),
-                      .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
+                      .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .click_ev(click_ev), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real; wire [6:0] fps_real, fps_pred; wire [15:0] gain_k8;
@@ -272,9 +272,11 @@ module tri_top (
 `ifdef TRI_HDMI90
     assign log_tx = 1'b1;                    // the 90 Hz HDMI build has no room left
 `else
+    wire [15:0] rx_clicks; wire [6:0] rx_rescue;
+    rx_stats u_rxs (.clk(a_gclk), .rst(rst), .click_ev(click_ev), .ract(ract), .clicks(rx_clicks), .rescue_pct(rx_rescue));
     log_uart #(.CLK_HZ(UI_HZ)) u_log (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl),
                     .locked_a(locked), .pal_a(pal), .fps_real_a(fps_real), .fps_pred_a(fps_pred), .k8_a(gain_k8),
-                    .sync_q_a(sync_q), .tx(log_tx));
+                    .sync_q_a(sync_q), .clicks_a(rx_clicks), .rescue_a(rx_rescue), .tx(log_tx));
 `endif
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),

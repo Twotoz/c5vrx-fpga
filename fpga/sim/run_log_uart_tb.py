@@ -1,6 +1,7 @@
 """Triversity: rtl/io/log_uart.v, the live status over the Tang Nano's USB
-serial. The testbench feeds markers and video status, decodes the 8N1 output
-and checks the text lines (a fast clock: 10 clocks a bit).
+serial, with rtl/io/rx_stats.v. The testbench feeds markers, video status,
+clicks and the Rescue PLL flag, decodes the 8N1 output and checks the text
+lines (a fast clock: 10 clocks a bit).
 
     python fpga/sim/run_log_uart_tb.py
 """
@@ -16,8 +17,14 @@ module tb;
     reg mk_tog = 0; reg [1:0] mk_src = 3; reg [15:0] mk_pl = 0;
     reg locked = 1, pal = 0; reg [6:0] fr = 59, fp = 2; reg [15:0] k8 = 555, sq = 1580;
     wire tx;
+    // rx_stats on the same clock: a click every 7th clock, the Rescue PLL a quarter of the time
+    reg click = 0, ract = 0; integer n = 0;
+    always @(posedge clk) begin n <= n + 1; click <= n % 7 == 0; ract <= (n / 1000) % 4 == 0; end
+    wire [15:0] clicks; wire [6:0] rpct;
+    rx_stats #(.CLK_HZ(__CLK__)) s (.clk(clk), .rst(rst), .click_ev(click), .ract(ract), .clicks(clicks), .rescue_pct(rpct));
     log_uart #(.CLK_HZ(__CLK__)) u (.clk(clk), .rst(rst), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl),
-        .locked_a(locked), .pal_a(pal), .fps_real_a(fr), .fps_pred_a(fp), .k8_a(k8), .sync_q_a(sq), .tx(tx));
+        .locked_a(locked), .pal_a(pal), .fps_real_a(fr), .fps_pred_a(fp), .k8_a(k8), .sync_q_a(sq),
+        .clicks_a(clicks), .rescue_a(rpct), .tx(tx));
     task mark; input [1:0] s; input [15:0] p; begin
         @(negedge clk); mk_src = s; mk_pl = p; repeat (4) @(negedge clk); mk_tog = ~mk_tog; repeat (20) @(negedge clk);
     end endtask
@@ -52,7 +59,8 @@ def main():
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / 'tb.v').write_text(TB.replace('__CLK__', str(CLK)).replace('__TICK__', str(CLK // 10)))
-        subprocess.run(['iverilog', '-g2012', '-s', 'tb', '-o', str(t / 'sim'), str(t / 'tb.v'), str(RTL / 'io' / 'log_uart.v')], check=True)
+        subprocess.run(['iverilog', '-g2012', '-s', 'tb', '-o', str(t / 'sim'), str(t / 'tb.v'), str(RTL / 'io' / 'log_uart.v'),
+                        str(RTL / 'io' / 'rx_stats.v')], check=True)
         subprocess.run(['vvp', '-n', str(t / 'sim')], cwd=t, check=True, capture_output=True)
         lines = (t / 'out.txt').read_bytes().decode('ascii', 'replace').split('\r\n')   # CR LF as sent
     for l in lines:
@@ -60,9 +68,17 @@ def main():
     # values are read as they are while a line goes out: the first lines may hold markers
     # that arrived during them; check the content and the clock of complete lines
     full = lines[:-1]
-    want = ['lock=1 pal=0 fps=59/2 k8=555 q=1580 A=G54,+18.4,u,78 B=G61,+12.1,f,55 C=-',
-            'lock=0 pal=1 fps=0/50 k8=3264 q=0 A=G54,-5.0,n,78 B=G61,?,c,55 C=-']
-    ok = all(any(l.endswith(' ' + w) for l in full) for w in want)
+    # 100 ms = CLK / 10 clocks: clicks every 7th clock -> CLK / 70 (+-1); Rescue 1 in 4 from
+    # 100 looks -> 25 % (+-3, the looks are not in phase with the test pattern)
+    import re
+    def norm(l):
+        m = re.search(r' clk=(\d+) rsc=(\d+)', l)
+        if not m or abs(int(m[1]) - CLK // 70) > 1 or abs(int(m[2]) - 25) > 3:
+            return l
+        return l[:m.start()] + ' clk=* rsc=*' + l[m.end():]
+    want = ['lock=1 pal=0 fps=59/2 k8=555 q=1580 clk=* rsc=* A=G54,+18.4,u,78 B=G61,+12.1,f,55 C=-',
+            'lock=0 pal=1 fps=0/50 k8=3264 q=0 clk=* rsc=* A=G54,-5.0,n,78 B=G61,?,c,55 C=-']
+    ok = all(any(norm(l).endswith(' ' + w) for l in full[1:]) for w in want)
     ok &= [l.split()[0] for l in full] == [f't=0.{k + 1}' for k in range(len(full))]
     ok &= len(full) >= 4 and all('<framing>' not in l for l in lines)
     print('PASS' if ok else 'FAIL')

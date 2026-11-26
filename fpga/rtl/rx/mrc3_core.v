@@ -92,6 +92,7 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
     input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2 on, 3 experimental D3
     output reg  [5:0] code,
     output reg        ract,         // rescue PLL in use (for the code going out)
+    output reg        click_ev = 1'b0,   // one clock per discriminator click (live status, log_uart.v)
     output wire [1:0] d3_degrade,
     output wire       ref_lost,
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
@@ -414,6 +415,7 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
                 else dv <= 1'b1;
                 ckr <= click;
             end
+            click_ev <= ev_phi && st_ok && click;
             if (dv) begin st_s <= st_s + dq[15:6]; dcode <= dq[5:0]; end
             s_d <= dv ? dq[5:0] : dcode; s_p <= pq[5:0]; s_f <= dv; s_c <= ckr;
         end
