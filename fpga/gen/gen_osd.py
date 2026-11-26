@@ -53,7 +53,7 @@ BANDS = 'RABEFL'
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
           'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V',
-          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD', 'NATIVEV']
+          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD', 'NATIVEV', 'VIDFPS']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -301,6 +301,7 @@ def pages(h90=False):
     rx.put(ITEM0 - 1, P0 + 3, hdr, fg=GREY)
     for k in range(3):
         rx.field(ITEM0 + k, P0 + 3, 'RXROW', 30, fg=WHITE)
+    rx.field(ITEM0 + 3, P0 + 3, 'VIDFPS', 30, fg=GREY)    # video fields a second: real / predicted
     rx.item(ITEM0 + 4, 'Back', None, chevron=False)
 
     st = Page()
@@ -501,6 +502,12 @@ def field_cells(name, w, st, row, sel, edit):
             out += [(32, None, None)] if k < 2 else []
         out += [(32, None, None)] * (w - 1 - len(out)) + [(CAP_R, PANEL, BG_VIDEO)]
         return out
+    if name == 'VIDFPS':
+        # fields in the last second from a real vertical sync, and those the flywheel predicted
+        real, pred = min(99, st.get('fps', 0)), min(99, st.get('pred', 0))
+        col = RED if real == 0 else AMBER if pred else GREEN
+        return (K('Video ', fg=GREY) + K(rjust(str(real), 2), fg=col) + K('/s  pred ', fg=GREY) +
+                K(rjust(str(pred), 2), fg=AMBER if pred else GREY) + K([32] * (w - 19), fg=GREY))
     if name == 'RXROW':
         k = row - ITEM0
         stale = st['age'][k] >= 3000

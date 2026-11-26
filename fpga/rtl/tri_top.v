@@ -179,10 +179,10 @@ module tri_top (
                       .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
-    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real;
+    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real; wire [6:0] fps_real, fps_pred;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
     vid_sync #(.D3_ADAPT(1)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
-                   .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide), .fields_real(fields_real),
+                   .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide), .fields_real(fields_real), .fps_real(fps_real), .fps_pred(fps_pred),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
@@ -259,6 +259,9 @@ module tri_top (
 `endif
                  .clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl), .s1_n(~key_s1), .s2_n(~key_s2),
                  .locked_a(locked), .pal_a(pal), .sync_q_a(sync_q), .dvr_state_a(dvr_state), .wide_a(wide),
+`ifndef TRI_LIVEUI
+                 .fps_real_a(fps_real), .fps_pred_a(fps_pred),
+`endif
                  .osd_we(osd_we), .osd_waddr(osd_waddr), .osd_wdata(osd_wdata),
                  .dvr(dvr_l), .lg(lg_l), .mode(mode_l), .hmode(hmode), .channel(channel), .link_on(link_on), .g_set(g_set), .a_set(a_set),
                  .gain_model(gain_model), .afc(afc), .f_seq(f_seq), .klock(sg_l[0]), .async_on(sg_l[2]), .nfilt(sg_l[5]), .rescue(sg_l[4:3]), .hz90(hz90), .boot(boot),

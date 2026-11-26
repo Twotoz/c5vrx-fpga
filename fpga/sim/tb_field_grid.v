@@ -12,6 +12,7 @@ module tb_field_grid;
     vid_sync rx (.clk(clk), .rst(rst), .code(6'd25), .keep_lock(1'b1), .adapt(1'b0),
                  .ans(1'b0), .d3_on(1'b0), .d3_degrade(2'd0), .pal(pal), .field_tog(field_tog));
 
+    integer n_acc = 0, n_pred = 0;   // field events this test made, for fps_real / fps_pred
     task candidate;
         input integer trusted_elapsed, raw_elapsed;
         input want_event, want_pal;
@@ -26,6 +27,7 @@ module tb_field_grid;
             old = field_tog;
             @(negedge clk);
             pulse = 0;
+            if (want_event) n_acc = n_acc + 1;
             if ((old ^ field_tog) !== want_event || pal !== want_pal)
                 $fatal(1, "field event/standard mismatch at trusted=%0d raw=%0d", trusted_elapsed, raw_elapsed);
         end
@@ -39,6 +41,7 @@ module tb_field_grid;
             rx.field_age = field_period + WIN;
             old = field_tog;
             @(negedge clk);
+            n_pred = n_pred + 1;
             if (old === field_tog || rx.field_age != WIN + 1)
                 $fatal(1, "holdover failed to emit exactly one field on the old grid");
         end
@@ -74,6 +77,11 @@ module tb_field_grid;
         candidate(2 * NTSC - PAL, NTSC, 0, 1);
         candidate(3 * NTSC - 2 * PAL, NTSC, 1, 0);
         candidate(NTSC - 134, NTSC - 134, 1, 0);
+        // the one-second window closes: real and predicted fields of the window
+        @(negedge clk); rx.fps_tim = 26'd39999999; @(negedge clk);
+        if (rx.fps_real !== n_acc || rx.fps_pred !== n_pred)
+            $fatal(1, "fields a second: real %0d predicted %0d, want %0d %0d", rx.fps_real, rx.fps_pred, n_acc, n_pred);
+        $display("fields a second: %0d real, %0d predicted", rx.fps_real, rx.fps_pred);
         $display("field grid PASS: early edges, missed fields, 200 ppm, and both standard changes");
         $finish;
     end
