@@ -1,6 +1,6 @@
 # Fade recovery and experimental gain/demodulator modes
 
-This work builds on PR #7 and addresses issues #6, #8 and #9. Signal → Demod /
+This work builds on PR #7 and addresses issues #6, #8, #9 and #10. Signal → Demod /
 Rescue defaults to Auto. Select **D3*** for a fixed-point, causal A/B candidate.
 The full menu also has **Signal → Native AGC (EXP)**. The compact live UI builds
 use Rescue Auto. Native gain ownership is available from the C5 USB console
@@ -76,6 +76,43 @@ display filters. The causal path skips PR #7's 1,024-pair, 51.2 µs look-ahead.
 Switching modes changes video timing by about one line. This is demodulator
 buffer delay, separate from end-to-end display/DVR latency.
 
+## Field validation and output cadence (#10)
+
+The receive field grid runs in IQ-clock units: 667,333 samples for NTSC and
+800,000 for PAL. A broad pulse must be near a horizontal or half-line phase,
+with recent horizontal lock. After the first accepted pulse, same-format
+edges must fall within ±6,000 samples (±150 µs) of the grid. At the late edge
+of an empty window the receiver advances one field and retains the predicted
+phase. The held-over event advances parity without voting on the format.
+Off-grid candidates can confirm a genuine format change after three
+consecutive intervals measured at the other format. After roughly half a
+second without confirmation, a same-format cadence can establish a new phase.
+
+Standard HDMI sends a steady 27 MHz raster, with 858 × 525 clocks per NTSC
+frame (16.683 ms) and 864 × 625 per PAL frame (20 ms). Output geometry is
+latched at frame boundaries. Display VS is independent of incoming field
+edges and Keep Lock. Source loss blanks the video plane while the HDMI
+raster continues. Buffered HDMI 90 Hz retains its SDRAM path and frame-rate
+control. LCD retains its existing line/frame recovery and holds its last
+confirmed standard through signal loss.
+
+Standard HDMI uses the existing two-bank line buffer and reads the newest
+complete line per output row. With ±200 ppm offset, the skew is 2 µs after
+10 ms and 100 µs after 0.5 s, and the latest-line selector can repeat or skip
+a line. The free-running output sacrifices continuous source-to-display
+vertical phase alignment. At a large phase offset, the source's blanking
+or field boundary can enter the displayed picture. A fixed-rate output with
+two source lines of storage cannot keep whole fields phase-aligned for
+arbitrary drift; the standard HDMI path adds no field buffer. The HDMI 90 Hz
+path is available when buffered field integrity is needed.
+
+The cadence RTL test checked exact horizontal and vertical periods, full
+720-pixel rows, a 10 ms loss and deliberate format change for both signs of
+200 ppm. It saw the first marked fresh pixel 1,088 output clocks (40.3 µs)
+after restoring the synthetic source during active output. This tests digital
+line delivery, separate from RF recovery, display blanking delay and HDMI
+sink lock.
+
 ## Reproduce
 
 Run the C5 host tests from `c5/test`. FPGA results can be rerun with:
@@ -83,7 +120,9 @@ Run the C5 host tests from `c5/test`. FPGA results can be rerun with:
 ```sh
 python fpga/sim/run_d3_tb.py
 python fpga/sim/run_fade_failover_tb.py
+python fpga/sim/run_field_timing_tb.py
 C5VRX_RESEARCH=/path/to/C5VRX/research python fpga/sim/fading/compare_d3.py
+C5VRX_RESEARCH=/path/to/C5VRX/research python fpga/sim/fading/replay_field_fades.py
 ```
 
 The 32 matched one-C5 trials (NTSC/PAL, static 30/6 dB and 30/100/300 Hz fading

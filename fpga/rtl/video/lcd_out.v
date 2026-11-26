@@ -59,20 +59,22 @@ module lcd_out (
     end
     wire line_ev = lt[2] ^ lt[1], field_ev = ft[2] ^ ft[1];
     wire locked = lk[1], pal = pl[1];
+    // Change geometry only at the end of a complete display frame.
+    reg pal_out;
 `ifdef TRI_HDMI90
     // 90 Hz HDMI build: free-running from the crystal at 48.6 MHz, the field from
     // the SDRAM field buffer (fbuf.v), each source line twice. NTSC 720x480 in
     // 1030 x 525 (89.88 Hz), PAL 720x576 in 864 x 625 (90.00 Hz); syncs and back
     // porches as 480p / 576p, the wider NTSC line is front porch.
-    wire [10:0] HBP = pal ? 11'd132 : 11'd122;
+    wire [10:0] HBP = pal_out ? 11'd132 : 11'd122;
     localparam  HACT = 11'd720;
-    wire [10:0] HHALF = pal ? 11'd864 : 11'd1030, HFREE = HHALF;
-    wire [10:0] HSYNC = pal ? 11'd64 : 11'd62;
+    wire [10:0] HHALF = pal_out ? 11'd864 : 11'd1030, HFREE = HHALF;
+    wire [10:0] HSYNC = pal_out ? 11'd64 : 11'd62;
     wire [10:0] GSTART = HBP - 11'd37;
-    wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
-    wire [9:0]  VSTART = pal ? 10'd44 : 10'd36;       // 6 sync lines, then the back porch
-    wire [9:0]  NROW = pal ? 10'd576 : 10'd480;
-    wire [9:0]  OSDV = pal ? 10'd48 : 10'd0;
+    wire [9:0]  VFRAME = pal_out ? 10'd625 : 10'd525;
+    wire [9:0]  VSTART = pal_out ? 10'd44 : 10'd36;       // 6 sync lines, then the back porch
+    wire [9:0]  NROW = pal_out ? 10'd576 : 10'd480;
+    wire [9:0]  OSDV = pal_out ? 10'd48 : 10'd0;
 `elsif TRI_LCDBUF
     // Buffered LCD: the 800x480 panel on fixed timing from the crystal (33.75 MHz,
     // every line HHALF, the frame VFRAME lines give or take the frame lock's trim),
@@ -80,24 +82,26 @@ module lcd_out (
     // 240 rows (every sixth dropped, as the genlocked LCD). The panel never sees
     // a line or frame shaped by the source.
     localparam  HBP = 11'd56, HACT = 11'd800;
-    wire [10:0] HHALF = pal ? 11'd1080 : 11'd1072, HFREE = HHALF;
+    wire [10:0] HHALF = pal_out ? 11'd1080 : 11'd1072, HFREE = HHALF;
     wire [10:0] HSYNC = 11'd10;
     wire [10:0] GSTART = HBP + 11'd3;                  // X0 = 4: column 0 at x = 4
-    wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
+    wire [9:0]  VFRAME = pal_out ? 10'd625 : 10'd525;
     wire [9:0]  VSTART = 10'd23;
     wire [9:0]  NROW = 10'd480;
     wire [9:0]  OSDV = 10'd0;
 `elsif TRI_HDMI
     // HDMI build: 720x480p59.94 / 720x576p50 at 27 MHz, half a line 858 / 864
-    // clocks (twice the analog line rate, genlocked like the LCD); sync 62 / 64,
+    // clocks (twice the nominal analog line rate); sync 62 / 64,
     // video from 122 / 132; the OSD grid cropped to columns 3..62
-    wire [10:0] HBP = pal ? 11'd132 : 11'd122;
+    wire [10:0] HBP = pal_out ? 11'd132 : 11'd122;
     localparam  HACT = 11'd720;
-    wire [10:0] HHALF = pal ? 11'd864 : 11'd858, HFREE = HHALF;
-    wire [10:0] HSYNC = pal ? 11'd64 : 11'd62;
+    wire [10:0] HHALF = pal_out ? 11'd864 : 11'd858, HFREE = HHALF;
+    wire [10:0] HSYNC = pal_out ? 11'd64 : 11'd62;
     wire [10:0] GSTART = HBP - 11'd37;                 // column 3, pixel 0 at x = 0
-    wire [9:0]  VFRAME = pal ? 10'd625 : 10'd525;
-    wire [9:0]  OSDV = pal ? 10'd48 : 10'd0;          // the 480-line OSD centred in 576
+    wire [9:0]  VFRAME = pal_out ? 10'd625 : 10'd525;
+    wire [9:0]  OSDV = pal_out ? 10'd48 : 10'd0;          // the 480-line OSD centred in 576
+    wire [9:0]  VSTART = pal_out ? 10'd44 : 10'd36;
+    wire [9:0]  NROW = pal_out ? 10'd576 : 10'd480;
 `else
     reg pal_lcd;
     localparam  HBP = 11'd56, HACT = 11'd800;
@@ -125,9 +129,9 @@ module lcd_out (
     // Camera to panel: LAG_W + ~11 source lines, ~2.7 ms (NTSC); the frame lock
     // moves the frame by a line a field at most once in place (4 while far off).
     localparam [9:0] LAG_W = 10'd32;
-    wire [9:0]  PT = VFRAME - 10'd2 * ((pal ? 10'd20 : 10'd18) + LAG_W);
+    wire [9:0]  PT = VFRAME - 10'd2 * ((pal_out ? 10'd20 : 10'd18) + LAG_W);
 `else
-    wire [9:0]  PT = pal ? 10'd102 : 10'd237;
+    wire [9:0]  PT = pal_out ? 10'd102 : 10'd237;
 `endif
     wire signed [10:0] e0 = $signed({1'b0, lv}) - $signed({1'b0, PT});
     wire signed [10:0] eh = e0 > $signed({2'b0, VFRAME[9:1]}) ? e0 - $signed({1'b0, VFRAME}) :
@@ -138,7 +142,7 @@ module lcd_out (
 `ifdef TRI_LCDBUF
             fcyc <= 3'd0;                              // frames 1:1 with the fields
 `else
-            fcyc <= fcyc >= (pal ? 3'd4 : 3'd1) ? 3'd0 : fcyc + 3'd1;
+            fcyc <= fcyc >= (pal_out ? 3'd4 : 3'd1) ? 3'd0 : fcyc + 3'd1;
 `endif
             if (fcyc == 3'd0)
                 corr <= eh > 11'sd32 ? 4'sd4 : eh > 11'sd2 ? 4'sd1 : eh < -11'sd32 ? -4'sd4 : eh < -11'sd2 ? -4'sd1 : 4'sd0;
@@ -153,19 +157,19 @@ module lcd_out (
     wire [9:0]  nr = lv + 10'd3 - VSTART;           // two output rows after the line starting next
 `ifdef TRI_LCDBUF
     wire [17:0] nsr5 = {9'd0, nr[9:1]} * 18'd205;          // n x 205 / 1024 = n / 5 (n < 256)
-    wire [8:0]  nsr = pal ? nr[9:1] + nsr5[18-1:10] : nr[9:1];   // PAL: n + n / 5
+    wire [8:0]  nsr = pal_out ? nr[9:1] + nsr5[18-1:10] : nr[9:1];   // PAL: n + n / 5
     wire signed [10:0] fl = $signed({2'b0, nsr});
 `else
     wire signed [10:0] fl = $signed({2'b0, nr[9:1]}) - $signed({{5{hv[5]}}, hv});   // its source line
 `endif
-    wire [9:0]  nsrc = pal ? 10'd288 : 10'd240;
+    wire [9:0]  nsrc = pal_out ? 10'd288 : 10'd240;
     always @(posedge clk) begin
-        if (rst) begin hc <= 11'd0; lv <= 10'd0; frame_tog <= 1'b0; fetch_tog <= 1'b0; fetch_line <= 9'd0; hn <= 9'd0; end
+        if (rst) begin hc <= 11'd0; lv <= 10'd0; pal_out <= 1'b0; frame_tog <= 1'b0; fetch_tog <= 1'b0; fetch_line <= 9'd0; hn <= 9'd0; end
         else begin
             if (hc == HHALF - 11'd1) begin
                 hc <= 11'd0;
                 lv <= lv >= VT - 10'd1 ? 10'd0 : lv + 10'd1;
-                if (lv >= VT - 10'd1) frame_tog <= ~frame_tog;
+                if (lv >= VT - 10'd1) begin frame_tog <= ~frame_tog; pal_out <= pal; end
                 // line lv + 1 starts: fetch the source line of output row lv + 3 - VSTART (even rows)
                 if (nr < NROW && !nr[0] && !fl[10] && fl < $signed({1'b0, nsrc})) begin fetch_line <= fl[8:0]; fetch_tog <= ~fetch_tog; end
                 if (lv == 10'd1) begin hh <= sh_h; hr <= sh_r; hv <= sh_v; end
@@ -181,36 +185,34 @@ module lcd_out (
     wire [9:0]  row = lv - VSTART;
 `ifdef TRI_LCDBUF
     wire [17:0] rsl5 = {9'd0, row[9:1]} * 18'd205;
-    wire [8:0]  rsl = pal ? row[9:1] + rsl5[17:10] : row[9:1];   // the source line of this row
+    wire [8:0]  rsl = pal_out ? row[9:1] + rsl5[17:10] : row[9:1];   // the source line of this row
 `endif
 `elsif TRI_HDMI
-    reg  [10:0] hc;
-    reg         half;
-    reg  [8:0]  info;             // {show, orow} of the pair being shown
-    reg  [9:0]  lv;               // free-running LCD line in the frame
-    reg         vs_r;
-    reg  [8:0]  vcnt, vrow;       // HDMI: video lines shown in this field, the one shown now
+    // Fixed CEA raster. Take the newest completed source line at the
+    // beginning of the active output row. Repeats/skips are local to video
+    // content and never shorten an HDMI line or frame.
+    reg [10:0] hc, line_age;
+    reg [9:0] lv;
+    reg latest_bank, row_bank, row_good;
     always @(posedge clk) begin
-        if (field_ev) vcnt <= 9'd0;
-        else if (line_ev && locked && line_info_a[8]) begin vrow <= vcnt; vcnt <= vcnt + 9'd1; end
-    end
-    always @(posedge clk) begin
-        if (rst) begin hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= 10'd0; vs_r <= 1'b0; end
-        else begin
-            vs_r <= 1'b0;
-            if (line_ev && locked) begin
-                hc <= 11'd0; half <= 1'b0; info <= line_info_a;
-                lv <= lv + 10'd1;
-            end else if (!half && hc == HHALF - 11'd1) begin
-                hc <= 11'd0; half <= 1'b1; lv <= lv + 10'd1;
-            end else if (half && hc == HFREE - 11'd1) begin
-                hc <= 11'd0; half <= 1'b0; info <= 9'd0; lv <= lv + 10'd1;
-            end else hc <= hc + 11'd1;
-            if ((field_ev && locked) || (!locked && lv >= VFRAME)) begin lv <= 10'd0; vs_r <= 1'b1; end
+        if (rst) begin
+            hc <= 0; lv <= 0; pal_out <= 0;
+            line_age <= 11'h7ff; latest_bank <= 0; row_bank <= 0; row_good <= 0;
+        end else begin
+            if (hc == HHALF - 1'b1) begin
+                hc <= 0;
+                if (lv == VFRAME - 1'b1) begin lv <= 0; pal_out <= pal; end
+                else lv <= lv + 1'b1;
+            end else hc <= hc + 1'b1;
+            if (line_ev && line_info_a[8]) begin latest_bank <= line_info_a[0]; line_age <= 0; end
+            else if (!(&line_age)) line_age <= line_age + 1'b1;
+            if (hc == HBP - 11'd4) begin
+                row_bank <= latest_bank;
+                row_good <= locked && !(&line_age);
+            end
         end
     end
-    wire free_row = !locked && lv >= 10'd23 && lv < 10'd503;
-    wire [9:0] row = locked ? {vrow, half} : lv - 10'd23;
+    wire [9:0] row = lv - VSTART;
 `else
     reg [10:0] hc;
     reg [9:0] lv;
@@ -272,12 +274,12 @@ module lcd_out (
                 line_bank <= align_start ? 1'b0 : (new_line ? line_info_a[0] : latest_bank);
                 if (end_frame) begin
                     lv <= 10'd0;
-                    pal_lcd <= pal && locked;
-                    frame_lines <= (!locked || pal != pal_lcd) ? (pal && locked ? 10'd625 : 10'd525) : next_frame_lines;
+                    pal_lcd <= pal;
+                    frame_lines <= (!locked || pal != pal_lcd) ? (pal ? 10'd625 : 10'd525) : next_frame_lines;
                 end else lv <= lv + 10'd1;
                 if (align_start) first_pending <= 1'b0;
                 half <= end_frame || align_start ? 1'b0 : ~half;
-                line_clocks <= end_frame ? (pal && locked ? 11'd1080 : 11'd1072) :
+                line_clocks <= end_frame ? (pal ? 11'd1080 : 11'd1072) :
                                (half || align_start) ? HHALF : next_line_clocks;
             end else hc <= hc + 11'd1;
         end
@@ -289,7 +291,7 @@ module lcd_out (
 `ifdef TRI_FBUF
     wire        row_on = row < NROW;
 `elsif TRI_HDMI
-    wire        row_on = locked ? info[8] : free_row;
+    wire        row_on = row < NROW;
 `else
     wire        row_on = row < 10'd480;
 `endif
@@ -426,7 +428,7 @@ module lcd_out (
 `elsif TRI_LCDBUF
         lb_addr  <= {rsl[0], hq[9:0]};          // fbuf.v holds source line rsl in half rsl[0]
 `elsif TRI_HDMI
-        lb_addr  <= {row[1], hq[9:0]};           // vid_sync writes half orow[0]; row = {orow, half}
+        lb_addr  <= {row_bank, hq[9:0]};
 `else
         lb_addr  <= {line_bank, hq[9:0]};
 `endif
@@ -434,8 +436,10 @@ module lcd_out (
         osd_addr <= rbase + {4'd0, cx};
         de_d <= {de_d[3:0], de0};
         hs_d <= {hs_d[3:0], hc < HSYNC};
-`ifdef TRI_HDMI
-        vs_d <= {vs_d[3:0], lv < 10'd6};             // six lines of vertical sync
+`ifdef TRI_HDMI90
+        vs_d <= {vs_d[3:0], lv < 10'd6};
+`elsif TRI_HDMI
+        vs_d <= {vs_d[3:0], lv < (pal_out ? 10'd5 : 10'd6)};
 `else
         vs_d <= {vs_d[3:0], lv < 10'd3};              // three full lines of vertical sync
 `endif
@@ -446,7 +450,16 @@ module lcd_out (
         lg1 <= lg0; lg2 <= lg1;
         // unlocked: the line buffer as vid_sync's flywheel wrote it (snow, like an analog
         // receiver), not black
-        cell3 <= osd_cell; v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
+        cell3 <= osd_cell;
+`ifdef TRI_HDMI
+`ifndef TRI_HDMI90
+        v3 <= boot ? lg2 : hv2 && row_good ? lb_data : 16'd0;
+`else
+        v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
+`endif
+`else
+        v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
+`endif
 `ifdef TRI_SEGFONT
         glyph <= seg_row(osd_cell[6:0], ry2);
 `else

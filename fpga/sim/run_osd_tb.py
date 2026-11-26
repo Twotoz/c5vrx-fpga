@@ -59,10 +59,9 @@ def main():
     hq = '--hq' in sys.argv or tri
     shots, base = (TRI_SHOTS, TRI_BASE) if tri else (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
-    if not hdmi:
-        # The LCD follows source timing by trimming blanking. Give the OSD a
-        # known background at every row regardless of the acquisition phase.
-        pic = np.repeat(pic[[120], :], pic.shape[0], axis=0)
+    # A constant source row isolates the OSD renderer from the differing
+    # source/display epochs. Cadence tests exercise asynchronous video.
+    pic = np.repeat(pic[[120], :], pic.shape[0], axis=0)
     g, ps = G.seg_glyphs() if tri else G.glyphs_vh(), G.pages(h90=h90)
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:

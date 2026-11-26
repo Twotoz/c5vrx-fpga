@@ -174,7 +174,8 @@ module chroma (
     wire [4:0] d1 = (pal ? 5'd18 : 5'd22) - 5'd1;   // stage 1 reads entry n1 - 1
     wire [4:0] d2 = (p1 ? 5'd18 : 5'd22) - 5'd1;    // stage 2 reads entry n2 - 1
     wire [4:0] d0 = p1 ? 5'd19 : 5'd23;             // stage 3: code / table at tap3
-    wire       rst1 = rst || chg1;
+    // Explicit modulo-32 addresses, including reads that wrap below zero.
+    wire [4:0] rd0 = wr - d0, rd1 = wr - d1, rd2 = wr - d2;
     always @(posedge clk) begin
         palr <= {palr[2:0], pal};
         pu_r <= rst ? 14'sd0 : pu;
@@ -185,7 +186,7 @@ module chroma (
         r0[wr] <= {c, s, co};
         r1[wr] <= rst ? 28'd0 : {pu_r, pv_r};
         r2[wr] <= rst ? 36'd0 : {u1, v1};
-        q0 <= r0[wr - d0]; q1 <= r1[wr - d1]; q2 <= r2[wr - d2];
+        q0 <= r0[rd0]; q1 <= r1[rd1]; q2 <= r2[rd2];
     end
     wire signed [13:0] dpu_n = age1 >= n1 ? $signed(q1[27:14]) : 14'sd0, dpv_n = age1 >= n1 ? $signed(q1[13:0]) : 14'sd0;
     // stage 1: u1 = sum of the last n pu (python u1[k] lands here at k + 2)
