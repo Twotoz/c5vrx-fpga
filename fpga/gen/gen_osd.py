@@ -53,7 +53,7 @@ BANDS = 'RABEFL'
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
           'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V',
-          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD']
+          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD', 'NATIVEV']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -62,14 +62,14 @@ TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
 MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
               ('Signal', None), ('Settings', None), ('Exit', None)]
-SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'), ('Rescue', 'RESCV'),
-             ('Back', None)]
-SET_ITEMS = [('Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
+SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'), ('Demod / Rescue', 'RESCV'),
+             ('Native AGC (EXP)', 'NATIVEV'), ('Back', None)]
+SET_ITEMS = [('Direct Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
 # the 90 Hz HDMI build (rtl/ui/osd_pages_h90.vh): the output mode instead of the LCD's brightness
 SET_ITEMS_H90 = [(('90 Hz', 'HZ90V') if v == 'BRIGHTV' else (l, v)) for l, v in SET_ITEMS]
-W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
-N_ITEMS = [0, 8, 1, 7, 5]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
+W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, NATIVEV=5, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
+N_ITEMS = [0, 8, 1, 7, 6]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
 def glyphs_vh():
@@ -467,8 +467,10 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['No card', 'Ready', 'Ready', 'Card err'][st['dvr_state']], w))
     if name == 'HZ90V':
         return K(rjust(['Free', 'Camera', 'Smooth'][st.get('hz90', 0)], w))
+    if name == 'NATIVEV':
+        return K(rjust('On' if st.get('native_agc', False) else 'Off', w - 1)) + K('?' if st.get('native_pending') else ' ', fg=AMBER)
     if name == 'RESCV':
-        return K(rjust(['Off', 'Auto', 'On'][st.get('rescue', 1)], w))
+        return K(rjust(['Off', 'Auto', 'On', 'D3*'][st.get('rescue', 1)], w))
     if name in ('KLOCKV', 'ASYNCV', 'SPIKEV', 'WEAKV', 'NFILTV'):
         key = dict(KLOCKV='klock', ASYNCV='async', SPIKEV='spike', WEAKV='weak', NFILTV='nfilt')[name]
         return K(rjust('On' if st.get(key, False) else 'Off', w))
@@ -631,8 +633,7 @@ def emit(g, ps):
     print('boot logo', len(runs), 'runs')
     (RTL / 'osd_freq.vh').write_text('\n'.join(head + ['initial begin'] + [l for l in lines if 'freq[' in l] + ['end']) + '\n')
     lines = head + ['initial begin']
-    for m, mp in enumerate(hmaps()):
-        lines += [f"    hmap[{m * 1024 + x}] = 11'h{(0 if v is None else 1024 | v):03x};" for x, v in enumerate(mp)]
+    lines += [f"    hmap[{x}] = 10'h{v:03x};" for x, v in enumerate(hmaps()[2])]
     lines.append('end')
     (RTL.parent / 'video' / 'hmap.vh').write_text('\n'.join(lines) + '\n')
 

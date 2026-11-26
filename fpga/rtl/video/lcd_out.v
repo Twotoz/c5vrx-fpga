@@ -318,7 +318,8 @@ module lcd_out (
     wire        lrow_in = lrow < 10'd158;
     reg  [10:0] lptr, lrs;                          // the run shown, the first run of this logo row
     reg  [8:0]  lq, lcur; reg [5:0] lrem; reg lph;
-    always @(posedge clk) lq <= logo[lptr + 11'd1];  // the next run, always ready
+    wire [10:0] lnext = lptr + 11'd1;
+    always @(posedge clk) lq <= logo[lnext];         // wraps to run zero
     wire        lin_x = de0 && x >= LX && x < LX + 10'd600;
     reg  [15:0] lg0;
     always @(*) begin
@@ -387,15 +388,20 @@ module lcd_out (
     wire signed [10:0] rs = $signed({2'b0, row[9:1]}) - $signed({{5{hv[5]}}, hv});
     wire        xs_ok = !xs[10] && xs < 11'sd720, rs_ok = !rs[10] && rs < $signed({1'b0, nsrc});
     wire [10:0] hcalc = {xs_ok && rs_ok, xs[9:0]};
-`elsif TRI_HMAPCALC
-    // HQ DVR build: full width or 4:3 only, computed (the map's BSRAM goes to the DVR)
+`else
+    // Full width and 4:3 have exact arithmetic mappings. Only Stretch
+    // needs a table. Compact live UI builds offer 4:3 and full width.
     wire [9:0]  xb = xn - 10'd80;
     wire [11:0] xb5 = {xb, 2'b0} + {2'b0, xb};
-    wire [10:0] hcalc = hm == 2'd1 ? ((xn >= 10'd80 && xn < 10'd720) ? {1'b1, xb5[11:2]} : 11'd0) : {1'b1, xn};
+    wire [10:0] linear = hm == 2'd1 ? ((xn >= 10'd80 && xn < 10'd720) ? {1'b1, xb5[11:2]} : 11'd0) :
+                         xn < 10'd800 ? {1'b1, xn} : 11'd0;
+`ifdef TRI_HMAPCALC
+    wire [10:0] hcalc = linear;
 `else
-    reg [10:0] hmap [0:4095];
+    reg [9:0] hmap [0:1023];
 `include "hmap.vh"
-    wire [10:0] hcalc = hmap[{hm, xn}];
+    wire [10:0] hcalc = hm == 2'd2 ? {xn < 10'd800, hmap[xn]} : linear;
+`endif
 `endif
     reg [10:0] hq;
     reg        hv1, hv2;

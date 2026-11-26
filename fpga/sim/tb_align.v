@@ -49,11 +49,11 @@ module tb_align;
     always @(posedge clk_c) rc <= smp(900.0 - DC);
     // the old engines
     wire [7:0] o_ad1, o_ad2, o_b, o_c; wire o_enb, o_enc, o_alb, o_alc;
-    align_b u_ob (.clk_b(clk_b), .raw_b_in(rb), .clk_a(clk_a), .rst_a(rst), .raw_a(ra), .raw_a_d(o_ad1), .raw_b(o_b), .en_b(o_enb), .b_alive(o_alb), .lag());
-    align_b u_oc (.clk_b(clk_c), .raw_b_in(rc), .clk_a(clk_a), .rst_a(rst), .raw_a(ra), .raw_a_d(o_ad2), .raw_b(o_c), .en_b(o_enc), .b_alive(o_alc), .lag());
+    align_b u_ob (.clk_b(clk_b), .raw_b_in(rb), .clk_a(clk_a), .rst_a(rst), .ref_lost(1'b0), .raw_a(ra), .raw_a_d(o_ad1), .raw_b(o_b), .en_b(o_enb), .b_alive(o_alb), .lag());
+    align_b u_oc (.clk_b(clk_c), .raw_b_in(rc), .clk_a(clk_a), .rst_a(rst), .ref_lost(1'b0), .raw_a(ra), .raw_a_d(o_ad2), .raw_b(o_c), .en_b(o_enc), .b_alive(o_alc), .lag());
     // the shared one
     wire [7:0] n_ad, n_b, n_c; wire n_enb, n_enc, n_alb, n_alc; wire [5:0] n_lb, n_lc;
-    align_bc u_n (.clk_b(clk_b), .clk_c(clk_c), .raw_b_in(rb), .raw_c_in(rc), .clk_a(clk_a), .rst_a(rst), .raw_a(ra),
+    align_bc u_n (.clk_b(clk_b), .clk_c(clk_c), .raw_b_in(rb), .raw_c_in(rc), .clk_a(clk_a), .rst_a(rst), .ref_lost(1'b0), .raw_a(ra),
                   .raw_a_d(n_ad), .raw_b(n_b), .raw_c(n_c), .en_b(n_enb), .en_c(n_enc), .b_alive(n_alb), .c_alive(n_alc),
                   .lag_b(n_lb), .lag_c(n_lc));
     // per sample after the settle time: the aligned sample equals A's at the

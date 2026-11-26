@@ -68,7 +68,7 @@ static void send_mark(unsigned type, unsigned value)
 static unsigned status_value(unsigned type)
 {
     switch (type) {
-    case FPGA_MARK_GAIN: return s_current_gain;
+    case FPGA_MARK_GAIN: return rf_native_agc() ? 0u : s_current_gain;
     case FPGA_MARK_CN: {
         const int cn = receiver_obs_cn_x10();
         if (cn == CN_UNKNOWN_X10) return 0u;
@@ -80,8 +80,9 @@ static unsigned status_value(unsigned type)
         char buf[8];
         return (s_afc_locked ? 1u : 0u) | (video_at && esp_timer_get_time() - video_at < 500000 ? 2u : 0u) |
                (s_busy || calibration_in_startup() ? 4u : 0u) |
-               (calibration_dc_needed(buf, sizeof buf) ? 8u : 0u) | ((rf_lane() & 3u) << 4) |
-               (s_detected_std_valid && s_detected_std == VIDEO_STD_PAL ? 64u : 0u);
+               (!rf_native_agc() && calibration_dc_needed(buf, sizeof buf) ? 8u : 0u) | ((rf_lane() & 3u) << 4) |
+               (s_detected_std_valid && s_detected_std == VIDEO_STD_PAL ? 64u : 0u) |
+               (rf_native_agc() ? FPGA_FLAG_NATIVE : 0u);
     }
     case FPGA_MARK_CHANNEL: return (unsigned)rf_channel_index();
     case FPGA_MARK_SIGNAL: return (unsigned)(s_signal_strength < 0 ? 0 : s_signal_strength);
@@ -112,7 +113,14 @@ static void link_frame(const fpga_link_frame_t *f)
         break;
     case 'G': {
         static const uint8_t modes[3] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI};
-        if (f->value < 3u && receiver_gain_mode() != modes[f->value]) queue(CMD_GAIN_MODE + modes[f->value]);
+        switch (fpga_link_gain_action(f->value, rf_native_agc())) {
+        case FPGA_GAIN_TO_NATIVE: queue(CMD_AGC_OWNER + 1); break;
+        case FPGA_GAIN_TO_DIRECT: queue(CMD_AGC_OWNER); break;
+        case FPGA_GAIN_POLICY:
+            if (receiver_gain_mode() != modes[f->value]) queue(CMD_GAIN_MODE + modes[f->value]);
+            break;
+        default: break;
+        }
         break;
     }
     case 'A':

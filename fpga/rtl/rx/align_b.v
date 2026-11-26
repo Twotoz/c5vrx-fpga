@@ -31,6 +31,7 @@ module align_b (
     input  wire [7:0] raw_b_in,     // captured in clk_b
     input  wire       clk_a,
     input  wire       rst_a,
+    input  wire       ref_lost,              // independent evidence of an A fade; keep the FIFO moving
     input  wire [7:0] raw_a,        // current A sample (clk_a)
     output reg  [7:0] raw_a_d,        // raw_a, one clock later (pairs with raw_b)
     output reg  [7:0] raw_b,        // B sample aligned to raw_a_d (clk_a)
@@ -86,8 +87,9 @@ module align_b (
     // by one entry, which the 2048-sample windows do not notice). Triversity:
     // four read ports of the 64-entry buffer cost ~500 LUTs per C5.
     reg  [7:0] bm = 8'd0, b0 = 8'd0, bp = 8'd0;
+    wire [5:0] next_rp = rp + 6'd1;
     always @(posedge clk_a) begin
-        bp <= mem[rp + 6'd1];
+        bp <= mem[next_rp];
         b0 <= bp;
         bm <= b0;
     end
@@ -184,6 +186,14 @@ module align_b (
             state <= ACQ; win <= 11'd0; off <= 6'd4; best_off <= 6'd32; best_mag <= 20'd0;
             sm <= 0; s0 <= 0; sp <= 0; spp <= 0;
             en_b <= 1'b0; lost <= 4'd0; rp <= wps - 6'd4;
+        end else if (ref_lost) begin
+            win <= 0; sm <= 0; s0 <= 0; sp <= 0; spp <= 0;
+            en_b <= 1'b0;
+            rp <= rp + 6'd1;
+            if (fill < 6'd3 || fill > 6'd61) begin
+                rp <= wps - 6'd32;
+                state <= ACQ; off <= 6'd4; best_mag <= 20'd0;
+            end
         end else begin
             win <= win + 11'd1;
             if (state == ACQ) begin

@@ -41,6 +41,8 @@ jobs:
       - name: Combiner and discriminator, bit-exact with the model
         run: python fpga/sim/run_tb3.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+      - name: Fixed-point D3 and asymmetric RF failover
+        run: python fpga/sim/run_d3_tb.py && python fpga/sim/run_fade_failover_tb.py
       - name: B / C alignment (shared engine against two separate ones)
         run: python fpga/sim/run_align_tb.py
       - name: Markers

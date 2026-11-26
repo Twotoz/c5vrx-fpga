@@ -149,6 +149,7 @@ extern QueueHandle_t s_commands;
 #define CMD_AFC         0x300   /* + 0 off / 1 on */
 #define CMD_CAL_QUICK   0x400   /* console F */
 #define CMD_CAL_FULL    0x401   /* console B */
+#define CMD_AGC_OWNER   0x402   /* + 0 Direct / 1 native AGC */
 void control_start(void);
 bool control_prepare(void); /* reserve control stack/TCB and command queue before driver allocations */
 void control_print(void);

@@ -92,7 +92,7 @@ void app_main(void)
     fpga_link_start();
     /* Close the boot window once the gain held (at least the minimum), or at
      * the maximum: the startup phase alignment is bounded by it. */
-    while (boot_window_active()) {
+    while (!rf_native_agc() && boot_window_active()) {
         vTaskDelay(pdMS_TO_TICKS(50));
         const int64_t ms = (esp_timer_get_time() - app_t0) / 1000;
         if (ms >= BOOT_WINDOW_MIN_MS && s_gain.state == DG_HOLD && s_gain.holds != holds) break;
@@ -103,6 +103,6 @@ void app_main(void)
     char gain_name[16];
     printf("BOOT_TIMING ready_ms=%lld\n", s_boot_ready_ms);
     printf("TRIVERSITY C5 %s ready: %s %u MHz, gain %s ('h' for keys) fw=%s\n", esp_app_get_description()->version,
-           rf_channel()->name, rf_frequency_mhz(), receiver_gain_mode_name(receiver_gain_mode(), gain_name, sizeof(gain_name)),
+           rf_channel()->name, rf_frequency_mhz(), rf_native_agc() ? "native (EXP)" : receiver_gain_mode_name(receiver_gain_mode(), gain_name, sizeof(gain_name)),
            firmware_id());
 }

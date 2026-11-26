@@ -104,12 +104,14 @@ static volatile bool s_manual_requested, s_full_requested;
 void filter_request(void)
 {
     if (experimental_transfer_active() && !receiver_strong_lane()) { printf("CAL refused: reset PHY experiments first\n"); return; }
+    if (rf_native_agc()) { puts("COMMAND F refused=native_agc"); return; }
     if (s_startup) { printf("COMMAND F refused=busy\n"); return; }
     s_manual_requested = true;
 }
 void filter_request_full(void)
 {
     if (experimental_transfer_active() && !receiver_strong_lane()) { printf("CAL refused: reset PHY experiments first\n"); return; }
+    if (rf_native_agc()) { puts("COMMAND B refused=native_agc"); return; }
     if (s_startup) { printf("COMMAND B refused=busy\n"); return; }
     s_full_requested = true; s_manual_requested = true;
 }
@@ -495,6 +497,11 @@ void calibration_start(void)
 {
     calibration_generation();
     cal_filter_load();
+    if (rf_native_agc()) {
+        s_startup = false;
+        puts("CAL native_agc: vendor DC only, gain-dependent calibration suspended");
+        return;
+    }
     ESP_ERROR_CHECK(xTaskCreate(calibration_task, "calibration", 8192, NULL, 1, NULL) == pdPASS ?
                     ESP_OK : ESP_ERR_NO_MEM);
 }

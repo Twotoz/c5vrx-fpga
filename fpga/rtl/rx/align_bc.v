@@ -17,6 +17,7 @@ module align_bc (
     input  wire [7:0] raw_b_in, raw_c_in,   // captured in clk_b / clk_c
     input  wire       clk_a,
     input  wire       rst_a,
+    input  wire       ref_lost,              // independent evidence of an A fade; keep the FIFO moving
     input  wire [7:0] raw_a,                // current A sample (clk_a)
     output wire [7:0] raw_a_d,              // raw_a one clock later (pairs with raw_b, raw_c)
     output wire [7:0] raw_b, raw_c,
@@ -56,7 +57,8 @@ module align_bc (
         assign wps[s] = wq; assign alive[s] = al;
         // lags -1, 0, +1: one read port at rp + 1 and a shift register (as align_b)
         reg [7:0] bm = 8'd0, b0 = 8'd0, bp = 8'd0;
-        always @(posedge clk_a) begin bp <= mem[rp[s] + 6'd1]; b0 <= bp; bm <= b0; end
+        wire [5:0] next_rp = rp[s] + 6'd1;
+        always @(posedge clk_a) begin bp <= mem[next_rp]; b0 <= bp; bm <= b0; end
         assign tm[s] = bm; assign t0[s] = b0; assign tp[s] = bp;
     end endgenerate
     reg [7:0] a1;
@@ -136,11 +138,21 @@ module align_bc (
             win <= win + 10'd1;
             sm <= wend ? 27'd0 : sm_n; s0 <= wend ? 27'd0 : s0_n; sp <= wend ? 27'd0 : sp_n; spp <= wend ? 27'd0 : spp_n;
             if (wend) sel <= ~sel;
+            if (ref_lost) begin win <= 0; sm <= 0; s0 <= 0; sp <= 0; spp <= 0; end
         end
         for (k = 0; k < 2; k = k + 1) begin
             if (rst_a || !alive[k]) begin
                 state[k] <= ACQ; off[k] <= 6'd4; best_off[k] <= 6'd32; best_mag[k] <= 27'd0;
                 en[k] <= 1'b0; lost[k] <= 4'd0; rp[k] <= wps[k] - 6'd4;
+            end else if (ref_lost) begin
+                en[k] <= 1'b0;
+                // Stay on the same sample cadence during a fade. Recentre
+                // only at a FIFO edge; then reacquire alignment on recovery.
+                rp[k] <= rp[k] + 6'd1;
+                if (wps[k] - rp[k] < 6'd3 || wps[k] - rp[k] > 6'd61) begin
+                    rp[k] <= wps[k] - 6'd32;
+                    state[k] <= ACQ; off[k] <= 6'd4; best_mag[k] <= 27'd0;
+                end
             end else if (state[k] == ACQ) begin
                 rp[k] <= wps[k] - off[k];                // hold this offset
                 if (wend && sel == k) begin
