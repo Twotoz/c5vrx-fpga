@@ -9,7 +9,10 @@
 //    form a serrated pulse train for acquisition. A missed field advances
 //    the flywheel, while a format change needs three alternate intervals.
 //  - auto levels: gray = (y - porch) * 102 / (porch - tip), white at
-//    +100 IRE for a sync of -40 IRE, whatever the VTX deviation
+//    +100 IRE for a sync of -40 IRE, whatever the VTX deviation. Levels come
+//    only from lines with a real sync (tip and porch windows clean, plausible
+//    depth), so neither fades nor the vertical interval's broad pulses pull
+//    them; the gain is recomputed only after a trusted field (#12)
 //  - colour: chroma.v gives luma, U and V; each pixel is
 //    Y = (luma - porch) x k8 / 256 and the shift-add YUV -> RGB matrix,
 //    U and V averaged with the line above (stored for every line): PAL's
@@ -80,6 +83,15 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg [12:0] tip_f, porch_f;              // x16 IIR state
     reg  [8:0] linemin, minprev;
     reg  [4:0] lev_n;                       // level updates so far (slicer on measured levels at 16)
+    // Level qualification (#12): a line updates tip / porch only with an
+    // in-window sync edge, the whole tip window below the slicer, the whole
+    // porch window above it and a plausible depth. During a fade the noise
+    // pulls the measured porch - tip toward zero; those lines are skipped, so
+    // the levels (and the gain derived from them) hold their last good values.
+    reg        tip_all_low, porch_all_high;
+    reg  [6:0] lev_miss;                    // consecutive otherwise good lines with a shallow depth
+    reg  [8:0] lev_cnt, lev_field;          // qualified lines in this / the previous field
+    reg        fld_trusted;                 // the previous field event was an accepted vertical sync
     // The two 9-bit levels can sum to more than 511 before averaging.
     wire [9:0] level_sum = {1'b0, tip} + {1'b0, porch};
     wire [9:0] slice = lev_n[4] ? {1'b0, level_sum[9:1]} : {1'b0, minprev} + 10'd16;
@@ -166,6 +178,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg  [7:0]  orow_n;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
+    // gain only from a field on the trusted grid with mostly qualified lines
+    wire        gain_ok = lev_n[4] && fld_trusted && lev_field >= 9'd128;
     reg  [15:0] dv_q; reg [9:0] dv_rem; reg [8:0] dv_den; reg [4:0] dv_n; reg dv_run;
     // ---- quality window ---------------------------------------------------------------
     reg  [22:0] qtim; reg [15:0] qcnt;
@@ -173,6 +187,14 @@ module vid_sync #(parameter D3_ADAPT = 0) (
 
     wire signed [12:0] e = (hc_cross > (HT >> 1)) ? $signed({1'b0, hc_cross}) - $signed({1'b0, HT}) : $signed({1'b0, hc_cross});
     wire inwin = e >= -13'sd40 && e <= 13'sd40;
+    // this line's levels: averages of the two windows (y units)
+    wire [8:0]  tip_line = tip_acc[14:6], porch_line = porch_acc[15:7];
+    wire [9:0]  depth_line = {1'b0, porch_line} - {1'b0, tip_line};   // [9]: porch below tip
+    wire [9:0]  depth_cur  = {1'b0, porch} - {1'b0, tip};
+    wire        lev_shape_ok = seen && tip_all_low && porch_all_high && !depth_line[9] && depth_line >= 10'd16;
+    // at least half the smoothed depth once the levels are acquired
+    wire        lev_deep = !lev_n[4] || depth_cur[9] || {depth_line, 1'b0} >= depth_cur;
+    wire        lev_line_ok = lev_shape_ok && (lev_deep || lev_miss == 7'd96);
     // ---- colour (chroma.v) and the pixel stage ----
     wire [9:0] cy8u; wire signed [9:0] cug, cvg;
     wire [2:0] burst_quality;
@@ -262,7 +284,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             linemin <= 9'h1ff; minprev <= 9'd100;
             vline <= 10'd0; field_lines <= 10'd0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
-            k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
+            k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0;
+            tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
         end else begin
             // line counter, with the flywheel correction below
@@ -286,13 +309,23 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
+            if (hc == 12'd40) tip_all_low <= low; else if (hc > 12'd40 && hc < 12'd104 && !low) tip_all_low <= 1'b0;
+            if (hc == 12'd220) porch_all_high <= !low; else if (hc > 12'd220 && hc < 12'd348 && low) porch_all_high <= 1'b0;
             if (yf < linemin) linemin <= yf;
             if (lock == 4'd0) lev_n <= 5'd0;
             else if (hc == 12'd400 && lock >= 4'd8) begin
-                if (!lev_n[4]) lev_n <= lev_n + 5'd1;
-                tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);
-                porch_f <= porch_f - (porch_f >> 3) + (porch_acc[15:7] << 1);
-                tip <= tip_f[12:4]; porch <= porch_f[12:4];
+                if (lev_line_ok) begin
+                    if (!lev_n[4]) lev_n <= lev_n + 5'd1;
+                    if (lev_cnt != 9'h1ff) lev_cnt <= lev_cnt + 9'd1;
+                    tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);
+                    porch_f <= porch_f - (porch_f >> 3) + (porch_acc[15:7] << 1);
+                    tip <= tip_f[12:4]; porch <= porch_f[12:4];
+                end
+                // a real drop of the depth (lower deviation) is taken after 96
+                // good-looking lines in a row (~6 ms) at full lock
+                if (lev_shape_ok && !lev_deep && lock == 4'd15) begin
+                    if (lev_miss != 7'd96) lev_miss <= lev_miss + 7'd1;
+                end else lev_miss <= 7'd0;
             end
             // ---- line start ----
             if (hc == 12'd0) begin
@@ -337,6 +370,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             end
             if (field_event) begin
                 field_lines <= vline;
+                lev_field <= lev_cnt; lev_cnt <= 9'd0; fld_trusted <= field_accept;
                 vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0;
             end
             // ---- active pixels ----
@@ -349,7 +383,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
                 end else dda <= dda + {2'd0, PXN};
             end
             // ---- gain once per field: k8 = 26112 / max(porch - tip, 8), restoring division ----
-            if (vline == 10'd5 && hc == 12'd0) begin
+            // (only from qualified levels on a trusted field; otherwise k8 holds)
+            if (vline == 10'd5 && hc == 12'd0 && gain_ok) begin
                 dv_den <= (porch > tip + 9'd8) ? porch - tip : 9'd8;
                 dv_q <= 16'd0; dv_rem <= 10'd0; dv_n <= 5'd16; dv_run <= 1'b1;
             end else if (dv_run) begin
