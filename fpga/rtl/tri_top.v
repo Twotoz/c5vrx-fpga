@@ -235,7 +235,7 @@ module tri_top (
 `else
     fbuf u_fb (.clk(a_gclk), .mode_p(hz90),
 `endif
-               .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip),
+               .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .locked(locked),
                .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
                .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),

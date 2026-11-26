@@ -32,6 +32,7 @@ module fbuf #(
     input  wire        line_tog,
     input  wire [8:0]  line_info,      // {show, orow} of the line just written
     input  wire        line_skip,      // that line is corrupt (vid_sync): the row keeps the slot's older field
+    input  wire        locked,         // vid_sync's lock (this clock): a field written without it is no concealment source
     input  wire        field_tog,
     input  wire        pal,
     input  wire [1:0]  mode_p,         // display domain (menu): 0 Free, 1 Camera, 2 Smooth
@@ -75,6 +76,17 @@ module fbuf #(
     endfunction
     reg [1:0] wslot, latest, rslot; reg lat_ok;
     reg [8:0] wrow;
+    // ---- concealment sources (#12): a skipped line keeps the slot's older row only if
+    // that older field is a valid one: complete (>= 240 rows), written while locked, of
+    // this standard, without a corrupt line of its own, and at most 3 fields old.
+    // Otherwise the line is written as it is.
+    reg [7:0] fcnt;                    // fields closed
+    reg [7:0] s_gen [0:2];             // fcnt when the slot's field was closed
+    reg [2:0] s_clean, s_pal;
+    reg       cur_bad;                 // this field: a corrupt line, or the lock lost
+    wire [7:0] s_age = fcnt - s_gen[wslot];
+    wire      src_ok = s_clean[wslot] && s_pal[wslot] == pal && s_age <= 8'd2;   // 2: closed at most two fields before the slot was taken again
+    wire      skip = line_skip && src_ok;
     reg       lt_p, ft_p;
     // pending write jobs, one per line-buffer half
     reg [1:0] wp; reg [8:0] wp_line [0:1]; reg [1:0] wp_slot [0:1];
@@ -113,6 +125,8 @@ module fbuf #(
         rl_we <= 1'b0;
         frs <= {frs[1:0], frame_tog_p}; fes <= {fes[1:0], fetch_tog_p};
         if (rst) begin
+            fcnt <= 8'd0; s_clean <= 3'b000; s_pal <= 3'b000; cur_bad <= 1'b1;
+            s_gen[0] <= 8'd0; s_gen[1] <= 8'd0; s_gen[2] <= 8'd0;
             wslot <= 2'd0; latest <= 2'd0; rslot <= 2'd0; lat_ok <= 1'b0; rvalid <= 1'b0; lcnt <= 10'd0; pfl <= 10'd262; age <= 10'd0; wrow <= 9'd0; wp <= 2'b00; rp <= 1'b0;
             lt_p <= line_tog; ft_p <= field_tog; est <= E_IDLE; wact <= 1'b0;
         end else begin
@@ -122,11 +136,19 @@ module fbuf #(
             if (ft_p != field_tog) begin lcnt <= 10'd0; pfl <= lcnt; end
             if (lt_p != line_tog && line_info[8] && wrow < 9'd288) begin
                 // a skipped line is not written: the slot's row still holds an earlier field's
-                if (!line_skip) begin wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot; end
+                if (!skip) begin wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot; end
                 wrow <= wrow + 9'd1;
             end
+            if (lt_p != line_tog && line_skip) cur_bad <= 1'b1;
+            if (!locked) cur_bad <= 1'b1;
             if (ft_p != field_tog) begin
                 wrow <= 9'd0;
+                // the closing field's quality, for its slot as a later concealment source
+                if (wrow != 9'd0) begin
+                    s_gen[wslot] <= fcnt + 8'd1; fcnt <= fcnt + 8'd1;
+                    s_clean[wslot] <= !cur_bad && wrow >= 9'd240; s_pal[wslot] <= pal;
+                end
+                cur_bad <= !locked;
                 // the slot the display reads from now on (a frame may start in this very clock)
                 if (wrow != 9'd0) begin latest <= wslot; lat_ok <= 1'b1; wslot <= third(wslot, fr_ev && (lat_ok || race) ? nrs : rslot); end
             end
