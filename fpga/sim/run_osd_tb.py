@@ -24,6 +24,7 @@ SHOTS = [('boot', dict(boot=True, open=False, dvr_state=1)),
          ('boot_missing', dict(boot=True, open=False, dvr_state=1, boot_ms=1500, locked=False)), ('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
          ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
          ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)),
+         ('settings_ultra', dict(page=3, cursor=2, aspect=2, gain_model=3)),
          ('signal', dict(page=4, cursor=0, aspect=2, klock=True)), ('live', dict(open=False, aspect=2)),
          ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
          ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]

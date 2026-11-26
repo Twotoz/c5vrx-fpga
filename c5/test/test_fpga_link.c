@@ -35,6 +35,10 @@ int main(void)
         assert(fpga_link_gain_action(mode, 0) == FPGA_GAIN_POLICY);
         assert(fpga_link_gain_action(mode, 1) == FPGA_GAIN_TO_DIRECT);
     }
+    /* ULTRA is a Direct Gain model: a policy, or first back from native. */
+    assert(fpga_link_gain_action(FPGA_GAIN_ULTRA, 0) == FPGA_GAIN_POLICY);
+    assert(fpga_link_gain_action(FPGA_GAIN_ULTRA, 1) == FPGA_GAIN_TO_DIRECT);
+    assert(fpga_link_gain_action(FPGA_GAIN_ULTRA + 1, 0) == FPGA_GAIN_IGNORE);
     /* A wrong check byte or an unknown tag gives no frame. */
     const uint8_t bad[] = {0xC5, 'G', 1, (uint8_t)(fpga_link_check('G', 1) ^ 1), 0xC5, 'Z', 1, fpga_link_check('Z', 1)};
     assert(feed_all(&p, bad, sizeof bad, &f) == 0);

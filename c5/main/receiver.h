@@ -111,6 +111,7 @@ void receiver_print_map(void);   /* console M: GAINMAP line */
  * (calibration, scan) still write and the mode returns after. The codes
  * are stored (prefs) and logged (flight log), so they keep their values. */
 #define GAIN_MODE_AUTO  0u
+#define GAIN_MODE_ULTRA 252u   /* experimental: RSSI decided every observer window (agc.h ULTRA) */
 #define GAIN_MODE_RSSI  253u
 #define GAIN_MODE_LEVEL 254u
 #define GAIN_MODE_MAX   255u
@@ -122,7 +123,7 @@ void receiver_print_map(void);   /* console M: GAINMAP line */
 /* A mode with an automatic controller (not a fixed gain). */
 static inline bool receiver_gain_mode_auto(uint8_t mode)
 {
-    return mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI;
+    return mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI || mode == GAIN_MODE_ULTRA;
 }
 uint8_t receiver_gain_mode(void);
 unsigned receiver_strong_lane(void);   /* STRONG LANE steps in use: 0 none, 1 fine, 2 coarse (strong_lane.h) */
