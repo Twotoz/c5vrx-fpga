@@ -150,6 +150,11 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
   flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, the Noise filter's level and the DVR's field number (so it lines up with the video).
   `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
+- **Kept across power-ups**: the C5s store the menu's settings (link frames
+  'S' / 'T': Keep lock, Adaptive sync, Noise filter, Logo, Aspect, Mode,
+  Brightness or the 90 Hz mode; written 2 s after a change) and send them back
+  at start-up (marker 7); with the channel, Direct Gain and AFC (marker 8)
+  the menu starts as it was left. Recording always starts off.
 - **Signal** (Keep lock, Adaptive sync, Noise filter and Native AGC On / Off; the first three On after power-up):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
     is lost (8000 lines) instead of going to the black free-run screen

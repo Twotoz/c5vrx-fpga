@@ -5,7 +5,10 @@
  *   - Buttons on D9 (UP), D8 (SELECT), D7 (DOWN), to GND with internal
  *     pull-ups, forwarded to the FPGA as markers.
  *   - Markers on the IQ pads: a button at once, one status value every
- *     250 ms (gain, C/N, flags, channel, signal: each about once a second).
+ *     250 ms (gain, C/N, flags, channel, signal, menu, gain setting: each
+ *     about every 1.75 s).
+ *   - The FPGA menu's settings ('S', 'T'), kept in NVS and sent back (marker
+ *     7) so the menu starts as it was left.
  *   - The boot window (sampling-phase alignment) and the busy state of a
  *     calibration, which used to be the C5VRX splash and status screens. */
 #include "receiver.h"
@@ -43,6 +46,38 @@ void status_note(const char *title, const char *line1, const char *line2, int pe
     else printf("STATUS_NOTE %s | %s | %s\n", title, line1, line2);
 }
 void status_note_end(void) { s_busy = false; }
+
+/* ---- the FPGA menu's settings (fpga_link.h 'S', 'T', marker 7) ------- */
+static fpga_menu_t s_menu;               /* stored (version != 0) */
+static uint8_t s_menu_rx_s, s_menu_rx_t;
+static bool s_menu_have_s, s_menu_have_t;
+static int64_t s_menu_changed_at;
+static uint32_t s_menu_stores;
+static void menu_load(void)
+{
+    fpga_menu_t m;
+    if (blob_load("fpga_menu", &m, sizeof m) && m.version == FPGA_MENU_VERSION && m.t <= 7u) s_menu = m;
+}
+static void menu_rx(bool is_t, uint8_t v)
+{
+    uint8_t *dst = is_t ? &s_menu_rx_t : &s_menu_rx_s;
+    bool *have = is_t ? &s_menu_have_t : &s_menu_have_s;
+    if (!*have || *dst != v) s_menu_changed_at = esp_timer_get_time();
+    *dst = v;
+    *have = true;
+}
+static void menu_poll(void)
+{
+    if (!fpga_menu_should_store(s_menu_have_s, s_menu_have_t, s_menu_rx_s, s_menu_rx_t, s_menu.version != 0,
+                                s_menu.s, s_menu.t, esp_timer_get_time() - s_menu_changed_at))
+        return;
+    const fpga_menu_t m = {FPGA_MENU_VERSION, s_menu_rx_s, s_menu_rx_t};
+    if (blob_store("fpga_menu", &m, sizeof m)) {
+        s_menu = m;
+        ++s_menu_stores;
+        printf("FPGA_MENU stored s=0x%02x t=%u\n", m.s, m.t);
+    }
+}
 
 /* ---- markers --------------------------------------------------------- */
 static portMUX_TYPE s_mark_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -86,6 +121,13 @@ static unsigned status_value(unsigned type)
     }
     case FPGA_MARK_CHANNEL: return (unsigned)rf_channel_index();
     case FPGA_MARK_SIGNAL: return (unsigned)(s_signal_strength < 0 ? 0 : s_signal_strength);
+    case FPGA_MARK_MENU: return fpga_menu_marker(s_menu.version != 0, s_menu.s, s_menu.t);
+    case FPGA_MARK_GAINSET: {
+        const uint8_t gm = receiver_gain_mode();
+        const unsigned code = rf_native_agc() ? 3u : gm == GAIN_MODE_LEVEL ? 0u : gm == GAIN_MODE_ULTRA ? 1u :
+                              gm == GAIN_MODE_RSSI ? 2u : 3u;
+        return fpga_gainset_value(code, s_afc_enabled);
+    }
     default: return 0u;
     }
 }
@@ -134,6 +176,8 @@ static void link_frame(const fpga_link_frame_t *f)
         if (s_seq_b != 0xff && f->value != s_seq_b) queue(CMD_CAL_FULL);
         s_seq_b = f->value;
         break;
+    case 'S': menu_rx(false, f->value); break;
+    case 'T': menu_rx(true, f->value); break;
     default: break;
     }
 }
@@ -209,16 +253,18 @@ static void link_task(void *arg)
             }
         }
         buttons_poll();
+        menu_poll();
         if (++tick >= STATUS_TICKS) {
             tick = 0;
             send_mark(type, status_value(type));
-            type = type >= FPGA_MARK_SIGNAL ? FPGA_MARK_GAIN : type + 1u;
+            type = type >= FPGA_MARK_GAINSET ? FPGA_MARK_GAIN : type + 1u;
         }
     }
 }
 
 void fpga_link_start(void)
 {
+    menu_load();
     link_start();
     buttons_start();
     xTaskCreate(link_task, "fpga_link", 3072, NULL, 2, NULL);
@@ -229,4 +275,6 @@ void fpga_link_print(void)
     printf("FPGA_LINK link=%u frames=%lu markers=%lu presses=%lu buttons=%u%u%u (UP SELECT DOWN, 0 = pressed)\n",
            s_link_ok, (unsigned long)s_frames, (unsigned long)s_marks, (unsigned long)s_presses,
            gpio_get_level(BTN_UP_GPIO), gpio_get_level(BTN_SELECT_GPIO), gpio_get_level(BTN_DOWN_GPIO));
+    printf("FPGA_MENU stored=%u s=0x%02x t=%u stores=%lu rx_s=%d rx_t=%d\n", s_menu.version != 0, s_menu.s, s_menu.t,
+           (unsigned long)s_menu_stores, s_menu_have_s ? s_menu_rx_s : -1, s_menu_have_t ? s_menu_rx_t : -1);
 }

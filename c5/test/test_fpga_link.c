@@ -20,8 +20,8 @@ int main(void)
     const uint8_t c12[] = {0xC5, 'C', 12, 0x79 ^ 12};
     assert(feed_all(&p, c12, 4, &f) == 1 && f.tag == 'C' && f.value == 12);
     /* Every tag round-trips, also after garbage and a repeated sync. */
-    const uint8_t tags[] = {'C', 'G', 'A', 'F', 'B'};
-    for (unsigned t = 0; t < 5; ++t)
+    const uint8_t tags[] = {'C', 'G', 'A', 'F', 'B', 'S', 'T'};
+    for (unsigned t = 0; t < sizeof tags; ++t)
         for (unsigned v = 0; v < 256; v += 17) {
             const uint8_t fr[] = {0x00, 0xC5, 0xC5, tags[t], (uint8_t)v, fpga_link_check(tags[t], (uint8_t)v)};
             assert(feed_all(&p, fr, sizeof fr, &f) == 1 && f.tag == tags[t] && f.value == v);
@@ -43,7 +43,18 @@ int main(void)
     const uint8_t bad[] = {0xC5, 'G', 1, (uint8_t)(fpga_link_check('G', 1) ^ 1), 0xC5, 'Z', 1, fpga_link_check('Z', 1)};
     assert(feed_all(&p, bad, sizeof bad, &f) == 0);
     /* Markers: preamble, alternating marker bits, payload round trip. */
-    for (unsigned type = 1; type <= 6; ++type)
+    /* The menu settings: marker 7 only with something stored; stored after
+     * both frames and FPGA_MENU_SETTLE_US unchanged, only when they differ. */
+    assert(fpga_menu_marker(0, 0xB7, 5) == 0u);
+    assert(fpga_menu_marker(1, 0xB7, 5) == ((1u << 11) | (5u << 8) | 0xB7u));
+    assert(!fpga_menu_should_store(1, 0, 0xB7, 5, 0, 0, 0, FPGA_MENU_SETTLE_US));
+    assert(!fpga_menu_should_store(1, 1, 0xB7, 5, 0, 0, 0, FPGA_MENU_SETTLE_US - 1));
+    assert(fpga_menu_should_store(1, 1, 0xB7, 5, 0, 0, 0, FPGA_MENU_SETTLE_US));
+    assert(!fpga_menu_should_store(1, 1, 0xB7, 5, 1, 0xB7, 5, 10 * FPGA_MENU_SETTLE_US));
+    assert(fpga_menu_should_store(1, 1, 0xB7, 4, 1, 0xB7, 5, FPGA_MENU_SETTLE_US));
+    assert(!fpga_menu_should_store(1, 1, 0xB7, 8, 0, 0, 0, FPGA_MENU_SETTLE_US));
+    assert(fpga_gainset_value(1, 1) == 5u && fpga_gainset_value(2, 0) == 2u);
+    for (unsigned type = 1; type <= FPGA_MARK_GAINSET; ++type)
         for (unsigned value = 0; value < 4096; value += 37) {
             uint8_t w[FPGA_MARK_WORDS];
             fpga_mark_words(type, value, w);

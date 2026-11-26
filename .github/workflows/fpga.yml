@@ -48,7 +48,7 @@ jobs:
       - name: Markers
         run: python fpga/sim/run_marker_tb.py
       - name: Channel link
-        run: python fpga/sim/run_link_tx_tb.py
+        run: python fpga/sim/run_link_tx_tb.py && python fpga/sim/run_menu_settings_tb.py
       - name: DVR (fast and slow card)
         run: python fpga/sim/run_dvr_tb.py 12 && python fpga/sim/run_dvr_tb.py 12 400
       - name: Colour decoder, bit-exact (NTSC and PAL)

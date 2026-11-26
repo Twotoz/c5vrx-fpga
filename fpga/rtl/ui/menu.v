@@ -45,6 +45,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg         afc,
     output reg  [7:0]  f_seq,
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
+    // Settings the C5s keep (NVS): link frames 'S' / 'T' out, markers 7 / 8 in
+    // at start-up (c5/main/fpga_link.h). s_set: loaded from a C5 or changed here.
+    output wire [7:0]  menu_s,
+    output wire [2:0]  menu_t,
+    output reg         s_set,
     output wire [1:0]  hz90,             // 90 Hz HDMI build, Settings: 0 Free, 1 Camera, 2 Smooth
     output reg         boot,             // the start-up screen is up (lcd_out.v draws the logo)
     output reg         bl_pwm
@@ -104,6 +109,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [7:0]  st_flags [0:2];
     reg [6:0]  st_sig [0:2];
     reg [1:0] direct_model;              // 0 Level (link 'G' 0), 1 Ultra ('G' 5), 2 RSSI ('G' 2)
+    reg       g_loaded;                  // Direct Gain and AFC taken from a C5 (marker 8)
     reg native_requested, owner_set;
     assign gain_model = owner_set ? (native_requested ? 3'd3 : 3'd4) : direct_model == 2'd1 ? 3'd5 : direct_model == 2'd2 ? 3'd2 : 3'd0;
     reg [11:0] owner_age [0:2];           // age of the actual mode, independently of other markers
@@ -174,6 +180,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     assign hz90 = hz90_r;
     reg [1:0]  aspect;                    // 0 4:3, 1 16:9, 2 Stretch, 3 Auto
     reg        logo;                      // small logo in the live view
+    assign menu_s = {mode, aspect, logo, nfilt, async_on, klock};
+    assign menu_t = H90 ? {1'b0, hz90_r} : bright;
+    reg  [10:0] menu_prev;                // a change here (or a load) arms the 'S' / 'T' frames
     reg [5:0]  scan_ch, best_ch, orig_ch;
     reg [15:0] best_q;
     reg [9:0]  scan_ms;
@@ -193,7 +202,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         if (rst) begin
             // Signal defaults (board 2026-11-26): Keep lock, Adaptive sync, Noise filter on
             open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b1; async_on <= 1'b1; nfilt <= 1'b1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
-            link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; direct_model <= 2'd0; native_requested <= 1'b0; owner_set <= 1'b0; afc <= 1'b1; f_seq <= 8'd0;
+            link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; s_set <= 1'b0; g_loaded <= 1'b0; menu_prev <= {2'd2, 2'd3, 4'b1111, H90 ? 3'd0 : 3'd7}; direct_model <= 2'd0; native_requested <= 1'b0; owner_set <= 1'b0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
             boot <= 1'b1; boot_ms <= 12'd0; bskip <= 1'b0;
         end else begin
@@ -226,6 +235,24 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
             end
             if (mk_ev && mk_pl_a[15:12] == 4'd5 && mk_src_a == 2'd0 && !link_on && mk_pl_a[5:0] < 6'd48)
                 begin channel <= mk_pl_a[5:0]; link_on <= 1'b1; end
+            // the stored menu settings (marker 7, from any C5, once): bit 11 stored,
+            // 10..8 brightness / 90 Hz mode, 7..0 as menu_s
+            menu_prev <= {menu_s, menu_t};
+            if (menu_prev != {menu_s, menu_t}) s_set <= 1'b1;
+            if (mk_ev && mk_pl_a[15:12] == 4'd7 && !s_set) begin
+                if (mk_pl_a[11]) begin
+                    klock <= mk_pl_a[0]; async_on <= mk_pl_a[1]; nfilt <= mk_pl_a[2]; logo <= mk_pl_a[3];
+                    aspect <= mk_pl_a[5:4]; mode <= mk_pl_a[7:6] == 2'd3 ? 2'd2 : mk_pl_a[7:6];
+                    if (H90) hz90_r <= mk_pl_a[9:8] == 2'd3 ? 2'd0 : mk_pl_a[9:8]; else bright <= mk_pl_a[10:8];
+                end
+                s_set <= 1'b1;
+            end
+            // the C5's Direct Gain model and AFC (marker 8, once, until changed here):
+            // bits 1..0 0 Level, 1 Ultra, 2 RSSI (3 another mode), bit 2 AFC
+            if (mk_ev && mk_pl_a[15:12] == 4'd8 && !g_loaded && !g_set && !a_set) begin
+                if (mk_pl_a[1:0] != 2'd3) direct_model <= mk_pl_a[1:0];
+                afc <= mk_pl_a[2]; g_loaded <= 1'b1;
+            end
             if (scanning) begin
                 if (ms) scan_ms <= scan_ms + 10'd1;
                 if (scan_ms == 10'd500) begin

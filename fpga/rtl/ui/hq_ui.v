@@ -37,12 +37,15 @@ module hq_ui #(parameter CLK_HZ = 33750000) (
     output wire        afc,
     output wire [7:0]  f_seq,
     output wire        klock, async_on, nfilt,   // (the menu's Signal page: off here)
+    output wire [7:0]  menu_s,                   // (no stored menu settings here)
+    output wire [2:0]  menu_t,
+    output wire        s_set,
     output wire [1:0]  hz90,               // the 90 Hz HDMI build's output mode (not in this UI: Free)
     output wire        boot,               // no start-up screen in this UI
     output wire        bl_pwm
 );
     assign g_set = 1'b0; assign a_set = 1'b0; assign gain_model = 3'd0; assign afc = 1'b1; assign f_seq = 8'd0;
-    assign klock = 1'b0; assign async_on = 1'b0; assign nfilt = 1'b0; assign lg = 1'b0; assign hz90 = 2'd0; assign boot = 1'b0;
+    assign menu_s = 8'd0; assign menu_t = 3'd0; assign s_set = 1'b0; assign klock = 1'b0; assign async_on = 1'b0; assign nfilt = 1'b0; assign lg = 1'b0; assign hz90 = 2'd0; assign boot = 1'b0;
     assign bl_pwm = 1'b1;
     localparam [6:0] G_LOGO0 = 22, G_CAPL = 1, G_CAPR = 2, G_DOT = 8, G_BARS = 13, G_MID = 20, SP = 32;
     localparam [2:0] WHITE = 0, GREY = 1, ACCENT = 2, RED = 3, PANELFG = 7;
