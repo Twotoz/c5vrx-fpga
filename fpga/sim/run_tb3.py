@@ -83,10 +83,10 @@ def main():
             raws, valid = markers(raws, seed, n, 0 if seed == 6 else 6)
             hw = run(raws, en, work, valid, rescue)
             ref, act = mrc3_model.run(raws, tuple(bool(e) for e in en), disc=True, valid=valid,
-                                      rescue=rescue, rwin=64, ron=8, roff=3, return_act=True)
+                                      rescue=rescue, rw=16, rk=2, rss=2, rt=16, return_act=True)
             ref = ref.astype(np.int64)
             best = None
-            for lat in range(5, 40):
+            for lat in range(5, 100):          # + 32 samples: the look-ahead (16 pairs here)
                 m = np.count_nonzero(hw[lat + WARMUP:lat + len(ref)] != ref[WARMUP:len(hw) - lat])
                 if best is None or m < best[1]:
                     best = (lat, m)

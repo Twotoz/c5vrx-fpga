@@ -78,7 +78,8 @@ module mrc3_trk (
 endmodule
 
 module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
-                   parameter RS_WSH = 18, parameter [7:0] RS_ON = 8'd100, parameter [7:0] RS_OFF = 8'd25) (   // rescue: window 2^RS_WSH sample pairs
+                   parameter RS_WSH = 10, parameter [11:0] RS_K = 12'd2,    // rescue Auto: look-ahead 2^RS_WSH sample pairs, RS_K clicks
+                   parameter RS_SSH = 12, parameter [6:0] RS_T = 7'd48) (   //   steady: RS_T of 64 sub-windows of 2^RS_SSH pairs with a click
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
@@ -89,7 +90,7 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     input  wire       va, vb, vc,   // per sample, with raw_*
     input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2/3 on
     output reg  [5:0] code,
-    output reg        ract,         // rescue PLL in use
+    output reg        ract,         // rescue PLL in use (for the code going out)
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
     reg [7:0] g_rom   [0:255];
@@ -317,32 +318,73 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
             fo_r <= fo;
         end
     end
-    // Auto: disc50's out-of-window steps (clicks) per 2^RS_WSH pairs, hysteresis RS_ON / RS_OFF
+    // disc50's out-of-window steps (clicks), one per sample pair
     wire        click = st_ok && (d < -10'sd312 || d > 10'sd384);
-    reg  [RS_WSH-1:0] pj;
-    reg  [7:0]  ncl;
-    wire [7:0]  ncl_n = (click && ncl != 8'hff) ? ncl + 8'd1 : ncl;
+    reg         ckr;
+    // the two candidate streams, one sample a clock: s_d the discriminator's code,
+    // s_p the PLL's, s_f marks a pair's first sample, s_c that pair's click
+    reg  [5:0]  s_d, s_p; reg s_f, s_c;
     always @(posedge clk) begin
         dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
         dv <= 1'b0;
-        if (rst) begin st_ok <= 1'b0; dcode <= 6'd25; code <= 6'd25; pj <= 0; ncl <= 8'd0; ract <= 1'b0; end
+        if (rst) begin st_ok <= 1'b0; dcode <= 6'd25; ckr <= 1'b0; s_d <= 6'd25; s_p <= 6'd25; s_f <= 1'b0; s_c <= 1'b0; end
         else begin
             if (ev_phi) begin
                 if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; end
                 else dv <= 1'b1;
-                pj <= pj + 1'b1;
-                if (rmode == 2'd1) begin
-                    if (&pj) begin
-                        if (ncl_n >= RS_ON) ract <= 1'b1;
-                        else if (ncl_n < RS_OFF) ract <= 1'b0;
-                        ncl <= 8'd0;
-                    end else ncl <= ncl_n;
-                end else begin
-                    ract <= rmode[1]; ncl <= 8'd0;
-                end
+                ckr <= click;
             end
             if (dv) begin st_s <= st_s + dq[15:6]; dcode <= dq[5:0]; end
-            code <= ract ? pq[5:0] : dv ? dq[5:0] : dcode;
+            s_d <= dv ? dq[5:0] : dcode; s_p <= pq[5:0]; s_f <= dv; s_c <= ckr;
+        end
+    end
+    // Auto, look-ahead (mrc3_model.rescue50): both streams wait 2^RS_WSH pairs in
+    // block RAM; a pair goes out as the PLL's when the 2^(RS_WSH+1) pairs around it
+    // (2^RS_WSH - 1 before, 2^RS_WSH after) hold RS_K clicks or more. Off and On go
+    // through the same delay. Per pair: at its first sample the slots are read, at
+    // its second written (the pair W before / 2W before comes out of them).
+    // Steady clicks: every 64 sub-windows of 2^RS_SSH pairs the PLL goes on for
+    // all pairs when RS_T of them held a click (a very weak signal), else off;
+    // pairs are numbered from 1 (the first one sets the discriminator's start).
+    localparam integer W = 1 << RS_WSH;
+    reg  [17:0] lram [0:W-1];                     // {disc code, PLL first, PLL second}
+    reg         cram [0:2*W-1];                   // clicks
+    reg  [RS_WSH-1:0] la_wa;
+    reg  [RS_WSH:0]   la_wc;
+    reg  [17:0] la_q, la_o; reg la_cq;
+    reg  [11:0] la_a; reg la_c;
+    reg  [RS_WSH+1:0] la_n;                       // clicks in the window
+    reg  [RS_WSH+1:0] la_fill;                    // pairs written, to 2W
+    reg         la_sel, la_p;                 // la_p: a pair's first sample came, its second is next
+    reg  [RS_SSH+5:0] st_pc;                      // pair number in the 64 sub-windows
+    reg         st_occ, st_on;
+    reg  [6:0]  st_n;
+    always @(posedge clk) begin
+        if (s_f) begin la_q <= lram[la_wa]; la_cq <= cram[la_wc]; end
+        if (!s_f && la_p) begin lram[la_wa] <= {la_a, s_p}; cram[la_wc] <= la_c; end
+    end
+    wire        sel_n = rmode[1] || (rmode == 2'd1 && (la_n >= RS_K || st_on));
+    always @(posedge clk) begin
+        if (rst) begin
+            la_wa <= 0; la_wc <= 0; la_n <= 0; la_fill <= 0; la_o <= {3{6'd25}}; la_sel <= 1'b0; la_p <= 1'b0; la_c <= 1'b0;
+            st_pc <= 1; st_occ <= 1'b0; st_on <= 1'b0; st_n <= 7'd0;
+            code <= 6'd25; ract <= 1'b0;
+        end else if (s_f) begin
+            la_a <= {s_d, s_p}; la_c <= s_c; la_p <= 1'b1;
+            code <= sel_n ? la_o[11:6] : la_o[17:12]; la_sel <= sel_n; ract <= sel_n;
+        end else if (la_p) begin
+            la_p <= 1'b0;
+            la_wa <= la_wa + 1'b1; la_wc <= la_wc + 1'b1;
+            la_n <= la_n + la_c - (la_fill[RS_WSH+1] ? la_cq : 1'b0);
+            if (!la_fill[RS_WSH+1]) la_fill <= la_fill + 1'b1;
+            la_o <= la_q;
+            st_pc <= st_pc + 1'b1;
+            if (&st_pc[RS_SSH-1:0]) begin
+                st_occ <= 1'b0;
+                if (&st_pc[RS_SSH+5:RS_SSH]) begin st_on <= st_n + (st_occ | la_c) >= RS_T; st_n <= 7'd0; end
+                else st_n <= st_n + (st_occ | la_c);
+            end else st_occ <= st_occ | la_c;
+            code <= la_sel ? la_o[5:0] : la_o[17:12];
         end
     end
 endmodule
