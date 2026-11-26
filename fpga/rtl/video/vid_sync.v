@@ -44,6 +44,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     output reg  [7:0]  wr_gray,       // luma 0..255
     output reg         line_tog,      // toggles at each line start
     output reg  [8:0]  line_info,     // {show, orow[7:0]} of the line just written; stable after line_tog
+    output reg         line_skip,     // field-buffer builds: that line is corrupt, keep the buffer's older row (fbuf.v)
     output reg         field_tog,
     output reg         pal,
     output reg         locked,
@@ -179,21 +180,27 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     // ---- concealment of corrupted lines (#12) ------------------------------------------
     // Valid video never sits halfway down to the sync tip. A line with >= 64
     // pixels whose luma is below the slicer level (between tip and porch) is a
-    // fade's corruption, not dark content: it is marked not shown, and the
-    // display repeats the line before (lcd_out / line-only HDMI read the newest
-    // shown bank). At most 4 lines in a row, never the field's row 0 (the LCD
-    // aligns on it). No extra buffer or latency. Not in the field-buffer
-    // builds, where fbuf counts the shown lines as rows.
+    // fade's corruption, not dark content. No extra latency either way:
+    //  - line-buffer builds (spatial): marked not shown, the display repeats
+    //    the line before (lcd_out / line-only HDMI read the newest shown bank);
+    //    at most 4 lines in a row (a longer span would smear one line), never
+    //    the field's row 0 (the LCD aligns on it);
+    //  - field-buffer builds, TRI_LCDBUF / TRI_HDMI90 (temporal): line_skip,
+    //    fbuf keeps the slot's row from an earlier field (2 .. 3 fields old);
+    //    up to 255 lines in a row (~16 ms, a field), then the picture shows
+    //    the fade as it is rather than freezing.
 `ifdef TRI_LCDBUF
-    localparam CONCEAL = 0;
+    localparam CONCEAL = 2;
 `elsif TRI_HDMI90
-    localparam CONCEAL = 0;
+    localparam CONCEAL = 2;
 `else
     localparam CONCEAL = 1;
 `endif
+    localparam [7:0] CONC_MAX = CONCEAL == 2 ? 8'd255 : 8'd4;
     reg  [9:0] low_px;                       // pixels of this line below the slicer level
-    reg  [2:0] conc_run;                     // lines concealed in a row
-    wire       line_bad = CONCEAL && low_px >= 10'd64 && orow_cur != 8'd0 && conc_run != 3'd4;
+    reg  [7:0] conc_run;                     // lines concealed in a row
+    wire       line_bad = low_px >= 10'd64 && (CONCEAL == 2 || orow_cur != 8'd0) && conc_run != CONC_MAX;
+    wire       line_hide = CONCEAL == 1 && line_bad;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
     // gain only from a field on the trusted grid with mostly qualified lines
@@ -303,7 +310,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             vline <= 10'd0; field_lines <= 10'd0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0;
-            low_px <= 10'd0; conc_run <= 3'd0;
+            low_px <= 10'd0; conc_run <= 8'd0; line_skip <= 1'b0;
             tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
         end else begin
@@ -352,14 +359,15 @@ module vid_sync #(parameter D3_ADAPT = 0) (
 `ifndef TRI_HDMI90
                 // Line-only HDMI displays only complete lines while the
                 // receive line flywheel has actual recent H-sync evidence.
-                line_info <= {show_cur && lock >= 4'd8 && !line_bad, orow_cur};
+                line_info <= {show_cur && lock >= 4'd8 && !line_hide, orow_cur};
 `else
                 line_info <= {show_cur, orow_cur};
 `endif
 `else
-                line_info <= {show_cur && !line_bad, orow_cur};
+                line_info <= {show_cur && !line_hide, orow_cur};
 `endif
-                if (show_cur) conc_run <= line_bad ? conc_run + 3'd1 : low_px >= 10'd64 ? conc_run : 3'd0;
+                line_skip <= CONCEAL == 2 && line_bad;
+                if (show_cur) conc_run <= line_bad ? conc_run + 8'd1 : low_px >= 10'd64 ? conc_run : 8'd0;
                 low_px <= 10'd0;
                 line_tog <= ~line_tog;
                 show_cur <= 1'b0;

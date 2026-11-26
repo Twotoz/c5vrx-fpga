@@ -12,6 +12,9 @@ Checked:
     again after the relock, which must come): every frame the next field, row 0
     2 .. 5 ms behind the camera. While acquiring, the frame lock may show each
     field one frame later (~19 ms) until the frame start has moved past it;
+  - rows marked corrupt (line_skip, every 7th field) show the same row of one of
+    the three fields before, the other rows the current field (temporal
+    concealment, #12);
   - no SDRAM timing violation.
     python fpga/sim/run_lcdbuf_tb.py [--frames=N] [--pdelay=ns]
 """
@@ -29,7 +32,7 @@ module tb;
     localparam LT = 2542, SHOW0 = 18, NSHOW = 240;
     // ---- source: vid_sync's line-buffer interface, 800 pixels a line ----
     reg wr_en = 0; reg [10:0] wr_addr = 0; reg [15:0] wr_data = 0;
-    reg line_tog = 0, field_tog = 0; reg [8:0] line_info = 0;
+    reg line_tog = 0, field_tog = 0; reg [8:0] line_info = 0; reg line_skip = 0;
     integer hc = 0, ln = 0, fld = 0, flines, px, orow = 0, show = 0;
     always @(posedge aclk) begin
         wr_en <= 0;
@@ -38,6 +41,8 @@ module tb;
             if (hc == LT - 1) begin
                 hc <= 0;
                 line_info <= {show[0], orow[7:0]}; line_tog <= ~line_tog;
+                // corrupt rows (vid_sync's line_skip): SKIP_R0 .. SKIP_R1 - 1 of every 7th field
+                line_skip <= show && fld % 7 == 4 && orow >= __SKIP_R0__ && orow < __SKIP_R1__;
                 if (show) begin
                     orow <= orow + 1;
                     $fwrite(fs, "W %0d %0d %0d\n", $time, fld, orow);        // row orow of field fld complete
@@ -58,7 +63,7 @@ module tb;
     wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
     wire sdclk, sdcke, sdcs, sdras, sdcas, sdwe; wire [10:0] sda; wire [1:0] sdba; wire [3:0] sddqm; wire [31:0] sddq;
     fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(aclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr),
-               .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
+               .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip),
                .field_tog(field_tog), .pal(1'b0), .mode_p(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
                .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(pclk), .raddr(ra), .rdata(rd),
@@ -103,13 +108,16 @@ endmodule
 '''
 
 
+SKIP = (100, 130)     # source rows skipped (line_skip) in every 7th field: an earlier field's rows stay
+
+
 def main():
     frames = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--frames=')), 44))
     pdelay = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--pdelay=')), 2_300_000))   # panel starts near the lock
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         tb = TB
-        for k, v in dict(FRAMES=frames, PDELAY=pdelay, UNLOCK_AT=250_000_000).items():
+        for k, v in dict(FRAMES=frames, PDELAY=pdelay, UNLOCK_AT=250_000_000, SKIP_R0=SKIP[0], SKIP_R1=SKIP[1]).items():
             tb = tb.replace(f'__{k}__', str(v))
         (t / 'tb.v').write_text(tb)
         srcs = [str(RTL / 'video' / 'fbuf.v'), str(RTL / 'video' / 'motion.v'), str(RTL / 'video' / 'lcd_out.v'),
@@ -148,7 +156,7 @@ def main():
     # the start and again after the relock; from then on every frame shows the next
     # field 2 .. 5 ms late. Before that (acquiring) the panel may show a field late
     # (one frame more), but every frame still shows one whole field, never an older one.
-    last_field, shown, delays, settled, settle_t = None, 0, [], False, []
+    last_field, shown, delays, settled, settle_t, concealed = None, 0, [], False, [], 0
     for k, (tm, rows, nlines, lk) in enumerate(frames):
         if len(rows) != 480 or any(r[2] != 800 for r in rows):
             fail(f'frame {k}: {len(rows)} rows, pixels {sorted({r[2] for r in rows})[:4]}')
@@ -157,10 +165,19 @@ def main():
         if unlock_t - 20_000_000 < t0 < relock_t + 20_000_000:
             settled = False; last_field = None; continue          # around the lock loss: snow / the held field
         if t0 < 40_000_000: continue                               # SDRAM start, first fields
-        flds = {r[3] >> 8 for r in rows if r[3] >= 0}
         want = [r[1] // 2 for r in rows]
         got = [r[3] & 255 if r[3] >= 0 else -1 for r in rows]
+        conc = [SKIP[0] <= w < SKIP[1] for w in want]
+        flds = {r[3] >> 8 for r, c in zip(rows, conc) if r[3] >= 0 and not c}
         if len(flds) != 1: fail(f'frame {k}: rows from fields {sorted(flds)}'); continue
+        f0 = next(iter(flds))
+        if f0 % 7 == 4:
+            # concealed rows: the same row from one of the 3 fields before (the slot's older field)
+            old = {(f0 - (r[3] >> 8)) % 256 for r, c in zip(rows, conc) if c}
+            if not old <= {1, 2, 3}: fail(f'frame {k}: concealed rows {sorted(old)} fields old, want 1 .. 3')
+            concealed += 1
+        elif any(c and (r[3] >> 8) != f0 for r, c in zip(rows, conc)):
+            fail(f'frame {k}: rows {SKIP} not from field {f0} although it was not skipped')
         if got != want:
             i = next(j for j in range(len(got)) if got[j] != want[j])
             fail(f'frame {k}: row {i} shows source row {got[i]}, wants {want[i]}'); continue
@@ -177,6 +194,8 @@ def main():
             shown += 1
             if d is not None: delays.append(d)
     if shown < 10: fail(f'only {shown} settled frames checked')
+    if concealed < 2: fail(f'only {concealed} frames with concealed rows checked')
+    print(f'{concealed} frames with rows {SKIP[0]} .. {SKIP[1] - 1} concealed from an earlier field')
     if not any(t > relock_t for t in settle_t): fail('not settled again after the relock')
     print('settled at', [f'{t / 1e6:.1f} ms' for t in settle_t], '(lock lost', unlock_t / 1e6, 'back', relock_t / 1e6, 'ms)')
     if delays:

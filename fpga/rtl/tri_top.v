@@ -179,10 +179,10 @@ module tri_top (
                       .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
-    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
+    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
     vid_sync #(.D3_ADAPT(1)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
-                   .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
+                   .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
@@ -235,7 +235,7 @@ module tri_top (
 `else
     fbuf u_fb (.clk(a_gclk), .mode_p(hz90),
 `endif
-               .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info),
+               .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip),
                .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
                .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
