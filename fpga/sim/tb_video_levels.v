@@ -10,7 +10,7 @@ module tb_video_levels;
     reg klk = 0; integer kv, n, k, fl;
     wire wr_en, locked; wire [10:0] wr_addr; wire [15:0] wr_data; wire [8:0] line_info;
     vid_sync u_vs (.clk(clk), .rst(rst), .code(code), .keep_lock(klk), .adapt(1'b0), .ans(1'b0),
-                   .d3_on(1'b0), .d3_degrade(2'd0), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_info(line_info), .locked(locked));
+                   .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_info(line_info), .locked(locked));
     integer nwr = 0, nblk = 0, nsat = 0;
     initial begin
         if (!$value$plusargs("n=%d", n)) n = 1000;
