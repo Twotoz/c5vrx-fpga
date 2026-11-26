@@ -144,7 +144,7 @@ def scenario(name):
     elif name == 'vtxoff':                     # noise only (as the fade's), then the VTX
         v[:VTX_OFF] = 27 + rng.normal(0, 12, VTX_OFF) + (rng.random(VTX_OFF) < 0.004) * rng.choice([-30, 30], VTX_OFF)
     elif name == 'lowline':
-        v = lowline(v, EVENT / L + 100)
+        v = lowline(v, int(EVENT / L) + 100)        # a whole line: one source line
     return np.clip(np.round(v), 0, 63).astype(int), end
 
 
