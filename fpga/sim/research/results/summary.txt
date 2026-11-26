@@ -1,0 +1,67 @@
+Issues #13 and #14: summary of fpga/sim/research (iq_harness.py, candidates.py,
+experiment.py; compare.txt, quant.txt). Simulation only: a self-contained
+channel and score, not C5VRX's research/sim.py, no board IQ. 6 seeds per
+condition. Absolute numbers are not comparable with fpga/sim/fading; deltas
+between algorithms on the same signal are.
+
+Reproduce:
+    python fpga/sim/research/experiment.py 4          # compare.txt (~2 min, 4 cores)
+    python fpga/sim/research/experiment.py quant 4    # quant.txt
+
+Caveat on the score: luma SINAD against a full-band truth rewards any loss of
+bandwidth (a low-pass removes more noise than signal). Only bandwidth-matched
+pairs are conclusive: lag2 vs disc, gated vs plain PLL, split vs split, and the
+3 MHz detail column next to every SINAD delta.
+
+#13  multi-timescale phase / frequency estimation on the same 40 MS/s angle
+-----------------------------------------------------------------------------
+Phase-wrap bound: a wrapped difference over L samples is unambiguous for
+|f| < FS / (2 L): L = 1: 20 MHz, 2: 10, 4: 5, 8: 2.5 MHz. The test video spans
+about -1.6 .. +4.0 MHz (sync tip .. white) plus chroma; with noise L = 4 has
+~0.5 MHz margin, L = 8 has none.
+Unwrapped, a lag-L difference / L is the mean of the L one-sample differences
+(a 100 ns boxcar for L = 4): the only new information would be slips that
+complete inside L samples and wrap away.
+
+candidate              result (luma SINAD vs Rescue Auto, 3 MHz detail)         verdict
+lag8 raw               -6 .. -8 dB everywhere, clean chroma phase error 82 deg  reject: aliases white and chroma (counterexample)
+lag4 / lag8 predictive unstable: noise in the prediction feeds back,
+  (wrap(dphi - L f^))  -16 .. -38 dB at <= 10 dB C/N and in fades; with a       reject
+                       smoothed predictor (1/8) still -8 .. -17 dB in fades
+fuse: lag4 near clicks -2 .. -9 dB in fades (the slow path fails exactly there)  reject
+lag2 full precision    +0.0 .. +2.0 dB at medium / strong signals (disc50 cuts   keep -> RTL candidate after a check
+  as Rescue's fast       the angle to 10 bits: phi >> 6), 0 at weak (the PLL       with C5VRX's goggle score and board
+  path (resc/lag2)       runs there), detail +0.2 dB                              IQ; cheap (16-bit angle difference)
+lag4 as Rescue's fast  +0.5 .. +4 dB at medium / strong, detail -0.4 .. -0.8 dB;  investigate: mostly a 100 ns smoothing
+  path (resc/lag4)     vs the same smoothing after the fact (resc+box4) better     with better precision; weigh the
+                       detail, -0.3 .. -0.5 dB at weak with fading                 detail loss on a real picture
+
+Answer to #13's question: on this model the longer windows do not extract
+more weak-signal information than the PLL / D3 path. Near threshold the
+differences come from the loop and its bandwidth; the repeatable gain is
+precision at strong signals (the 10-bit angle of the 50 ns discriminator).
+
+#14  zubon2003-inspired techniques
+----------------------------------
+P1 amplitude-gated PLL  bandwidth-matched (split gpll/disc vs split pll/disc):    investigate: real but modest; 1 C5
+                        +0.0 .. +1.2 dB, largest in fades and dropouts; ungated   only (the gate needs the branch's
+                        (gatedpll vs pll) +0.5 .. +2.5 dB but -1.2 .. -2.5 dB      energy); needs AGC-step and board-IQ
+                        more detail loss                                          tests before RTL
+P1 real / predicted     implemented minimal: vid_sync fields_real -> link log      keep (done); line counters and an
+   counters             flag bit 7 (tools/trilog.py fields_real)                   OSD page: investigate
+P1 confidence-gated     implemented in #12 (levels from real sync only, gain      keep (done)
+   gain / levels        after trusted fields), run_video_levels_tb.py
+P2 integrating V sync   see run_video_levels_tb.py vchop (100 ns spikes every     see the test result in the PR
+                        6 us in every broad pulse)
+P2 split luma / chroma  PLL luma (< 2.5 MHz) + discriminator chroma band: vs      investigate: helps at >= 8 dB C/N;
+                        Rescue Auto +0 .. +3 dB at >= 8 dB (NTSC), -1.9 .. -2.8   not near threshold; PAL band misses
+                        dB at 4 .. 6 dB; the control (Rescue luma filtered the    3 MHz detail
+                        same way) explains about half; PAL 3 MHz detail -4 dB
+P2 display buffering    not simulated: PR #11 keeps the buffered LCD ~3 ms; a     reject for live view
+                        multi-field buffer adds a field or more of latency
+P3 4 bit / 80 MS/s      float discriminator, same 50 ns: 4 bit +0.3 .. +0.5 dB,   reject for now: needs other C5 output
+                        80 MS/s +0.3 .. +0.4 dB, both +0.5 .. +0.8 dB near        and capture (no new hardware in scope)
+                        threshold; +4 .. +5 dB at 30 dB C/N (quantization)
+
+Open for hardware: replay recorded board IQ through experiment.py's algos(),
+the goggle-filtered score of C5VRX's sim.measure, AGC gain steps and clipping.
