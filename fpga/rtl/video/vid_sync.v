@@ -112,6 +112,12 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg        low;
     reg [11:0] low_len, hc_cross;
     reg        qual_pend;
+    // A pulse ends only after HI_HOLD samples in a row above the slicer: a
+    // click or noise spike inside a broad vertical pulse (zubon2003's weak-signal
+    // failure, #14 / #15) no longer cuts it short of the 17.5 us a broad pulse
+    // needs. Serrations (4.7 us) and line syncs end as before, 0.8 us later.
+    localparam [5:0] HI_HOLD = 6'd32;
+    reg  [5:0] hi_run;
     // ---- field ----------------------------------------------------------------------
     reg [9:0]  vline, field_lines;
     // Track the accepted field grid independently of vline, which is also
@@ -307,7 +313,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     always @(posedge clk) begin
         p_tick <= 1'b0;
         if (rst) begin
-            hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
+            hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0; hi_run <= 6'd0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
             linemin <= 9'h1ff; minprev <= 9'd100;
             vline <= 10'd0; field_lines <= 10'd0; locked <= 1'b0; khold <= 13'd0;
@@ -321,9 +327,12 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
             // ---- sync edges ----
             ysa <= ysa + {4'd0, y} - {4'd0, yf};
-            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; end
-            else if (low && yf >= slice + 10'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
-            else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
+            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; hi_run <= 6'd0; end
+            else if (low && yf >= slice + 10'd4 && hi_run == HI_HOLD) begin low <= 1'b0; qual_pend <= 1'b0; end
+            else if (low) begin
+                hi_run <= yf >= slice + 10'd4 ? hi_run + 6'd1 : 6'd0;
+                if (low_len != 12'hfff) low_len <= low_len + 12'd1;
+            end
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
                 if (lock != 4'd0 && inwin) begin
                     // pull in by e/4 (e/8 with adaptive sync once the lock is full: less jitter)
@@ -339,7 +348,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
             if (hc == 12'd40) tip_all_low <= low; else if (hc > 12'd40 && hc < 12'd104 && !low) tip_all_low <= 1'b0;
-            if (hc == 12'd220) porch_all_high <= !low; else if (hc > 12'd220 && hc < 12'd348 && low) porch_all_high <= 1'b0;
+            // (the comparator itself: low ends HI_HOLD samples after the sync)
+            if (hc == 12'd220) porch_all_high <= yf >= slice; else if (hc > 12'd220 && hc < 12'd348 && yf < slice) porch_all_high <= 1'b0;
             if (yf < linemin) linemin <= yf;
             if (lock == 4'd0) lev_n <= 5'd0;
             else if (hc == 12'd400 && lock >= 4'd8) begin

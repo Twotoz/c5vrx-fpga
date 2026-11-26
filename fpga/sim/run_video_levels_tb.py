@@ -210,7 +210,8 @@ def check(name, keep, end, a):
     if name in ('dark', 'deviate') and conc:
         fail.append(f'{conc} clean lines concealed')
     real = a[:, 10]
-    if end is None and name in ('dark', 'lowline', 'vchop') and (real[smp > 3 * FIELD] == 0).any():
+    # fields_real needs six accepted field events in a row: from field 6.5 on
+    if end is None and name in ('dark', 'lowline', 'vchop') and (real[smp > 6.5 * FIELD] == 0).any():
         fail.append('fields_real dropped on a clean signal')
     if name == 'darkfade' and not (real[(smp > end) & (smp < end + 2 * FIELD)] == 0).any():
         fail.append('fields_real stayed set through a fade across the vertical sync')
