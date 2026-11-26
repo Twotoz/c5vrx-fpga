@@ -79,9 +79,11 @@ buffer delay, separate from end-to-end display/DVR latency.
 ## Field validation and output cadence (#10)
 
 The receive field grid runs in IQ-clock units: 667,333 samples for NTSC and
-800,000 for PAL. A broad pulse must be near a horizontal or half-line phase,
-with recent horizontal lock. After the first accepted pulse, same-format
-edges must fall within ±6,000 samples (±150 µs) of the grid. At the late edge
+800,000 for PAL. An already locked source can qualify a broad pulse near
+a horizontal or half-line phase. Acquisition can also recognize two broad
+pulses at half-line spacing, independently of the old line period. After
+acquisition, same-format edges must fall within ±6,000 samples (±150 µs)
+of the grid. At the late edge
 of an empty window the receiver advances one field and retains the predicted
 phase. The held-over event advances parity without voting on the format.
 Off-grid candidates can confirm a genuine format change after three
