@@ -5,10 +5,9 @@
 //    low-passed luma (tau 0.4 us): locks down to 0 dB C/N (sim/sync_perf.py)
 //  - H flywheel: a line counter that a qualified sync edge (low >= 2 us)
 //    pulls in a +-1 us window, snaps to after losing lock, and free-runs
-//    without one; V: a broad pulse (low >= 17.5 us) starts a field, line
-//    count flywheel otherwise; PAL when 291..329 lines lie between two
-//    broad pulses (counted apart from the flywheel, which wraps an NTSC
-//    count before a PAL field ends)
+//    without one; V: broad pulses qualify on the trusted field grid or
+//    form a serrated pulse train for acquisition. A missed field advances
+//    the flywheel, while a format change needs three alternate intervals.
 //  - auto levels: gray = (y - porch) * 102 / (porch - tip), white at
 //    +100 IRE for a sync of -40 IRE, whatever the VTX deviation
 //  - colour: chroma.v gives luma, U and V; each pixel is
