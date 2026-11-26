@@ -19,7 +19,9 @@ computed):
 
 Checks: k8 stays below 1.25 x its clean value, is back within 3 % 1.5 fields
 after a fade and locked, follows a real depth change, and does not move on
-clean pictures. Prints black / saturated pixels from the fade on.
+clean pictures; the forced-low line is concealed (repeated from the line
+before) and no clean line is. Prints black / saturated pixels on the shown
+lines and the concealed lines from the fade on.
 --rtl <file> runs another vid_sync.v (e.g. the one before #12) for comparison.
 
     python fpga/sim/run_video_levels_tb.py
@@ -167,14 +169,18 @@ def check(name, keep, end, a):
             fail.append('unlocked 3 fields after the VTX came on')
         if np.abs(k8[tail] - K8_NOMINAL).max() > 0.04 * K8_NOMINAL:
             fail.append(f'k8 {k8[tail].min()}..{k8[tail].max()} vs ~{K8_NOMINAL:.0f} 3 fields after the VTX came on')
+        sh = (a[:, 9] == 1) & (a[:, 6] > 0)
         print(f'{name:>8s} {keep:4d} {"-":>9s} {int(k8[on].min()):6d}..{int(k8[on].max()):<6d} {acq:12.2f} '
-              f'{int(a[on, 7].sum()):9d} {int(a[on, 8].sum()):7d} {int((lk[on] == 0).sum()):9d}', flush=True)
+              f'{int(a[on & sh, 7].sum()):9d} {int(a[on & sh, 8].sum()):7d} {int((on & ~sh & (a[:, 6] > 0)).sum()):9d} '
+              f'{int((lk[on] == 0).sum()):9d}', flush=True)
         return [f'{name} keep{keep}: {f}' for f in fail]
     pre = (smp > 4 * FIELD) & (smp < EVENT - 0.6 * FIELD)
     k8c = int(np.median(k8[pre]))
     after = smp >= EVENT - 0.6 * FIELD
     kmin, kmax = int(k8[after].min()), int(k8[after].max())
-    blk, sat = int(a[after, 7].sum()), int(a[after, 8].sum())
+    shown = (a[:, 9] == 1) & (a[:, 6] > 0)
+    blk, sat = int(a[after & shown, 7].sum()), int(a[after & shown, 8].sum())
+    conc = int((after & (a[:, 9] == 0) & (a[:, 6] > 0)).sum())
     fail, rec = [], '-'
     if end is not None:
         if kmax > 1.25 * k8c:
@@ -191,13 +197,17 @@ def check(name, keep, end, a):
         rec = str(int(k8[-1]))
         if abs(k8[-1] - want) > 0.05 * want:
             fail.append(f'k8 {k8[-1]} did not follow the depth (want ~{want:.0f})')
-    else:
+    if name == 'lowline' and conc != 1:
+        fail.append(f'{conc} lines concealed, want the forced line only')
+    if name in ('dark', 'deviate') and conc:
+        fail.append(f'{conc} clean lines concealed')
+    if end is None and name != 'deviate':
         if kmax > 1.03 * k8c or kmin < 0.97 * k8c:
             fail.append(f'k8 moved without a fade ({kmin}..{kmax} vs {k8c})')
         if (lk[after] == 0).any():
             fail.append('lost lock')
     unl = int((lk[after] == 0).sum())
-    print(f'{name:>8s} {keep:4d} {k8c:9d} {kmin:6d}..{kmax:<6d} {rec:>12s} {blk:9d} {sat:7d} {unl:9d}', flush=True)
+    print(f'{name:>8s} {keep:4d} {k8c:9d} {kmin:6d}..{kmax:<6d} {rec:>12s} {blk:9d} {sat:7d} {conc:9d} {unl:9d}', flush=True)
     return [f'{name} keep{keep}: {f}' for f in fail]
 
 
@@ -210,7 +220,7 @@ def main():
     tb = Path(tempfile.mkdtemp()) / 'tb'
     subprocess.run(['iverilog', '-g2012', *rtl_.inc(), '-o', str(tb), str(HERE / 'tb_video_levels.v'), *srcs], check=True)
     runs = [(str(tb), n, k) for n, k in RUNS if not only or n in only]
-    print(f"{'scenario':>8s} keep  k8 clean   k8 min..max  recov fields  black px  sat px  unlocked lines")
+    print(f"{'scenario':>8s} keep  k8 clean   k8 min..max  recov fields  black px  sat px  concealed  unlocked")
     fail = []
     with mp.Pool(min(len(runs), os.cpu_count() or 1)) as p:
         for name, keep, end, a in p.imap(job, runs):
