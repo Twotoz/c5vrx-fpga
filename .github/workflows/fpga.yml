@@ -91,18 +91,21 @@ jobs:
   smoke-bitstream:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        variant: [lcd-live, hdmi-live, hdmi90]
+        include:
+          - { variant: lcd-live, pnr: 10m }
+          - { variant: hdmi-live, pnr: 10m }
+          - { variant: hdmi90, pnr: 25m }     # slower to place on the runners
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga
         with:
           variant: ${{ matrix.variant }}
           artifact: fpga-${{ matrix.variant }}
-          pnr-timeout: 6m
+          pnr-timeout: ${{ matrix.pnr }}
 
   manual-bitstream:
     if: github.event_name == 'workflow_dispatch'

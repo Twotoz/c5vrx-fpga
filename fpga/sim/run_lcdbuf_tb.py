@@ -77,7 +77,7 @@ module tb;
         cyc = cyc + 1;
         hs_p <= hs; vs_p <= vs; de_p <= de;
         if (hs_p && !hs) begin
-            if (last_hs != 0) $fwrite(fs, "H %0d\n", cyc - last_hs);
+            if (last_hs != 0) $fwrite(fs, "H %0d %0t %0d\n", cyc - last_hs, $time, u_lcd.lv);
             last_hs = cyc; lines = lines + 1;
         end
         if (vs_p && !vs) begin
@@ -85,9 +85,9 @@ module tb;
             nfr = nfr + 1; row = 0; lines = 0;
             if (nfr > __FRAMES__) begin $display("sdram_errors %0d", u_ram.errors); $fclose(fs); $finish; end
         end
-        if (de) begin npx = npx + 1; if (npx == 400) mid = {pr[7:3], pg[7:2], pb[7:3]}; end
+        if (de) begin npx = npx + 1; if (npx == 400) mid = u_lcd.lb_data; end
         if (de_p && !de) begin
-            $fwrite(fs, "R %0t %0d %0d %04x\n", $time, row, npx, u_lcd.lb_data);
+            $fwrite(fs, "R %0t %0d %0d %04x\n", $time, row, npx, mid);
             row = row + 1; npx = 0;
         end
     end
@@ -122,9 +122,9 @@ def main():
         nonlocal ok
         ok = False; print('FAIL', m)
     if 'sdram_errors 0' not in r.stdout: fail('SDRAM timing: ' + r.stdout[-200:])
-    hs = [int(l.split()[1]) for l in lines if l.startswith('H ')]
-    bad = sorted({h for h in hs if h != 1072})
-    if bad: fail(f'LCD line lengths other than 1072: {bad[:8]}')
+    hs = [l.split() for l in lines if l.startswith('H ')]
+    bad = [(int(h[1]), int(h[2]) / 1e6, int(h[3])) for h in hs if int(h[1]) != 1072]
+    if bad: fail(f'{len(bad)} LCD lines other than 1072 clocks (clocks, ms, lv): {bad[:6]}')
     # writes: time of row orow of field f complete
     wr = {}
     for l in lines:
@@ -134,7 +134,8 @@ def main():
     frames, cur = [], []
     for l in lines:
         if l.startswith('R '):
-            _, tm, row, npx, code = l.split(); cur.append((int(tm), int(row), int(npx), int(code, 16)))
+            _, tm, row, npx, code = l.split()
+            cur.append((int(tm), int(row), int(npx), int(code, 16) if 'x' not in code.lower() else -1))
         elif l.startswith('V '):
             _, tm, nrow, nlines, lk = l.split()
             frames.append((int(tm), cur, int(nlines), int(lk))); cur = []

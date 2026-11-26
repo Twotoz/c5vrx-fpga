@@ -96,8 +96,8 @@ module tb;
             if (row == 0) begin
                 dump = (nfr % EVERY) == 0;
                 $fwrite(f, "F %0t %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d\n", $time, slotf[u_fb.rslot], u_fb.age,
-                        u_lcd.hh, u_lcd.hr, u_lcd.hv, u_lcd.VT, u_fb.u_mo.vh0, u_fb.u_mo.vh1, u_fb.u_mo.vh2, u_fb.u_mo.vh3,
-                        u_fb.u_mo.vv, u_fb.u_mo.valid, dump);
+                        u_lcd.hh, u_lcd.hr, u_lcd.hv, u_lcd.VT, u_fb.gsm.u_mo.vh0, u_fb.gsm.u_mo.vh1, u_fb.gsm.u_mo.vh2, u_fb.gsm.u_mo.vh3,
+                        u_fb.gsm.u_mo.vv, u_fb.gsm.u_mo.valid, dump);
             end
             row = row + 1;
         end
