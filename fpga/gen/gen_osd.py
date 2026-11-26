@@ -23,6 +23,7 @@ by rtl/ui/menu.v; fill() below is the reference for that logic.
 
     python fpga/gen/gen_osd.py      writes rtl/ui/osd_font.vh and osd_pages.vh
 """
+import os
 import re
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -30,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = Path(__file__).resolve().parent
 RTL = HERE.parent / 'rtl' / 'ui'
 COLS, ROWS, CW, CH, X0 = 66, 20, 12, 24, 4
-FONT = '/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-SemiBold.ttf'
+FONT = os.environ.get('TRI_OSD_FONT', '/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-SemiBold.ttf')   # fonts-jetbrains-mono 2.304
 
 # colours (8-bit RGB); 7 is the panel, computed from the video
 PAL = [(240, 242, 245), (142, 149, 160), (0, 88, 242), (255, 69, 58), (48, 209, 88), (255, 176, 32), (16, 18, 22)]
@@ -52,8 +53,8 @@ BANDS = 'RABEFL'
 
 FIELDS = ['', 'CAPL', 'CAPR', 'LIVECH', 'REC', 'NOSIG', 'RXBAR', 'VSTD', 'CHVAL', 'SCANV', 'RECV', 'RXCNT',
           'RXROW', 'GAINV', 'AFCV', 'BRIGHTV', 'CALV', 'EDL', 'EDR', 'MODEV', 'ASPV', 'LOGOV', 'LOGO',
-          'KLOCKV', 'ASYNCV', 'RESCV', 'SPIKEV', 'WEAKV', 'NFILTV', 'HZ90V',
-          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD', 'NATIVEV', 'VIDFPS']
+          'KLOCKV', 'ASYNCV', 'NFILTV', 'HZ90V',
+          'BOOTBLD', 'BOOTVER', 'BOOTRX', 'BOOTSD', 'NATIVEV']
 FID = {n: i for i, n in enumerate(FIELDS)}
 
 # menu geometry
@@ -62,13 +63,13 @@ TOP, BOT = 3, 16           # panel rows (inclusive)
 ITEM0 = 7                  # first item row
 MAIN_ITEMS = [('Channel', 'CHVAL'), ('Mode', 'MODEV'), ('Scan', 'SCANV'), ('Record', 'RECV'), ('Receivers', 'RXCNT'),
               ('Signal', None), ('Settings', None), ('Exit', None)]
-SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'), ('Demod / Rescue', 'RESCV'),
+SIG_ITEMS = [('Keep lock', 'KLOCKV'), ('Adaptive sync', 'ASYNCV'), ('Noise filter', 'NFILTV'),
              ('Native AGC (EXP)', 'NATIVEV'), ('Back', None)]
 SET_ITEMS = [('Direct Gain', 'GAINV'), ('AFC', 'AFCV'), ('Aspect', 'ASPV'), ('Logo', 'LOGOV'), ('Brightness', 'BRIGHTV'),
              ('Calibrate', 'CALV'), ('Back', None)]
 # the 90 Hz HDMI build (rtl/ui/osd_pages_h90.vh): the output mode instead of the LCD's brightness
 SET_ITEMS_H90 = [(('90 Hz', 'HZ90V') if v == 'BRIGHTV' else (l, v)) for l, v in SET_ITEMS]
-W_VAL = dict(NFILTV=3, WEAKV=3, KLOCKV=3, ASYNCV=3, RESCV=4, NATIVEV=5, SPIKEV=3, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
+W_VAL = dict(NFILTV=3, KLOCKV=3, ASYNCV=3, NATIVEV=5, ASPV=9, LOGOV=3, MODEV=10, CHVAL=9, SCANV=11, RECV=9, RXCNT=3, GAINV=5, AFCV=3, BRIGHTV=8, CALV=6, HZ90V=8)
 N_ITEMS = [0, 8, 1, 7, 6]  # selectable rows per page (receivers: Back only, row ITEM0 + 4); 4 = Signal
 
 
@@ -301,8 +302,7 @@ def pages(h90=False):
     rx.put(ITEM0 - 1, P0 + 3, hdr, fg=GREY)
     for k in range(3):
         rx.field(ITEM0 + k, P0 + 3, 'RXROW', 30, fg=WHITE)
-    rx.field(ITEM0 + 3, P0 + 3, 'VIDFPS', 30, fg=GREY)    # video fields a second: real / predicted
-    rx.item(ITEM0 + 4, 'Back', None, chevron=False)
+    rx.item(ITEM0 + 3, 'Back', None, chevron=False)
 
     st = Page()
     menu_frame(st, 'Settings')
@@ -447,7 +447,7 @@ def field_cells(name, w, st, row, sel, edit):
         n = sum(a < 3000 for a in st['age'])
         return K(f'{n}/3')
     if name == 'GAINV':
-        return K(rjust(['Level', 'Keel', 'RSSI', 'Ultra'][st['gain_model']], w))
+        return K(rjust(['Level', 'Ultra', 'RSSI'][st['gain_model']], w))
     if name == 'AFCV':
         return K(rjust('On' if st['afc'] else 'Off', w))
     if name == 'BOOTBLD':
@@ -470,10 +470,8 @@ def field_cells(name, w, st, row, sel, edit):
         return K(rjust(['Free', 'Camera', 'Smooth'][st.get('hz90', 0)], w))
     if name == 'NATIVEV':
         return K(rjust('On' if st.get('native_agc', False) else 'Off', w - 1)) + K('?' if st.get('native_pending') else ' ', fg=AMBER)
-    if name == 'RESCV':
-        return K(rjust(['Off', 'Auto', 'On', 'D3*'][st.get('rescue', 1)], w))
-    if name in ('KLOCKV', 'ASYNCV', 'SPIKEV', 'WEAKV', 'NFILTV'):
-        key = dict(KLOCKV='klock', ASYNCV='async', SPIKEV='spike', WEAKV='weak', NFILTV='nfilt')[name]
+    if name in ('KLOCKV', 'ASYNCV', 'NFILTV'):
+        key = dict(KLOCKV='klock', ASYNCV='async', NFILTV='nfilt')[name]
         return K(rjust('On' if st.get(key, False) else 'Off', w))
     if name == 'BRIGHTV':
         return K([SEG_ON if k <= st['bright'] else SEG_OFF for k in range(8)], fg=WHITE if sel or edit else None)
@@ -502,12 +500,6 @@ def field_cells(name, w, st, row, sel, edit):
             out += [(32, None, None)] if k < 2 else []
         out += [(32, None, None)] * (w - 1 - len(out)) + [(CAP_R, PANEL, BG_VIDEO)]
         return out
-    if name == 'VIDFPS':
-        # fields in the last second from a real vertical sync, and those the flywheel predicted
-        real, pred = min(99, st.get('fps', 0)), min(99, st.get('pred', 0))
-        col = RED if real == 0 else AMBER if pred else GREEN
-        return (K('Video ', fg=GREY) + K(rjust(str(real), 2), fg=col) + K('/s  pred ', fg=GREY) +
-                K(rjust(str(pred), 2), fg=AMBER if pred else GREY) + K([32] * (w - 19), fg=GREY))
     if name == 'RXROW':
         k = row - ITEM0
         stale = st['age'][k] >= 3000
@@ -517,9 +509,7 @@ def field_cells(name, w, st, row, sel, edit):
         segs = [(SEG_ON if st['sig'][k] > 20 * j else SEG_OFF, WHITE, None) for j in range(5)]
         cns = cn_text(st['cn'][k])
         flags = st['flags'][k]
-        lane = flags >> 4 & 3                                  # IQ lane: 2 ultrafine, 1 fine, 0 coarse (STRONG LANE)
-        lock = 'Lock' if lane == 2 else 'LkF' if lane == 1 else 'LkC'
-        state = ('Idle', GREY) if k > st['mode'] else ('DC!', RED) if flags & 8 else (lock, GREEN) if flags & 1 else ('Seek', AMBER)
+        state = ('Idle', GREY) if k > st['mode'] else ('DC!', RED) if flags & 8 else ('Lock', GREEN) if flags & 1 else ('Seek', AMBER)
         return K([ord('ABC'[k]), 32, 32, 32]) + segs + K(rjust(cns, 6)) + K(rjust(f'G{min(99, st["gain"][k])}', 6)) + \
             K([32, 32]) + K(state[0].ljust(5), fg=state[1]) + K([32, 32])
     raise KeyError(name)
@@ -529,7 +519,7 @@ def fill(ps, st):
     """The cell grid (char, fg, bg) for the state st, as the RTL renders it."""
     p = ps[st['page']] if st['open'] else ps[0]
     page = st['page'] if st['open'] else 0
-    sel_row = ITEM0 + (4 if page == 2 else st['cursor']) if page else (1 if st['toast'] else -1)
+    sel_row = ITEM0 + (3 if page == 2 else st['cursor']) if page else (1 if st['toast'] else -1)
     if st.get('boot'):
         p, page, sel_row = boot_page(), 0, -1
     cells = [[None] * COLS for _ in range(ROWS)]
