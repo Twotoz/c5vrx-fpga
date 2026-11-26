@@ -101,8 +101,12 @@ confirmed standard through signal loss.
 Standard HDMI uses the existing two-bank line buffer and reads the newest
 complete line per output row. With ±200 ppm offset, the skew is 2 µs after
 10 ms and 100 µs after 0.5 s, and the latest-line selector can repeat or skip
-a line. The free-running output sacrifices continuous source-to-display
-vertical phase alignment. At a large phase offset, the source's blanking
+a line. During normal active video, the next write to the selected bank
+restarts at column zero after the next input line's front end. The active
+reader advances at 27 MHz and the source writes 720 pixels over about
+52 µs, so a write started after the reader is already active cannot catch
+it on that row. The free-running output sacrifices continuous
+source-to-display vertical phase alignment. At a large phase offset, the source's blanking
 or field boundary can enter the displayed picture. A fixed-rate output with
 two source lines of storage cannot keep whole fields phase-aligned for
 arbitrary drift; the standard HDMI path adds no field buffer. The HDMI 90 Hz
@@ -113,7 +117,10 @@ The cadence RTL test checked exact horizontal and vertical periods, full
 200 ppm. It saw the first marked fresh pixel 1,088 output clocks (40.3 µs)
 after restoring the synthetic source during active output. This tests digital
 line delivery, separate from RF recovery, display blanking delay and HDMI
-sink lock.
+sink lock. Full IQ fade replays for NTSC and PAL held over one field and
+accepted the next in both Rescue Auto with Keep Lock on and D3 with it off.
+The largest receive interval error was the expected 150 µs at the edge of
+the holdover window.
 
 ## Reproduce
 

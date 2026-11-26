@@ -1,7 +1,8 @@
 // Triversity: 800x480 RGB LCD output, genlocked to the video (LCD domain).
-// Every video line is shown twice: a line toggle from vid_sync starts an LCD
-// line pair. The LCD keeps an 800x480 active raster through lock changes and
-// adjusts its blanking to follow the input when locked. DE-mode timing with
+// The LCD keeps an 800x480 active raster through lock changes and adjusts
+// its blanking to follow the input when locked. Standard HDMI keeps a
+// fixed 480p/576p raster and reads the newest complete source line.
+// LCD DE-mode timing with
 // HS/VS as well; 33.75 MHz pixel clock: half an NTSC line is 1072.5 clocks,
 // half a PAL line 1080 (the Sipeed 800x480 example runs 1066 x 520).
 // OSD: 66 x 20 cells of 12 x 24 pixels from 4 px in (fpga/gen/gen_osd.py);
