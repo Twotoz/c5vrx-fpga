@@ -59,6 +59,8 @@ jobs:
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
         run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hdmi && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
+      - name: Validate PAL/NTSC field qualification and continuous HDMI raster
+        run: python fpga/sim/run_field_timing_tb.py
       - name: LCD raster through video lock and standard changes
         run: |
           iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_raster -o "$RUNNER_TEMP/lcd_raster" fpga/sim/tb_lcd_raster.v fpga/rtl/video/lcd_out.v

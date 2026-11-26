@@ -98,7 +98,50 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg [11:0] low_len, hc_cross;
     reg        qual_pend;
     // ---- field ----------------------------------------------------------------------
-    reg [9:0]  vline, vguard, field_lines, bpl;
+    reg [9:0]  vline, field_lines;
+    // Track the accepted field grid independently of vline, which is also
+    // used to generate pictures during holdover. Periods are at 40 MS/s.
+    localparam [19:0] NTSC_PERIOD = 20'd667333, PAL_PERIOD = 20'd800000;
+    localparam [19:0] V_WINDOW = 20'd6000;  // +/- 150 us
+    reg [19:0] field_age, raw_age;
+    reg [4:0] missed_fields;
+    reg [1:0] other_count;
+    reg field_armed, field_parity;
+    wire [19:0] period = pal ? PAL_PERIOD : NTSC_PERIOD;
+    wire [19:0] other_period = pal ? NTSC_PERIOD : PAL_PERIOD;
+    wire [11:0] half_ht = HT >> 1;
+    wire half_edge = hc_cross >= half_ht - 12'd128 && hc_cross <= half_ht + 12'd128;
+    wire line_edge = hc_cross <= 12'd128 || hc_cross >= HT - 12'd128;
+    wire v_candidate = low && low_len == 12'd700 && (line_edge || half_edge) &&
+                       (lock >= 4'd8 || khold >= 13'd7980);
+    wire raw_start = v_candidate && raw_age >= 20'd500000;
+    wire other_interval = raw_start && raw_age >= other_period - V_WINDOW && raw_age <= other_period + V_WINDOW;
+    wire standard_change = other_interval && other_count == 2'd2;
+    wire in_field = field_age >= period - V_WINDOW && field_age <= period + V_WINDOW;
+    // An off-grid candidate can establish a fresh anchor after a long loss
+    // without itself changing the video standard.
+    wire field_accept = v_candidate && (!field_armed || in_field || standard_change ||
+                        (missed_fields == 5'd31 && raw_start && raw_age >= period - V_WINDOW && raw_age <= period + V_WINDOW));
+    wire field_coast = field_age >= period + V_WINDOW && !field_accept;
+    wire field_event = field_accept || field_coast;
+    always @(posedge clk) begin
+        if (rst) begin
+            field_age <= 0; raw_age <= 20'hfffff; missed_fields <= 0;
+            other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
+        end else begin
+            if (raw_start) raw_age <= 0;
+            else if (!(&raw_age)) raw_age <= raw_age + 1'b1;
+            if (raw_start) other_count <= other_interval && !standard_change ? other_count + 1'b1 : 2'd0;
+            if (standard_change) pal <= ~pal;
+            if (field_accept) begin
+                field_age <= 0; field_armed <= 1'b1; missed_fields <= 0; field_parity <= half_edge;
+            end else if (field_coast) begin
+                field_age <= V_WINDOW + 1'b1;
+                if (!(&missed_fields)) missed_fields <= missed_fields + 1'b1;
+                field_parity <= ~field_parity;
+            end else field_age <= field_age + 1'b1;
+        end
+    end
     wire [9:0] VSTART = pal ? 10'd20 : 10'd18;
     wire [9:0] VROWS  = pal ? 10'd288 : 10'd240;
 `ifdef TRI_HDMI
@@ -106,7 +149,6 @@ module vid_sync #(parameter D3_ADAPT = 0) (
 `else
     localparam [9:0] PXN = 10'd800;
 `endif
-    wire [9:0] VMAX   = pal ? 10'd313 : 10'd263;
     // ---- active line ----------------------------------------------------------------
     wire [11:0] HSTART = pal ? 12'd408 : 12'd364;
     wire [11:0] ACT    = pal ? 12'd2080 : 12'd2104;
@@ -212,7 +254,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
             linemin <= 9'h1ff; minprev <= 9'd100;
-            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0; khold <= 13'd0;
+            vline <= 10'd0; field_lines <= 10'd0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
@@ -235,14 +277,6 @@ module vid_sync #(parameter D3_ADAPT = 0) (
                     lock <= 4'd1; seen <= 1'b1;
                 end
             end
-            if (low && low_len == 12'd700 && vguard == 10'd0) begin    // broad pulse: vertical sync
-                field_lines <= vline;
-                pal <= bpl > 10'd290 && bpl < 10'd330;
-                bpl <= 10'd0;
-                vline <= 10'd0; vguard <= 10'd200;
-                field_tog <= ~field_tog;
-                aidx <= 10'd0; orow_n <= 8'd0;
-            end
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
@@ -256,7 +290,17 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             end
             // ---- line start ----
             if (hc == 12'd0) begin
+`ifdef TRI_HDMI
+`ifndef TRI_HDMI90
+                // Line-only HDMI displays only complete lines while the
+                // receive line flywheel has actual recent H-sync evidence.
+                line_info <= {show_cur && lock >= 4'd8, orow_cur};
+`else
                 line_info <= {show_cur, orow_cur};
+`endif
+`else
+                line_info <= {show_cur, orow_cur};
+`endif
                 line_tog <= ~line_tog;
                 show_cur <= 1'b0;
                 if (seen) begin if (lock != 4'd15) lock <= lock + 4'd1; end
@@ -266,10 +310,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
                 // keep lock: still "locked" for ~0.5 s (8000 lines) after the sync was lost
                 if (lock >= 4'd8) khold <= 13'd8000; else if (khold != 13'd0) khold <= khold - 13'd1;
                 locked <= lock >= 4'd8 || (keep_lock && khold != 13'd0);
-                if (vguard != 10'd0) vguard <= vguard - 10'd1;
-                if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
-                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0; end
-                else vline <= vline + 10'd1;
+                if (!(&vline)) vline <= vline + 10'd1;
                 // the line that starts now: active?
                 if (vline + 10'd1 >= VSTART && vline + 10'd1 < VSTART + VROWS) begin
                     act <= 1'b1; dda <= 12'd0; px <= 10'd0;
@@ -287,6 +328,10 @@ module vid_sync #(parameter D3_ADAPT = 0) (
 `endif
                     aidx <= aidx + 10'd1;
                 end else act <= 1'b0;
+            end
+            if (field_event) begin
+                field_lines <= vline;
+                vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0;
             end
             // ---- active pixels ----
             if (act && hc >= HSTART && px < PXN) begin
@@ -342,7 +387,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     always @(posedge clk) begin
         d_ft <= {d_ft[1:0], field_tog};
         d_fstart <= d_ft[2] ^ d_ft[1];
-        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        if (d_ft[2] ^ d_ft[1]) d_parity <= field_parity;
         if (hc == 12'd1) d_ln <= aidx[8:0] - 9'd1;
         d_valid <= p_tick;
         if (p_tick) begin d_x <= p_px; d_line <= d_ln; d_y <= y8; d_cb <= clq(q_cb); d_cr <= clq(q_cr); end
@@ -365,7 +410,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     always @(posedge clk) begin
         d_ft <= {d_ft[1:0], field_tog};
         d_fstart <= d_ft[2] ^ d_ft[1];
-        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        if (d_ft[2] ^ d_ft[1]) d_parity <= field_parity;
         // line: the main block set act and aidx at hc = 0
         if (hc == 12'd1) begin d_act <= act; d_ln <= aidx[8:0] - 9'd1; d_dda <= 12'd0; d_px <= 10'd0; end
         q_tick <= 1'b0;

@@ -26,10 +26,15 @@ module tb_osd;
             vcnt <= 0;
             vline = vline == 261 ? 0 : vline + 1;
             if (vline == 0) field_tog <= ~field_tog;
+`ifdef TRI_HDMI
+            for (i = 0; i < PXN; i = i + 1) lb[{vline[0], 10'd0} + i] = pic[PX0 + i];
+            line_info <= {1'b1, 8'(vline)};
+`else
             if (vline >= 18 && vline < 258) begin
                 for (i = 0; i < PXN; i = i + 1) lb[{vline[0] ^ 1'b0, 10'd0} + i] = pic[(vline - 18) * 800 + PX0 + i];
                 line_info <= {1'b1, 8'(vline - 18)};
             end else line_info <= 9'd0;
+`endif
             line_tog <= ~line_tog;
         end else vcnt <= vcnt + 1;
     end

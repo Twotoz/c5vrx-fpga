@@ -71,7 +71,7 @@ extern void phy_chip_set_chan_offset(int offset_khz);
 
 static arc_gain_table_t s_table;
 static uint32_t s_table_generation;
-static uint8_t s_gain = 52u;
+static uint8_t s_rf_gain = 52u;
 static bool s_native_agc;   /* immutable after RF boot */
 
 bool rf_native_agc(void) { return s_native_agc; }
@@ -241,7 +241,7 @@ static void restore_lock(void)
     } else {
         phy_disable_agc();
         phy_rfagc_disable();
-        phy_force_rx_gain(true, s_gain);
+        phy_force_rx_gain(true, s_rf_gain);
     }
     const esp_err_t p11 = phy_11p_apply_default();
     if (p11 == ESP_ERR_NOT_SUPPORTED)
@@ -252,7 +252,7 @@ static void restore_lock(void)
     if (!phy_dfilt_apply_default())
         ESP_EARLY_LOGW(TAG, "digital RX filter mode not applied (unsupported PHY or readback mismatch)");
     (void)experimental_phy_restore();
-    if (!s_native_agc && s_post_gain_hook) s_post_gain_hook(s_gain);
+    if (!s_native_agc && s_post_gain_hook) s_post_gain_hook(s_rf_gain);
 }
 
 /* The reconstructed table against the PHY's AGC memory (T GAIN_TABLE_HW).
@@ -462,12 +462,12 @@ bool rf_set_gain(uint8_t gain, uint32_t expected_generation)
     /* Re-writing the gain in force while the DC pair is held changes
      * nothing but would leave debug mode for ~2 us: skip it (V5 used to
      * re-write the same gain 50-100 times a second; seen as rolling). */
-    if (gain == s_gain && phy_dco_held()) { phy_end_actuator(); return true; }
+    if (gain == s_rf_gain && phy_dco_held()) { phy_end_actuator(); return true; }
     phy_observation_changed();
     experimental_phy_prepare_restore();
     (void)phy_dco_release();          /* a held hold keeps PBUS in debug mode */
     phy_force_rx_gain(true, gain);
-    s_gain = gain;
+    s_rf_gain = gain;
     (void)experimental_phy_restore();
     if (s_post_gain_hook) s_post_gain_hook(gain);
     phy_end_actuator();
@@ -481,7 +481,7 @@ void rf_force_gain(uint8_t gain)
     experimental_phy_prepare_restore();
     (void)phy_dco_release();
     phy_force_rx_gain(true, gain);
-    s_gain = gain;
+    s_rf_gain = gain;
     (void)experimental_phy_restore();
     if (s_post_gain_hook) s_post_gain_hook(gain);
     phy_end();
