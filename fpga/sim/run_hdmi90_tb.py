@@ -67,7 +67,7 @@ module tb;
     wire fb_frame, fb_fetch; wire [8:0] fb_line; wire [10:0] ra; wire [15:0] rd;
     wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
     wire sdclk, sdcke, sdcs, sdras, sdcas, sdwe; wire [10:0] sda; wire [1:0] sdba; wire [3:0] sddqm; wire [31:0] sddq;
-    fbuf u_fb (.clk(aclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(1'b0),
+    fbuf u_fb (.clk(aclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(1'b0), .locked(1'b1),
                .field_tog(field_tog), .pal(PAL[0]), .mode_p(MODE[1:0]), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
                .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
                .rclk(pclk), .raddr(ra), .rdata(rd),
