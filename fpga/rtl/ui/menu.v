@@ -549,7 +549,12 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         fgv = 1'b1;
                         if (rk > mode) begin ffg = GREY; fch = fi == 7'd23 ? "I" : fi == 7'd24 ? "d" : fi == 7'd25 ? "l" : "e"; end
                         else if (st_flags[rk][3]) begin ffg = RED; fch = fi == 7'd23 ? "D" : fi == 7'd24 ? "C" : fi == 7'd25 ? "!" : SP; end
-                        else if (st_flags[rk][0]) begin ffg = GREEN; fch = fi == 7'd23 ? "L" : fi == 7'd24 ? "o" : fi == 7'd25 ? "c" : "k"; end
+                        // locked; on a coarser IQ lane (STRONG LANE, flags bits 4..5) LkF / LkC
+                        else if (st_flags[rk][0]) begin
+                            ffg = GREEN;
+                            fch = fi == 7'd23 ? "L" : st_flags[rk][5:4] == 2'd2 ? (fi == 7'd24 ? "o" : fi == 7'd25 ? "c" : "k") :
+                                  fi == 7'd24 ? "k" : fi == 7'd25 ? (st_flags[rk][5:4] == 2'd1 ? "F" : "C") : SP;
+                        end
                         else begin ffg = AMBER; fch = fi == 7'd23 ? "S" : fi == 7'd24 ? "e" : fi == 7'd25 ? "e" : "k"; end
                     end
                 end

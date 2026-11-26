@@ -517,7 +517,9 @@ def field_cells(name, w, st, row, sel, edit):
         segs = [(SEG_ON if st['sig'][k] > 20 * j else SEG_OFF, WHITE, None) for j in range(5)]
         cns = cn_text(st['cn'][k])
         flags = st['flags'][k]
-        state = ('Idle', GREY) if k > st['mode'] else ('DC!', RED) if flags & 8 else ('Lock', GREEN) if flags & 1 else ('Seek', AMBER)
+        lane = flags >> 4 & 3                                  # IQ lane: 2 ultrafine, 1 fine, 0 coarse (STRONG LANE)
+        lock = 'Lock' if lane == 2 else 'LkF' if lane == 1 else 'LkC'
+        state = ('Idle', GREY) if k > st['mode'] else ('DC!', RED) if flags & 8 else (lock, GREEN) if flags & 1 else ('Seek', AMBER)
         return K([ord('ABC'[k]), 32, 32, 32]) + segs + K(rjust(cns, 6)) + K(rjust(f'G{min(99, st["gain"][k])}', 6)) + \
             K([32, 32]) + K(state[0].ljust(5), fg=state[1]) + K([32, 32])
     raise KeyError(name)
