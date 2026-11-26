@@ -1,0 +1,50 @@
+name: Build FPGA bitstream
+description: Build a Tang Nano 20K variant with a pinned toolchain and optional exact placement.
+inputs:
+  variant:
+    description: lcd, lcd-live, hdmi, hdmi-live, or hdmi90
+    required: true
+  placement:
+    description: Exact seed or seed:beta. Leave empty for the build script defaults.
+    default: ""
+  artifact:
+    description: Unique artifact name for this job
+    required: true
+  pnr-timeout:
+    description: Time limit per place-and-route try (timeout syntax, e.g. 6m); empty for none
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: YosysHQ/setup-oss-cad-suite@853bb54f52246aa8fb4fab963f104cfb6676197a # v4
+      with:
+        version: "2026-11-24"
+        github-token: ${{ github.token }}
+    - name: Build and stage bitstream
+      shell: bash
+      env:
+        VARIANT: ${{ inputs.variant }}
+        PLACEMENT: ${{ inputs.placement }}
+        PNR_TIMEOUT: ${{ inputs.pnr-timeout }}
+      run: |
+        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0
+        case "$VARIANT" in
+          lcd) source=triversity.fs ;;
+          lcd-live) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
+          hdmi) HDMI=1; source=triversity_hdmi.fs ;;
+          hdmi-live) HDMI=1; NODVR=1; source=triversity_hdmi.fs; asset=triversity_hdmi_live.fs ;;
+          hdmi90) HDMI90=1; source=triversity_hdmi90.fs ;;
+          *) printf 'Unknown FPGA variant: %s\n' "$VARIANT" >&2; exit 2 ;;
+        esac
+        asset=${asset:-$source}
+        fpga/build.sh
+        mkdir -p "$RUNNER_TEMP/bitstream"
+        cp "fpga/build/$source" "$RUNNER_TEMP/bitstream/$asset"
+        cp fpga/build/placement.txt "$RUNNER_TEMP/bitstream/$asset.placement.txt"
+        cat fpga/build/placement.txt >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/bitstream/
+        if-no-files-found: error
+        overwrite: true

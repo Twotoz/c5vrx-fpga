@@ -3,13 +3,27 @@ name: FPGA
 on:
   push:
     branches: [main]
-    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml", ".github/actions/**"]
   pull_request:
-    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml"]
+    paths: ["fpga/**", "tools/**", ".github/workflows/fpga.yml", ".github/actions/**"]
   workflow_dispatch:
+    inputs:
+      variant:
+        description: Bitstream to build
+        type: choice
+        default: lcd
+        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90]
+      placement:
+        description: Exact placement (e.g. 3:0.8), empty for automatic
+        type: string
+
+concurrency:
+  group: fpga-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   simulate:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +65,10 @@ jobs:
         run: |
           iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_field_origin -o "$RUNNER_TEMP/lcd_field_origin" fpga/sim/tb_lcd_field_origin.v fpga/rtl/video/lcd_out.v
           vvp -n "$RUNNER_TEMP/lcd_field_origin"
+      - name: LCD frame length when row-zero alignment times out
+        run: |
+          iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_physical_frame -o "$RUNNER_TEMP/lcd_physical_frame" fpga/sim/tb_lcd_physical_frame.v fpga/rtl/video/lcd_out.v
+          vvp -n "$RUNNER_TEMP/lcd_physical_frame"
       - name: Video sync with a high DC level
         run: |
           iverilog -g2012 -I fpga/rtl/video -I fpga/rtl/rx -s tb_vsync_levels -o "$RUNNER_TEMP/vsync_levels" fpga/sim/tb_vsync_levels.v fpga/rtl/video/{vid_sync,chroma}.v fpga/rtl/rx/{addsub,cordic_iter,mul_dsp}.v
@@ -70,50 +88,33 @@ jobs:
         run: python fpga/sim/run_video_tb.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
 
-  bitstream:
+  smoke-bitstream:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: lcd-live, pnr: 10m }
+          - { variant: hdmi-live, pnr: 10m }
+          - { variant: hdmi90, pnr: 25m }     # slower to place on the runners
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/build-fpga
         with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build
-        run: fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream
-          path: fpga/build/triversity.fs
+          variant: ${{ matrix.variant }}
+          artifact: fpga-${{ matrix.variant }}
+          pnr-timeout: ${{ matrix.pnr }}
 
-  bitstream-hdmi:
+  manual-bitstream:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/build-fpga
         with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build (HDMI)
-        run: HDMI=1 fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream-hdmi
-          path: fpga/build/triversity_hdmi.fs
-
-  bitstream-hdmi90:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Tools
-        run: pip install apycula yowasp-yosys yowasp-nextpnr-himbaechel-gowin
-      - name: Build (HDMI 90 Hz)
-        run: HDMI90=1 fpga/build.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: triversity-fpga-bitstream-hdmi90
-          path: fpga/build/triversity_hdmi90.fs
+          variant: ${{ inputs.variant }}
+          placement: ${{ inputs.placement }}
+          artifact: fpga-${{ inputs.variant }}
