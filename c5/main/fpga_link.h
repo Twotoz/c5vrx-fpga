@@ -11,7 +11,8 @@
  * absolute settings continuously; a C5 acts when the value differs from its
  * own. One-shot requests carry a sequence number and act when it changes.
  *     'C' channel index (band * 8 + channel)           absolute
- *     'G' gain model 0 LEVEL, 1 KEEL, 2 RSSI           absolute
+ *     'G' Direct Gain model 0 LEVEL, 1 KEEL, 2 RSSI    absolute
+ *         3 Native AGC, 4 restore saved Direct Gain (reboot on ownership change)
  *     'A' AFC 0 off, 1 on                              absolute
  *     'F' calibrate the current filter (console F)     sequence number
  *     'B' full RF optimisation (console B)             sequence number
@@ -26,14 +27,27 @@
  * two preamble words in a row; the FPGA leaves this C5 out of the combination
  * while a marker runs. Types:
  *     1 BUTTON   bit 0 UP, 1 SELECT, 2 DOWN (pressed); bit 4 long press
- *     2 GAIN     gain row in use
+ *     2 GAIN     Direct Gain row in use (0 if native owns gain)
  *     3 CN       C/N x10 + 1000 (clamped 0..4095; 0 unknown)
  *     4 FLAGS    bit 0 AFC locked, 1 video, 2 busy (calibration), 3 DC fault,
- *                4..5 IQ lane (0 coarse, 1 fine, 2 ultrafine), 6 PAL
+ *                4..5 IQ lane (0 coarse, 1 fine, 2 ultrafine), 6 PAL, 7 Native AGC applied
  *     5 CHANNEL  channel index
  *     6 SIGNAL   signal strength 0..100 */
 #pragma once
 #include <stdint.h>
+
+enum { FPGA_GAIN_NATIVE = 3, FPGA_GAIN_DIRECT_RESTORE = 4, FPGA_FLAG_NATIVE = 1u << 7 };
+
+/* Interpret a gain frame against the current owner. Keep the old 0..2
+ * firmware-policy selections, while 4 rolls back without altering prefs. */
+enum { FPGA_GAIN_IGNORE, FPGA_GAIN_POLICY, FPGA_GAIN_TO_NATIVE, FPGA_GAIN_TO_DIRECT };
+static inline unsigned fpga_link_gain_action(uint8_t value, int native_active)
+{
+    if (value == FPGA_GAIN_NATIVE) return native_active ? FPGA_GAIN_IGNORE : FPGA_GAIN_TO_NATIVE;
+    if (value > FPGA_GAIN_DIRECT_RESTORE) return FPGA_GAIN_IGNORE;
+    if (native_active) return FPGA_GAIN_TO_DIRECT;
+    return value < FPGA_GAIN_NATIVE ? FPGA_GAIN_POLICY : FPGA_GAIN_IGNORE;
+}
 
 #define FPGA_LINK_SYNC 0xC5u
 #define FPGA_LINK_KEY  0x79u

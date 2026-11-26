@@ -41,11 +41,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     output reg  [5:0]  channel,
     output reg         link_on,
     output reg         g_set, a_set,
-    output reg  [1:0]  gain_model,       // 0 LEVEL, 1 KEEL, 2 RSSI
+    output wire [2:0]  gain_model,       // 0 LEVEL, 1 KEEL, 2 RSSI, 3 native, 4 restore Direct
     output reg         afc,
     output reg  [7:0]  f_seq,
     output reg         klock, async_on, nfilt,   // Signal page: keep lock, adaptive sync, noise filter
-    output reg  [1:0]  rescue,           // Signal page: rescue PLL 0 Off, 1 Auto, 2 On
+    output reg  [1:0]  rescue,           // Signal page: rescue PLL 0 Off, 1 Auto, 2 On, 3 experimental D3
     output wire [1:0]  hz90,             // 90 Hz HDMI build, Settings: 0 Free, 1 Camera, 2 Smooth
     output reg         boot,             // the start-up screen is up (lcd_out.v draws the logo)
     output reg         bl_pwm
@@ -80,7 +80,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
                      F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28, F_HZ90V = 29,
-                     F_BOOTBLD = 30, F_BOOTVER = 31, F_BOOTRX = 32, F_BOOTSD = 33;
+                     F_BOOTBLD = 30, F_BOOTVER = 31, F_BOOTRX = 32, F_BOOTSD = 33, F_NATIVEV = 34;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -104,22 +104,29 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [11:0] st_cn [0:2];
     reg [7:0]  st_flags [0:2];
     reg [6:0]  st_sig [0:2];
+    reg [1:0] direct_model;
+    reg native_requested, owner_set;
+    assign gain_model = owner_set ? (native_requested ? 3'd3 : 3'd4) : {1'b0, direct_model};
+    reg [11:0] owner_age [0:2];           // age of the actual mode, independently of other markers
     reg [11:0] st_age [0:2];             // ms since the last marker, saturating
     reg [3:0]  btn; reg btn_ev;
     integer k;
     always @(posedge clk) begin
         btn_ev <= 1'b0;
         if (rst) begin
-            for (k = 0; k < 3; k = k + 1) begin st_age[k] <= 12'hfff; st_sig[k] <= 7'd0; st_gain[k] <= 8'd0; st_cn[k] <= 12'd0; st_flags[k] <= 8'd0; end
+            for (k = 0; k < 3; k = k + 1) begin owner_age[k] <= 12'hfff; st_age[k] <= 12'hfff; st_sig[k] <= 7'd0; st_gain[k] <= 8'd0; st_cn[k] <= 12'd0; st_flags[k] <= 8'd0; end
         end else begin
-            if (ms) for (k = 0; k < 3; k = k + 1) if (st_age[k] != 12'hfff) st_age[k] <= st_age[k] + 12'd1;
+            if (ms) for (k = 0; k < 3; k = k + 1) begin
+                if (st_age[k] != 12'hfff) st_age[k] <= st_age[k] + 12'd1;
+                if (owner_age[k] != 12'hfff) owner_age[k] <= owner_age[k] + 12'd1;
+            end
             if (mk_ev && mk_src_a != 2'd3) begin
                 st_age[mk_src_a] <= 12'd0;
                 case (mk_pl_a[15:12])
                     4'd1: begin btn <= mk_pl_a[3:0] | {mk_pl_a[4], 3'b0}; btn_ev <= 1'b1; end
                     4'd2: st_gain[mk_src_a] <= mk_pl_a[7:0];
                     4'd3: st_cn[mk_src_a] <= mk_pl_a[11:0];
-                    4'd4: st_flags[mk_src_a] <= mk_pl_a[7:0];
+                    4'd4: begin st_flags[mk_src_a] <= mk_pl_a[7:0]; owner_age[mk_src_a] <= 12'd0; end
                     4'd6: st_sig[mk_src_a] <= mk_pl_a[6:0] > 7'd100 ? 7'd100 : mk_pl_a[6:0];
                     default: ;
                 endcase
@@ -127,6 +134,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
         end
     end
     wire [2:0] fresh = {st_age[2] < 12'd3000, st_age[1] < 12'd3000, st_age[0] < 12'd3000};
+    wire [2:0] owner_fresh = {owner_age[2] < 12'd3000, owner_age[1] < 12'd3000, owner_age[0] < 12'd3000};
+    wire [2:0] native_applied = owner_fresh & {st_flags[2][7], st_flags[1][7], st_flags[0][7]};
+    wire native_value = owner_set ? native_requested : |native_applied;
+    wire native_pending = owner_set && (!(|fresh) ||
+        |(fresh & (~owner_fresh | (native_applied ^ {3{native_requested}}))));
     // a C5 that works: heard, and not reporting its DC fault (flags bit 3)
     wire [2:0] c5ok = fresh & ~{st_flags[2][3], st_flags[1][3], st_flags[0][3]};
     // ---- Tang S2: debounced SELECT (short) / SELECT long (0.6 s) ----------------------
@@ -177,11 +189,11 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire       up = b[0], sel = b[1] && !b[3], dn = b[2], hold = b[1] && b[3];
     wire [5:0] ch_next = channel == 6'd47 ? 6'd0 : channel + 6'd1;
     wire [5:0] ch_prev = channel == 6'd0 ? 6'd47 : channel - 6'd1;
-    wire [3:0] n_items = page == 3'd2 ? 4'd1 : page == 3'd4 ? 4'd5 : page == 3'd1 ? 4'd8 : 4'd7;
+    wire [3:0] n_items = page == 3'd2 ? 4'd1 : page == 3'd4 ? 4'd6 : page == 3'd1 ? 4'd8 : 4'd7;
     always @(posedge clk) begin
         if (rst) begin
             open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
-            link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; gain_model <= 2'd0; afc <= 1'b1; f_seq <= 8'd0;
+            link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; direct_model <= 2'd0; native_requested <= 1'b0; owner_set <= 1'b0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
             boot <= 1'b1; boot_ms <= 12'd0; bskip <= 1'b0;
         end else begin
@@ -241,9 +253,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         if (dn) mode <= mode == 2'd0 ? 2'd2 : mode - 2'd1;
                     end
                     else if (cursor == 3'd0) begin
-                        if (up) gain_model <= gain_model == 2'd2 ? 2'd0 : gain_model + 2'd1;
-                        if (dn) gain_model <= gain_model == 2'd0 ? 2'd2 : gain_model - 2'd1;
-                        g_set <= 1'b1;
+                        if (up) direct_model <= direct_model == 2'd2 ? 2'd0 : direct_model + 2'd1;
+                        if (dn) direct_model <= direct_model == 2'd0 ? 2'd2 : direct_model - 2'd1;
+                        owner_set <= 1'b0; g_set <= 1'b1;
                     end else if (cursor == 3'd2) begin
                         if (up) aspect <= aspect + 2'd1;
                         if (dn) aspect <= aspect - 2'd1;
@@ -270,16 +282,21 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                         3'd0: klock <= ~klock;
                         3'd1: async_on <= ~async_on;
                         3'd2: nfilt <= ~nfilt;
-                        3'd3: rescue <= rescue == 2'd2 ? 2'd0 : rescue + 2'd1;   // Off -> Auto -> On
+                        3'd3: rescue <= rescue + 2'd1;
+                        3'd4: begin
+                            native_requested <= ~(owner_set ? native_requested : |native_applied);
+                            owner_set <= 1'b1; g_set <= 1'b1;
+                        end
                         default: begin page <= 3'd1; cursor <= 3'd5; end
                     endcase
                     default: case (cursor)
-                        3'd0, 3'd2: edit <= 1'b1;
+                        3'd0: if (!native_value) edit <= 1'b1;
+                        3'd2: edit <= 1'b1;
                         3'd4: if (H90) hz90_r <= hz90_r == 2'd2 ? 2'd0 : hz90_r + 2'd1;   // Free -> Camera -> Smooth
                               else edit <= 1'b1;
                         3'd1: begin afc <= ~afc; a_set <= 1'b1; end
                         3'd3: logo <= ~logo;
-                        3'd5: begin f_seq <= f_seq + 8'd1; cal_ms <= 12'd3000; end
+                        3'd5: if (!native_value) begin f_seq <= f_seq + 8'd1; cal_ms <= 12'd3000; end
                         default: begin page <= 3'd1; cursor <= 3'd6; end
                     endcase
                 endcase
@@ -425,11 +442,16 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 else begin fch = G_LOGO0 + fi - 7'd1; fgv = 1'b1; ffg = fi <= 7'd4 ? ACCENT : WHITE; end
             end
             F_RXCNT: fch = fi == 7'd0 ? digit({2'b0, nact}) : fi == 7'd1 ? "/" : "3";
-            F_GAINV: begin ss = 5'd7 + {3'd0, gain_model}; si = fi[3:0] + 4'd4; su = 1'b1; end
+            F_GAINV: begin ss = 5'd7 + {3'd0, direct_model}; si = fi[3:0] + 4'd4; su = 1'b1; end
             F_AFCV:  begin ss = afc ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
             F_KLOCKV, F_ASYNCV, F_NFILTV:
                      begin ss = (fid == F_KLOCKV ? klock : fid == F_ASYNCV ? async_on : nfilt) ? 5'd10 : 5'd11; si = fi[3:0] + 4'd6; su = 1'b1; end
-            F_RESCV: begin ss = rescue == 2'd1 ? 5'd26 : rescue == 2'd2 ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
+            F_NATIVEV: begin
+                if (fi == 7'd4) begin fch = native_pending ? "?" : SP; fgv = 1'b1; ffg = AMBER; end
+                else begin ss = native_value ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
+            end
+            F_RESCV: if (rescue == 2'd3) fch = fi == 7'd1 ? "D" : fi == 7'd2 ? "3" : fi == 7'd3 ? "*" : SP;
+                     else begin ss = rescue == 2'd1 ? 5'd26 : rescue == 2'd2 ? 5'd10 : 5'd11; si = fi[3:0] + 4'd5; su = 1'b1; end
             F_BOOTBLD: begin ss = 5'd30; si = fi[3:0]; su = 1'b1; end
             F_BOOTVER: fch = hexd(VER[{3'd6 - fi[2:0], 2'b00} +: 4]);
             F_BOOTRX: begin                                // "C5 A ●   C5 B ●   C5 C ●", the dot green once the C5 is heard
@@ -494,6 +516,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     end else if (fi == 7'd12) fch = (cnr != 12'd0 && cn_neg && cn_db >= 8'd10) ? "-" : SP;
                     else if (fi == 7'd13) fch = cnr == 12'd0 ? "-" : cn_db >= 8'd10 ? digit(T) : (cn_neg && cn_db != 8'd0) ? "-" : SP;
                     else if (fi == 7'd14) fch = cnr == 12'd0 ? "-" : digit(O);
+                    else if (fi >= 7'd18 && fi <= 7'd20 && native_applied[rk])
+                        fch = fi == 7'd18 ? "N" : fi == 7'd19 ? "A" : "T";
                     else if (fi == 7'd18) fch = gn >= 8'd10 ? "G" : SP;
                     else if (fi == 7'd19) fch = gn >= 8'd10 ? digit(T) : "G";
                     else if (fi == 7'd20) fch = digit(O);

@@ -47,7 +47,7 @@ static void status(void)
     printf("TRIVERSITY_C5 version=%s lane=%s gain_owner=%s uptime_s=%lld heap_internal=%u heap_largest=%u heap_min=%u "
            "heap_dma=%u heap_lp=%u fw=%s\n",
            esp_app_get_description()->version, rf_lane_name(rf_lane()),
-           gm == GAIN_MODE_AUTO ? "keel1" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : "manual",
+           rf_native_agc() ? "native_exp" : gm == GAIN_MODE_AUTO ? "keel1" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : "manual",
            esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -105,6 +105,7 @@ static void help(void)
            "  A live VTX profile switch on/off, Q bench gain-pair sweep,\n"
            "  F calibrate the current filter, B full RF optimisation (ground only),\n"
            "  L IQ LED on/off (Q sign copy on the user LED), ! one bench RX sampling-phase slip, ` reboot to USB download (flashing).\n"
+           "  N toggle experimental native AGC ownership and reboot,\n"
            "  The FPGA sets channel, gain model, AFC and calibration over the link (fpga_link.h).\n");
 }
 
@@ -154,7 +155,7 @@ static void console_task(void *arg)
             case '!': rx_clock_slip(1); printf("SLIP bench: one RX sampling-phase slip (T SPHASE shows the new excess)\n"); break;
             case 'Y': case 'W': case 'X': flightlog_console((char)c); break;
             case 'h': case '?': help(); break;
-            case 'G': case 'Q': case 'f': case 'c': case 'b': case 'a': case 'd': case 'A': {
+            case 'G': case 'N': case 'Q': case 'f': case 'c': case 'b': case 'a': case 'd': case 'A': {
                 int command = c;
                 if (s_commands) (void)xQueueSend(s_commands, &command, 0);
                 break;
@@ -173,10 +174,10 @@ static void console_task(void *arg)
         if (esp_timer_get_time() - status_beat >= 2000000) {
             status_beat = esp_timer_get_time();
             const int64_t video_at = s_last_video_us;
-            printf("STATUS channel=%s freq=%u afc_locked=%u video=%u signal=%d gain=%u lane=%s busy=%u fw=%s\n",
+            printf("STATUS channel=%s freq=%u afc_locked=%u video=%u signal=%d owner=%s direct_gain=%u lane=%s busy=%u fw=%s\n",
                    rf_channel()->name, rf_frequency_mhz(), s_afc_locked,
-                   video_at && esp_timer_get_time() - video_at < 500000, s_signal_strength, s_current_gain,
-                   rf_lane_name(rf_lane()), status_busy(), firmware_id());
+                   video_at && esp_timer_get_time() - video_at < 500000, s_signal_strength, rf_native_agc() ? "native_exp" : "direct",
+                   rf_native_agc() ? 0u : s_current_gain, rf_lane_name(rf_lane()), status_busy(), firmware_id());
         }
     }
 }

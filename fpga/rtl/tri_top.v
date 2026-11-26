@@ -110,16 +110,16 @@ module tri_top (
     end
     // ---- alignment of B and C to A ----
     wire [7:0] a_al1, a_al2, b_al, c_al;
-    wire       en_b, en_c, b_alive, c_alive;
+    wire       en_b, en_c, b_alive, c_alive, ref_lost;
 `ifdef TRI_NO_C
     // the HQ DVR build fuses two C5s (Diversity): C5 C's logic makes room for the JPEG encoder
-    align_b u_alb (.clk_b(b_gclk), .raw_b_in(nib(cap_b)), .clk_a(a_gclk), .rst_a(rst), .raw_a(nib(ra)),
+    align_b u_alb (.clk_b(b_gclk), .raw_b_in(nib(cap_b)), .clk_a(a_gclk), .rst_a(rst), .ref_lost(ref_lost), .raw_a(nib(ra)),
                    .raw_a_d(a_al1), .raw_b(b_al), .en_b(en_b), .b_alive(b_alive), .lag());
     assign a_al2 = 8'd0; assign c_al = 8'd0; assign en_c = 1'b0; assign c_alive = 1'b0;
 `else
     // one alignment engine shared by B and C (align_bc.v)
     align_bc u_albc (.clk_b(b_gclk), .clk_c(c_gclk), .raw_b_in(nib(cap_b)), .raw_c_in(nib(cap_c)), .clk_a(a_gclk), .rst_a(rst),
-                     .raw_a(nib(ra)), .raw_a_d(a_al1), .raw_b(b_al), .raw_c(c_al), .en_b(en_b), .en_c(en_c),
+                     .ref_lost(ref_lost), .raw_a(nib(ra)), .raw_a_d(a_al1), .raw_b(b_al), .raw_c(c_al), .en_b(en_b), .en_c(en_c),
                      .b_alive(b_alive), .c_alive(c_alive), .lag_b(), .lag_c());
     assign a_al2 = a_al1;
 `endif
@@ -135,10 +135,27 @@ module tri_top (
     marker_rx u_mkc (.clk(a_gclk), .rst(rst), .raw({c_al[7:5], c_al[3:1]}),   .raw_d(c_m), .valid_d(vc), .ev(ev_c), .payload(pl_c), .count());
 `endif
     reg        mk_tog = 1'b0; reg [1:0] mk_src = 2'd3; reg [15:0] mk_pl = 16'd0;
-    always @(posedge a_gclk) if (ev_a | ev_b | ev_c) begin
-        mk_tog <= ~mk_tog;
-        mk_src <= ev_a ? 2'd0 : ev_b ? 2'd1 : 2'd2;
-        mk_pl  <= ev_a ? pl_a : ev_b ? pl_b : pl_c;
+    // Queue one outstanding marker per C5. Simultaneous acknowledgements
+    // must survive, with enough spacing for the toggle crossing into clk_lcd.
+    reg [2:0] mk_pending;
+    reg [15:0] mk_hold [0:2];
+    reg [2:0] mk_wait;
+    wire [1:0] mk_next = mk_pending[0] ? 2'd0 : mk_pending[1] ? 2'd1 : 2'd2;
+    wire mk_send = mk_wait == 0 && |mk_pending;
+    wire [2:0] mk_new = {ev_c, ev_b, ev_a};
+    always @(posedge a_gclk) begin
+        if (rst) begin
+            mk_pending <= 3'd0; mk_wait <= 3'd0; mk_tog <= 1'b0; mk_src <= 2'd3; mk_pl <= 16'd0;
+        end else begin
+            mk_pending <= (mk_pending & ~(mk_send ? 3'b001 << mk_next : 3'b000)) | mk_new;
+            if (ev_a) mk_hold[0] <= pl_a;
+            if (ev_b) mk_hold[1] <= pl_b;
+            if (ev_c) mk_hold[2] <= pl_c;
+            if (mk_wait != 0) mk_wait <= mk_wait - 1'b1;
+            if (mk_send) begin
+                mk_wait <= 3'd7; mk_tog <= ~mk_tog; mk_src <= mk_next; mk_pl <= mk_hold[mk_next];
+            end
+        end
     end
     // ---- Signal page switches (menu, LCD clock) into the IQ clock: {noise filter, rescue[1:0], adapt, -, keep lock} ----
     wire [5:0] sg_l; reg [5:0] sg_m, sg_a;
@@ -151,19 +168,20 @@ module tri_top (
     always @(posedge a_gclk) mode_s <= {mode_s[1:0], mode_l};
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
-    wire [23:0] lg_w; wire [1:0] ans_lev; wire ract;
+    wire [23:0] lg_w; wire [1:0] ans_lev, d3_degrade; wire ract;
 `ifdef TRI_NO_C
-    mrc3_core #(.HAS_C(0)) u_core (
+    mrc3_core #(.HAS_C(0), .FAILOVER(1)) u_core (
 `else
-    mrc3_core u_core (
+    mrc3_core #(.FAILOVER(1)) u_core (
 `endif
                       .clk(a_gclk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
-                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .wts(lg_w));
+                      .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c),
+                      .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire [15:0] sync_q; wire wide;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
-    vid_sync u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
+    vid_sync #(.D3_ADAPT(1)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
@@ -233,7 +251,7 @@ module tri_top (
     // ---- menu and link ----
     wire o_de, o_hs, o_vs; wire [4:0] o_r, o_b; wire [5:0] o_g; wire [7:0] px_r, px_g, px_b; wire bl_pwm;
     wire [1:0] hmode, hz90; wire boot;
-    wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [1:0] gain_model; wire [7:0] f_seq;
+    wire [5:0] channel; wire link_on, g_set, a_set, afc; wire [2:0] gain_model; wire [7:0] f_seq;
 `ifdef TRI_LIVEUI
     hq_ui #(.CLK_HZ(UI_HZ)) u_menu (
 `else

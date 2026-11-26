@@ -77,7 +77,7 @@ module mrc3_trk (
     end
 endmodule
 
-module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
+module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
                    parameter RS_WSH = 10, parameter [11:0] RS_K = 12'd2,    // rescue Auto: look-ahead 2^RS_WSH sample pairs, RS_K clicks
                    parameter RS_SSH = 12, parameter [6:0] RS_T = 7'd48) (   //   steady: RS_T of 64 sub-windows of 2^RS_SSH pairs with a click
     input  wire       clk,
@@ -87,10 +87,13 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     input  wire [5:0] raw_c,
     input  wire       en_b,
     input  wire       en_c,
+    input  wire       avail_b, avail_c, // live receiver & selected in the menu, independent of A alignment
     input  wire       va, vb, vc,   // per sample, with raw_*
-    input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2/3 on
+    input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2 on, 3 experimental D3
     output reg  [5:0] code,
     output reg        ract,         // rescue PLL in use (for the code going out)
+    output wire [1:0] d3_degrade,
+    output wire       ref_lost,
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
     reg [7:0] g_rom   [0:255];
@@ -141,12 +144,14 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
         idx2 <= idx1; run2 <= run1 & ~rst; v2 <= v1;
     end
 
+    wire poor_a;
+
     // ---- trackers (B, C) -----------------------------------------------------------
     wire signed [12:0] rb_i3, rb_q3, rc_i3, rc_q3;
-    mrc3_trk u_tb (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[1]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
+    mrc3_trk u_tb (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[1] & ~poor_a), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cb_i1), .ck_q1(cb_q1), .rk_i3(rb_i3), .rk_q3(rb_q3));
     generate if (HAS_C) begin : tc
-    mrc3_trk u_tc (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[2]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
+    mrc3_trk u_tc (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[2] & ~poor_a), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cc_i1), .ck_q1(cc_q1), .rk_i3(rc_i3), .rk_q3(rc_q3));
     end else begin : notc
     assign rc_i3 = 13'sd0; assign rc_q3 = 13'sd0;
@@ -250,8 +255,59 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
         endcase
     end
 
+    // Per-branch quality from the weight engine's scale-free M4/M2^2.
+    // Maintain a deadband and require persistent evidence before re-entry.
+    // This detects envelope variability, not absolute power or guaranteed RF validity.
+    wire [2:0] good;
+    generate if (FAILOVER) begin : quality
+        reg [3:0] score [0:2];
+        reg [2:0] stable;
+        integer b;
+        always @(posedge clk) begin
+            if (rst) begin
+                score[0] <= 4'd8;
+                score[1] <= 4'd0;
+                score[2] <= 4'd0;
+            end else if (st == S_STORE) begin
+                if (rq <= 10'd360 && m2j >= 16'd2048) begin
+                    if (!(&score[wj])) score[wj] <= score[wj] + 1'b1;
+                end else if (rq >= 10'd400 || m2j < 16'd2048) begin
+                    if (score[wj] != 0) score[wj] <= score[wj] - 1'b1;
+                end
+            end
+            if (rst) stable <= 3'b001;
+            else for (b = 0; b < 3; b = b + 1)
+                if (score[b] >= 4'd12) stable[b] <= 1'b1;
+                else if (score[b] <= 4'd3) stable[b] <= 1'b0;
+        end
+        assign good = stable;
+    end else begin : no_quality
+        assign good = 3'b001;
+    end endgenerate
+
     // ---- S4: combine ------------------------------------------------------------------
     reg signed [23:0] zi4, zq4;
+    wire raw_b_ok = avail_b && v3[1] && good[1];
+    wire raw_c_ok = HAS_C && avail_c && v3[2] && good[2];
+    assign ref_lost = FAILOVER && !good[0] &&
+        ((avail_b && good[1]) || (HAS_C && avail_c && good[2]));
+    assign poor_a = ref_lost;
+    // During a short A marker the existing rotated, aligned branches can
+    // still carry the picture. If A loses RF, its rotations are unreliable;
+    // select a proven B or C directly while A-based alignment reacquires.
+    wire need_backup = FAILOVER && (poor_a ||
+        (!v3[0] && !(en_b && v3[1]) && !(HAS_C && en_c && v3[2])));
+    reg [1:0] source4;
+    wire select_b = need_backup && raw_b_ok && (source4 != 2'd2 || !raw_c_ok);
+    wire select_c = need_backup && raw_c_ok && !select_b;
+    wire [1:0] source_n = select_b ? 2'd1 : select_c ? 2'd2 : 2'd0;
+    reg signed [4:0] backup_i3, backup_q3, c_i3_raw, c_q3_raw, cb_i2, cb_q2, cc_i2, cc_q2;
+    always @(posedge clk) begin
+        cb_i2 <= cb_i1; cb_q2 <= cb_q1; cc_i2 <= cc_i1; cc_q2 <= cc_q1;
+        backup_i3 <= cb_i2; backup_q3 <= cb_q2; c_i3_raw <= cc_i2; c_q3_raw <= cc_q2;
+    end
+    wire signed [4:0] raw_i = select_b ? backup_i3 : c_i3_raw;
+    wire signed [4:0] raw_q = select_b ? backup_q3 : c_q3_raw;
     wire [7:0] wa_eff = v3[0] ? w_use[0] : 8'd0;
     assign wts = {w_use[2], w_use[1], w_use[0]};
     wire [7:0] wb_eff = en_b && v3[1] ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
@@ -273,13 +329,37 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
         end else if (run3 && idx3 == 7'd127 && have_pend) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= pend[ku];
         end
-        zi4 <= $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
-        zq4 <= $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
+        source4 <= rst ? 2'd0 : source_n;
+        valid4 <= (wa_eff != 0 || wb_eff != 0 || wc_eff != 0 || source_n != 0) && !rst;
+        zi4 <= source_n != 0 ? $signed({{7{raw_i[4]}}, raw_i, 12'd0}) : $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
+        zq4 <= source_n != 0 ? $signed({{7{raw_q[4]}}, raw_q, 12'd0}) : $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
     end
 
     // ---- discriminator: D32-R2 rule on the combined angle (mrc3_model.disc50) ----
-    wire [15:0] phi;
-    cordic_angle #(.W(18), .N(10)) u_phi (.clk(clk), .x_in(zi4[23:6]), .y_in(zq4[23:6]), .ang(phi));
+    reg valid4;
+    reg [10:0] valid_d;
+    reg [10:0] source_b_d, source_c_d;
+    always @(posedge clk) begin
+        valid_d <= {valid_d[9:0], valid4};
+        source_b_d <= {source_b_d[9:0], source4 == 2'd1};
+        source_c_d <= {source_c_d[9:0], source4 == 2'd2};
+    end
+    wire [15:0] phi_raw;
+    wire [1:0] phi_src = {source_c_d[10], source_b_d[10]};
+    reg [1:0] prior_src;
+    reg [15:0] phase_bias, last_phi, last_step;
+    wire seam = FAILOVER && phi_src != prior_src;
+    wire [15:0] phi = seam ? last_phi + last_step : phi_raw + phase_bias;
+    always @(posedge clk) begin
+        if (rst || !run_d[11]) begin
+            phase_bias <= 0; last_phi <= 0; last_step <= 0; prior_src <= 0;
+        end else if (FAILOVER) begin
+            if (seam) phase_bias <= phi - phi_raw;
+            if (valid_d[10]) begin last_phi <= phi; last_step <= phi - last_phi; end
+            prior_src <= phi_src;
+        end
+    end
+    cordic_angle #(.W(18), .N(10)) u_phi (.clk(clk), .x_in(zi4[23:6]), .y_in(zq4[23:6]), .ang(phi_raw));
     // sample parity and run, carried along zi4 (1) and the CORDIC (N + 1 = 11)
     reg [11:0] ev_d, run_d;
     always @(posedge clk) begin
@@ -342,41 +422,71 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     // block RAM; a pair goes out as the PLL's when the 2^(RS_WSH+1) pairs around it
     // (2^RS_WSH - 1 before, 2^RS_WSH after) hold RS_K clicks or more. Off and On go
     // through the same delay. Per pair: at its first sample the slots are read, at
-    // its second written (the pair W before / 2W before comes out of them).
+    // its second written (the pair W before comes out of the RAM).
     // Steady clicks: every 64 sub-windows of 2^RS_SSH pairs the PLL goes on for
     // all pairs when RS_T of them held a click (a very weak signal), else off;
     // pairs are numbered from 1 (the first one sets the discriminator's start).
     localparam integer W = 1 << RS_WSH;
     reg  [17:0] lram [0:W-1];                     // {disc code, PLL first, PLL second}
-    reg         cram [0:2*W-1];                   // clicks
     reg  [RS_WSH-1:0] la_wa;
-    reg  [RS_WSH:0]   la_wc;
-    reg  [17:0] la_q, la_o; reg la_cq;
+    reg  [17:0] la_q, la_o;
     reg  [11:0] la_a; reg la_c;
-    reg  [RS_WSH+1:0] la_n;                       // clicks in the window
-    reg  [RS_WSH+1:0] la_fill;                    // pairs written, to 2W
     reg         la_sel, la_p;                 // la_p: a pair's first sample came, its second is next
     reg  [RS_SSH+5:0] st_pc;                      // pair number in the 64 sub-windows
     reg         st_occ, st_on;
     reg  [6:0]  st_n;
     always @(posedge clk) begin
-        if (s_f) begin la_q <= lram[la_wa]; la_cq <= cram[la_wc]; end
-        if (!s_f && la_p) begin lram[la_wa] <= {la_a, s_p}; cram[la_wc] <= la_c; end
+        if (s_f) la_q <= lram[la_wa];
+        if (!s_f && la_p) lram[la_wa] <= {la_a, s_p};
     end
-    wire        sel_n = rmode[1] || (rmode == 2'd1 && (la_n >= RS_K || st_on));
+    // Only the threshold matters, so keep the age of the last RS_K clicks
+    // instead of a BSRAM bit for every pair in the 2W window.
+    wire enough_clicks;
+    generate if (RS_K == 0) begin : clicks_always
+        assign enough_clicks = 1'b1;
+    end else begin : clicks_recent
+        localparam [RS_WSH+1:0] EXPIRED = 2 * W;
+        reg [RS_WSH+1:0] age [0:RS_K-1];
+        integer i;
+        always @(posedge clk) begin
+            if (rst) for (i = 0; i < RS_K; i = i + 1) age[i] <= EXPIRED;
+            else if (!s_f && la_p) begin
+                age[0] <= la_c ? 0 : age[0] == EXPIRED ? EXPIRED : age[0] + 1'b1;
+                for (i = 1; i < RS_K; i = i + 1)
+                    if (la_c) age[i] <= age[i-1] == EXPIRED ? EXPIRED : age[i-1] + 1'b1;
+                    else if (age[i] != EXPIRED) age[i] <= age[i] + 1'b1;
+            end
+        end
+        assign enough_clicks = age[RS_K-1] != EXPIRED;
+    end endgenerate
+    wire [5:0] d3_code;
+    reg [15:0] d3_phi;
+    reg d3_run, d3_valid, d3_even, d3_click, d3_steady;
+    always @(posedge clk) begin
+        d3_phi <= phi;
+        d3_run <= run_phi && !rst;
+        d3_valid <= valid_d[10];
+        d3_even <= ev_phi;
+        d3_click <= click && ev_phi && valid_d[10] && !seam;
+        d3_steady <= st_on;
+    end
+    d3_fm u_d3 (.clk(clk), .rst(rst), .run(d3_run), .valid(d3_valid),
+               .even_sample(d3_even), .phi(d3_phi), .click(d3_click),
+               .steady(d3_steady), .degrade(d3_degrade), .code(d3_code));
+    reg [5:0] rescue_code;
+    always @* code = rmode == 2'd3 ? d3_code : rescue_code;
+    wire        sel_n = rmode[1] || (rmode == 2'd1 && (enough_clicks || st_on));
     always @(posedge clk) begin
         if (rst) begin
-            la_wa <= 0; la_wc <= 0; la_n <= 0; la_fill <= 0; la_o <= {3{6'd25}}; la_sel <= 1'b0; la_p <= 1'b0; la_c <= 1'b0;
+            la_wa <= 0; la_o <= {3{6'd25}}; la_sel <= 1'b0; la_p <= 1'b0; la_c <= 1'b0;
             st_pc <= 1; st_occ <= 1'b0; st_on <= 1'b0; st_n <= 7'd0;
-            code <= 6'd25; ract <= 1'b0;
+            rescue_code <= 6'd25; ract <= 1'b0;
         end else if (s_f) begin
             la_a <= {s_d, s_p}; la_c <= s_c; la_p <= 1'b1;
-            code <= sel_n ? la_o[11:6] : la_o[17:12]; la_sel <= sel_n; ract <= sel_n;
+            rescue_code <= sel_n ? la_o[11:6] : la_o[17:12]; la_sel <= sel_n; ract <= sel_n && rmode != 2'd3;
         end else if (la_p) begin
             la_p <= 1'b0;
-            la_wa <= la_wa + 1'b1; la_wc <= la_wc + 1'b1;
-            la_n <= la_n + la_c - (la_fill[RS_WSH+1] ? la_cq : 1'b0);
-            if (!la_fill[RS_WSH+1]) la_fill <= la_fill + 1'b1;
+            la_wa <= la_wa + 1'b1;
             la_o <= la_q;
             st_pc <= st_pc + 1'b1;
             if (&st_pc[RS_SSH-1:0]) begin
@@ -384,8 +494,98 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
                 if (&st_pc[RS_SSH+5:RS_SSH]) begin st_on <= st_n + (st_occ | la_c) >= RS_T; st_n <= 7'd0; end
                 else st_n <= st_n + (st_occ | la_c);
             end else st_occ <= st_occ | la_c;
-            code <= la_sel ? la_o[5:0] : la_o[17:12];
+            rescue_code <= la_sel ? la_o[5:0] : la_o[17:12];
         end
     end
 endmodule
 `default_nettype wire
+
+// Causal D3 experiment, one estimator at 40 MS/s. Phase and frequency use
+// 16-bit turn units (16 units per 12-bit phase cell). Four 512-pair buckets
+// retain 1536..2047 causal pairs, saturating each bucket at four clicks.
+module d3_fm (
+    input wire clk, rst, run, valid, even_sample,
+    input wire [15:0] phi,
+    input wire click, steady,
+    output wire [1:0] degrade,
+    output wire [5:0] code
+);
+    reg [8:0] pos;
+    reg [2:0] n0, n1, n2, n3;
+    wire [4:0] nc = {2'b0, n0} + {2'b0, n1} + {2'b0, n2} + {2'b0, n3};
+    wire [12:0] target = steady || nc >= 5'd4 ? 13'd4096 : {nc[1:0], 10'd0};
+    reg [12:0] bad;
+    wire [12:0] attack = target - bad, release_delta = bad - target;
+    wire [6:0] gain_bad = bad[12:6];
+    assign degrade = gain_bad >= 7'd56 ? 2'd3 : gain_bad >= 7'd32 ? 2'd2 : gain_bad >= 7'd12 ? 2'd1 : 2'd0;
+    always @(posedge clk) begin
+        if (rst || !run) begin
+            pos <= 0; n0 <= 0; n1 <= 0; n2 <= 0; n3 <= 0; bad <= 0;
+        end else begin
+            if (even_sample) begin
+                pos <= pos + 1'b1;
+                if (&pos) begin
+                    n3 <= n2; n2 <= n1; n1 <= n0 + (click && n0 < 3'd4); n0 <= 0;
+                end else if (click && n0 < 3'd4) n0 <= n0 + 1'b1;
+            end
+            if (target > bad) bad <= bad + (attack >> 6) + (|attack[5:0]);
+            else if (target < bad) bad <= bad - (release_delta >> 8) - (|release_delta[7:0]);
+        end
+    end
+
+    reg [15:0] theta;
+    reg signed [14:0] freq;
+    reg signed [17:0] last_advance;
+    reg [3:0] missed;
+    reg [1:0] fresh;
+    wire signed [15:0] innovation = phi - theta;
+    wire [35:0] scaled_bits;
+    mul18 u_correction (.a({{2{innovation[15]}}, innovation}), .b({11'd0, gain_bad}), .y(scaled_bits));
+    wire signed [22:0] scaled = scaled_bits[22:0];
+    wire signed [16:0] damp = scaled >>> 8;
+    wire signed [17:0] phase_adjust = freq - damp - (damp <<< 1);
+    wire signed [17:0] advance = innovation + phase_adjust;
+    wire signed [15:0] freq_n = freq + ((scaled + 23'sd4096) >>> 13);
+    wire signed [18:0] pair_advance = advance + last_advance;
+    wire signed [12:0] pair_step = pair_advance >>> 6;
+    reg signed [12:0] even_step;
+    // Intermediate 25 ns estimate from the same loop. Interpolate the
+    // pair-averaged advance with five multiplier-free gains.
+    wire signed [13:0] step_delta = $signed({pair_step[12], pair_step}) - even_step;
+    wire signed [13:0] half_delta = step_delta >>> 1;
+    wire signed [13:0] quarter_delta = step_delta >>> 2;
+    wire signed [13:0] odd_correction = gain_bad >= 7'd56 ? step_delta :
+        gain_bad >= 7'd40 ? half_delta + quarter_delta :
+        gain_bad >= 7'd24 ? half_delta : gain_bad >= 7'd8 ? quarter_delta : 14'sd0;
+    reg signed [13:0] step;
+    wire signed [13:0] limited = step > 14'sd511 ? 14'sd511 : step < -14'sd512 ? -14'sd512 : step;
+    wire [9:0] address = limited[9:0];
+    (* ram_style = "block" *) reg [15:0] disc [0:1023];
+`include "disc_rom.vh"
+    reg [5:0] result;
+    assign code = result;
+    always @(posedge clk) begin
+        result <= disc[address][5:0];
+        if (rst || !run) begin
+            theta <= 0; freq <= 0; last_advance <= 0; missed <= 4'd9; fresh <= 0;
+            even_step <= 0; step <= 0;
+        end else if (!valid) begin
+            fresh <= 0;
+            if (missed < 4'd9) missed <= missed + 1'b1;
+            if (missed < 4'd8) begin theta <= theta + freq; step <= freq >>> 5; end
+            else step <= 0;  // neutral after 200 ns without any usable IQ
+        end else if (missed == 4'd9) begin
+            theta <= phi; freq <= 0; last_advance <= 0; missed <= 0; fresh <= 2'd1; step <= 0;
+        end else begin
+            missed <= 0;
+            if (fresh < 2'd3) fresh <= fresh + 1'b1;
+            // theta + wrapped innovation == phi modulo one turn.
+            theta <= phi + phase_adjust[15:0];
+            freq <= freq_n > 16'sd8192 ? 15'sd8192 : freq_n < -16'sd8192 ? -15'sd8192 : freq_n[14:0];
+            last_advance <= advance;
+            if (fresh == 0) begin even_step <= pair_step; step <= 0; end
+            else if (even_sample) begin even_step <= pair_step; step <= pair_step; end
+            else if (fresh >= 2) step <= even_step + odd_correction;
+        end
+    end
+endmodule

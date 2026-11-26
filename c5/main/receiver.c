@@ -58,6 +58,7 @@ uint8_t receiver_gain_mode(void) { return s_gain_mode; }
  * change (logged in the flight log). */
 void receiver_set_gain_mode(uint8_t mode, bool user)
 {
+    if (rf_native_agc() && user) return;
     if (!receiver_gain_mode_auto(mode) && mode != GAIN_MODE_MAX && (mode < 2u || mode > ARC_VENDOR_GAIN_MAX)) return;
     s_gain_mode = mode;
     if (user) flightlog_event(FLOG_E_GAIN_MODE, &mode, 1);
@@ -377,7 +378,7 @@ static uint32_t s_cn_windows;
 
 bool receiver_active(void)
 {
-    return !s_paused && !phy_busy();
+    return !rf_native_agc() && !s_paused && !phy_busy();
 }
 
 bool receiver_paused(void) { return s_paused; }
@@ -394,6 +395,10 @@ static char s_pause_longest[9];
 
 bool receiver_pause(const char *tag)
 {
+    if (rf_native_agc()) {
+        printf("%s refused=native_agc\n", tag);
+        return false;
+    }
     if (s_paused) {
         printf("%s refused=busy\n", tag);
         return false;
@@ -434,6 +439,7 @@ void receiver_pause_print(void)
 /* Gain write by the owner of a pause (calibration, scan). */
 void receiver_set_gain(uint8_t gain)
 {
+    if (rf_native_agc()) return;
     const arc_gain_table_t *t = rf_gain_table();
     if (gain < 2u) gain = 2u;
     if (gain > t->max_index) gain = t->max_index;

@@ -11,7 +11,7 @@ module link_tx #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     input  wire       on,
     input  wire [5:0] channel,
     input  wire       g_set,
-    input  wire [1:0] gain_model,
+    input  wire [2:0] gain_model,
     input  wire       a_set,
     input  wire       afc,
     input  wire [7:0] f_seq,
@@ -23,7 +23,7 @@ module link_tx #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     reg [1:0]  fsel;                     // frame: 0 C, 1 G, 2 A, 3 F
     reg [7:0]  gap;
     wire [7:0] tag = fsel == 2'd0 ? 8'h43 : fsel == 2'd1 ? 8'h47 : fsel == 2'd2 ? 8'h41 : 8'h46;
-    wire [7:0] val = fsel == 2'd0 ? {2'd0, channel} : fsel == 2'd1 ? {6'd0, gain_model} : fsel == 2'd2 ? {7'd0, afc} : f_seq;
+    wire [7:0] val = fsel == 2'd0 ? {2'd0, channel} : fsel == 2'd1 ? {5'd0, gain_model} : fsel == 2'd2 ? {7'd0, afc} : f_seq;
     wire [7:0] byte_now = bi == 2'd0 ? 8'hC5 : bi == 2'd1 ? tag : bi == 2'd2 ? val : (8'h79 ^ val ^ tag ^ 8'h43);
     wire       skip = (fsel == 2'd1 && !g_set) || (fsel == 2'd2 && !a_set);
     always @(posedge clk) begin

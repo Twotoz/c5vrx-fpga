@@ -178,8 +178,11 @@ static void command(int c)
         return;
     }
     switch (c) {
-    case 'G': receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); return;
-    case 'Q': receiver_pair_sweep_toggle(); return;   /* bench: the real gain step of every table row pair */
+    case 'G':
+        if (rf_native_agc()) { puts("GAIN native (EXP); use FPGA Signal or N to restore Direct Gain"); return; }
+        receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); return;
+    case 'N': rf_request_agc(!rf_native_agc()); return;
+    case 'Q': if (!rf_native_agc()) receiver_pair_sweep_toggle(); return;   /* bench: the real gain step of every table row pair */
     case 'f': (void)profile_select_cycle(); prefs_save(); return;
     case 'c': rf_next_channel(); after_retune(); return;
     case 'b': rf_next_band(); after_retune(); return;
@@ -202,6 +205,8 @@ static void command(int c)
         }
     } else if (c == CMD_AFC || c == CMD_AFC + 1) {
         if ((c == CMD_AFC + 1) != s_afc_enabled) toggle_afc();
+    } else if (c == CMD_AGC_OWNER || c == CMD_AGC_OWNER + 1) {
+        rf_request_agc(c == CMD_AGC_OWNER + 1);
     } else if (c == CMD_CAL_QUICK) {
         filter_request();
     } else if (c == CMD_CAL_FULL) {
@@ -267,7 +272,7 @@ static void control_task(void *arg)
         metrics_t m = {0};
         if (copied) {
             m = measure_window(s_window, CONTROL_BYTES);
-            s_signal_strength = (s_signal_strength * 3 + strength(&m, s_current_gain) + 2) / 4;
+            s_signal_strength = (s_signal_strength * 3 + strength(&m, rf_native_agc() ? rf_gain_table()->max_index : s_current_gain) + 2) / 4;
         }
 
         /* AFC: burst/line-timing-confirmed sync/porch levels, never the

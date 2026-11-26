@@ -41,6 +41,8 @@ void rf_reboot_to_download(void);
 
 /* Firmware gain (vendor table index). True only when written under the
  * expected PHY generation. */
+bool rf_native_agc(void);
+void rf_request_agc(bool native);    /* save ownership and reboot if it changes */
 bool rf_set_gain(uint8_t gain, uint32_t expected_generation);
 void rf_force_gain(uint8_t gain);           /* caller owns the receiver */
 /* Called after every gain write and PHY restore (DC hold re-assert). */
