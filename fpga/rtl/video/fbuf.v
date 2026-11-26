@@ -31,6 +31,7 @@ module fbuf #(
     input  wire [15:0] wr_data,
     input  wire        line_tog,
     input  wire [8:0]  line_info,      // {show, orow} of the line just written
+    input  wire        line_skip,      // that line is corrupt (vid_sync): the row keeps the slot's older field
     input  wire        field_tog,
     input  wire        pal,
     input  wire [1:0]  mode_p,         // display domain (menu): 0 Free, 1 Camera, 2 Smooth
@@ -120,7 +121,8 @@ module fbuf #(
             if (lt_p != line_tog && lcnt != 10'h3ff) lcnt <= lcnt + 10'd1;
             if (ft_p != field_tog) begin lcnt <= 10'd0; pfl <= lcnt; end
             if (lt_p != line_tog && line_info[8] && wrow < 9'd288) begin
-                wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot;
+                // a skipped line is not written: the slot's row still holds an earlier field's
+                if (!line_skip) begin wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot; end
                 wrow <= wrow + 9'd1;
             end
             if (ft_p != field_tog) begin
