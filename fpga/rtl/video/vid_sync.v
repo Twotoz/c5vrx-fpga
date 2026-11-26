@@ -347,8 +347,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
-            if (hc == 12'd40) tip_all_low <= low; else if (hc > 12'd40 && hc < 12'd104 && !low) tip_all_low <= 1'b0;
-            // (the comparator itself: low ends HI_HOLD samples after the sync)
+            if (hc == 12'd40) tip_all_low <= yf < slice; else if (hc > 12'd40 && hc < 12'd104 && yf >= slice) tip_all_low <= 1'b0;
+            // (both windows on the comparator itself: low ends HI_HOLD samples after a pulse)
             if (hc == 12'd220) porch_all_high <= yf >= slice; else if (hc > 12'd220 && hc < 12'd348 && yf < slice) porch_all_high <= 1'b0;
             if (yf < linemin) linemin <= yf;
             if (lock == 4'd0) lev_n <= 5'd0;
