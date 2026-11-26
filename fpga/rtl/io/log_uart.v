@@ -2,13 +2,16 @@
 // bridge, FPGA pin 69 -> the PC's second serial port), 115200 8N1, ten text
 // lines a second for reading along while flying or on the bench:
 //
-//   t=12.3 lock=1 pal=0 fps=59/0 k8=555 q=1580 A=G54,+18.4,u,78 B=G61,+12.1,f,55 C=-
+//   t=12.3 lock=1 pal=0 fps=59/0 k8=555 q=1580 clk=3 rsc=0 A=G54,+18.4,u,78 B=G61,+12.1,f,55 C=-
 //
 //   t      seconds since start (tenths)
 //   lock   video lock; pal 1 = PAL, 0 = NTSC
 //   fps    fields of the last second from a real vertical sync / predicted
 //          by the flywheel (vid_sync fps_real / fps_pred)
 //   k8     video gain (vid_sync); q in-window sync edges per 100 ms
+//   clk    discriminator clicks in the last 100 ms (the combined signal's
+//          breakups: FM threshold, fades, gain-write transients)
+//   rsc    share of the last 100 ms on the Rescue PLL, %
 //   A/B/C  per C5 from its markers: Direct Gain row (G..), C/N dB (? not
 //          known), IQ lane u ultrafine / f fine / c coarse (STRONG LANE) or
 //          n Native AGC, signal 0..100; "-" when no marker for 3 s
@@ -31,6 +34,8 @@ module log_uart #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     input  wire [6:0]  fps_pred_a,
     input  wire [15:0] k8_a,
     input  wire [15:0] sync_q_a,
+    input  wire [15:0] clicks_a,           // rx_stats (IQ clock domain): clicks in the last 100 ms
+    input  wire [6:0]  rescue_a,           //   and the Rescue PLL's share, %
     output reg         tx = 1'b1
 );
     localparam integer DIV = CLK_HZ / BAUD;
@@ -38,10 +43,10 @@ module log_uart #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     localparam integer MSDIV = CLK_HZ / 1000;
     // ---- inputs into this domain ----
     reg [2:0] mt; reg [1:0] lk, pl;
-    reg [6:0] fr, fp; reg [15:0] k8, sq;
+    reg [6:0] fr, fp, rs; reg [15:0] k8, sq, ck;
     always @(posedge clk) begin
         mt <= {mt[1:0], mk_tog_a}; lk <= {lk[0], locked_a}; pl <= {pl[0], pal_a};
-        fr <= fps_real_a; fp <= fps_pred_a; k8 <= k8_a; sq <= sync_q_a;
+        fr <= fps_real_a; fp <= fps_pred_a; k8 <= k8_a; sq <= sync_q_a; ck <= clicks_a; rs <= rescue_a;
     end
     wire mk_ev = mt[2] ^ mt[1];            // payload / source stable long after a toggle
     // ---- C5 status from the markers (c5/main/fpga_link.h) ----
@@ -71,23 +76,26 @@ module log_uart #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     // ---- time ----
     reg [15:0] sec; reg [3:0] tenth; reg [23:0] tick;
     // ---- the line as tokens: 0 literal, 1 number (field), 2 C5 special, 3 end ----
-    // header 0..34, C5 blocks of 12 at 35 (A), 47 (B), 59 (C), CR LF at 71, 72
+    // header 0..46, C5 blocks of 12 at 47 (A), 59 (B), 71 (C), CR LF at 83, 84
     localparam [1:0] K_LIT = 2'd0, K_NUM = 2'd1, K_SPC = 2'd2, K_END = 2'd3;
     reg  [6:0] idx;
-    wire [1:0] c = idx < 7'd47 ? 2'd0 : idx < 7'd59 ? 2'd1 : 2'd2;
-    wire [6:0] j = idx - (c == 2'd0 ? 7'd35 : c == 2'd1 ? 7'd47 : 7'd59);
+    wire [1:0] c = idx < 7'd59 ? 2'd0 : idx < 7'd71 ? 2'd1 : 2'd2;
+    wire [6:0] j = idx - (c == 2'd0 ? 7'd47 : c == 2'd1 ? 7'd59 : 7'd71);
     reg  [9:0] t;                          // {kind, arg} of token idx
     always @(*) begin
         t = {K_END, 8'd0};
-        if (idx < 7'd35) case (idx)
+        if (idx < 7'd47) case (idx)
             0: t = {K_LIT, "t"}; 1: t = {K_LIT, "="}; 2: t = {K_NUM, 8'd0}; 3: t = {K_LIT, "."}; 4: t = {K_NUM, 8'd1};
             5: t = {K_LIT, " "}; 6: t = {K_LIT, "l"}; 7: t = {K_LIT, "o"}; 8: t = {K_LIT, "c"}; 9: t = {K_LIT, "k"};
             10: t = {K_LIT, "="}; 11: t = {K_NUM, 8'd2}; 12: t = {K_LIT, " "}; 13: t = {K_LIT, "p"}; 14: t = {K_LIT, "a"};
             15: t = {K_LIT, "l"}; 16: t = {K_LIT, "="}; 17: t = {K_NUM, 8'd3}; 18: t = {K_LIT, " "}; 19: t = {K_LIT, "f"};
             20: t = {K_LIT, "p"}; 21: t = {K_LIT, "s"}; 22: t = {K_LIT, "="}; 23: t = {K_NUM, 8'd4}; 24: t = {K_LIT, "/"};
             25: t = {K_NUM, 8'd5}; 26: t = {K_LIT, " "}; 27: t = {K_LIT, "k"}; 28: t = {K_LIT, "8"}; 29: t = {K_LIT, "="};
-            30: t = {K_NUM, 8'd6}; 31: t = {K_LIT, " "}; 32: t = {K_LIT, "q"}; 33: t = {K_LIT, "="}; default: t = {K_NUM, 8'd7};
-        endcase else if (idx < 7'd71) case (j)
+            30: t = {K_NUM, 8'd6}; 31: t = {K_LIT, " "}; 32: t = {K_LIT, "q"}; 33: t = {K_LIT, "="}; 34: t = {K_NUM, 8'd7};
+            35: t = {K_LIT, " "}; 36: t = {K_LIT, "c"}; 37: t = {K_LIT, "l"}; 38: t = {K_LIT, "k"}; 39: t = {K_LIT, "="};
+            40: t = {K_NUM, 8'd11}; 41: t = {K_LIT, " "}; 42: t = {K_LIT, "r"}; 43: t = {K_LIT, "s"}; 44: t = {K_LIT, "c"};
+            45: t = {K_LIT, "="}; default: t = {K_NUM, 8'd12};
+        endcase else if (idx < 7'd83) case (j)
             0: t = {K_LIT, " "}; 1: t = {K_SPC, 8'd0};          // the C5's letter
             2: t = {K_LIT, "="}; 3: t = {K_SPC, 8'd1};          // "G", or "-" and the block's end when silent
             4: t = {K_NUM, 8'd8}; 5: t = {K_LIT, ","};
@@ -96,8 +104,8 @@ module log_uart #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
             9: t = {K_SPC, 8'd3};                                // lane / native
             10: t = {K_LIT, ","}; default: t = {K_NUM, 8'd10};
         endcase
-        else if (idx == 7'd71) t = {K_LIT, 8'd13};
-        else if (idx == 7'd72) t = {K_LIT, 8'd10};
+        else if (idx == 7'd83) t = {K_LIT, 8'd13};
+        else if (idx == 7'd84) t = {K_LIT, 8'd10};
     end
     wire [11:0] cnc = cn[c];
     wire        live = age[c] < 12'd3000;
@@ -107,7 +115,8 @@ module log_uart #(parameter CLK_HZ = 33750000, parameter BAUD = 115200) (
     always @(*) case (t[3:0])
         4'd0: fval = sec; 4'd1: fval = {12'd0, tenth}; 4'd2: fval = {15'd0, lk[1]}; 4'd3: fval = {15'd0, pl[1]};
         4'd4: fval = {9'd0, fr}; 4'd5: fval = {9'd0, fp}; 4'd6: fval = k8; 4'd7: fval = sq;
-        4'd8: fval = {8'd0, g[c]}; 4'd9: fval = {4'd0, cn_abs}; default: fval = {9'd0, sg[c]};
+        4'd8: fval = {8'd0, g[c]}; 4'd9: fval = {4'd0, cn_abs}; 4'd10: fval = {9'd0, sg[c]};
+        4'd11: fval = ck; default: fval = {9'd0, rs};
     endcase
     // ---- number to decimal: double dabble, 16 shifts ----
     reg [15:0] bin; reg [19:0] bcd; reg [4:0] nconv; reg [2:0] dig; reg started, tenths, dot;
