@@ -13,13 +13,16 @@ computed):
   dark      a clean dark scene: the gain must not move
   deviate   a real drop of the depth to 40 % (lower VTX deviation): the gain
             must follow it
+  vchop     every broad vertical-sync pulse chopped by 100 ns white spikes
+            every 6 us: the fields must still come from real vertical syncs
   vtxoff    80 ms of RF noise only, then the VTX (Keep lock off / on): levels
             learnt from noise must not keep the real sync out (#15); locked
             within a field, the gain at its nominal value after 3 fields
 
 Checks: k8 stays below 1.25 x its clean value, is back within 3 % 1.5 fields
 after a fade and locked, follows a real depth change, and does not move on
-clean pictures; the forced-low line is concealed (repeated from the line
+clean pictures; fields_real (the log's real-field bit) holds on clean
+pictures and drops after a fade across the vertical sync; the forced-low line is concealed (repeated from the line
 before) and no clean line is. Prints black / saturated pixels on the shown
 lines and the concealed lines from the fade on.
 --rtl <file> runs another vid_sync.v (e.g. the one before #12) for comparison.
@@ -39,7 +42,7 @@ TIP, PORCH, WHITE = 16, 22, 37     # codes: -40, 0, +100 IRE
 FIELD = 262.5 * L
 
 
-def ntsc(n, dark=False, depth=None, rng=None):
+def ntsc(n, dark=False, depth=None, rng=None, chop=0):
     """n samples of interlaced NTSC (codes, float). depth(k): scale of the
     signal about the porch (1 = nominal)."""
     k = np.arange(n, dtype=np.float64)
@@ -72,6 +75,11 @@ def ntsc(n, dark=False, depth=None, rng=None):
     sync |= br & (us < L / 80.0 - 4.7)
     sync |= ~eq & ~br & line_start & (us < 4.7)
     v = np.where(sync, TIP, v)
+    if chop:
+        # fragmented vertical sync: chop 100 ns white spikes into every broad pulse,
+        # one every chop us (zubon2003's weak-signal failure, #14 / #15)
+        sp = br & (us > 2.0) & (us < L / 80.0 - 6.0) & ((us % chop) < 0.1)
+        v = np.where(sp, WHITE + 10, v)
     if depth is not None:
         v = PORCH + (v - PORCH) * depth(k)
     if rng is not None:
@@ -119,7 +127,7 @@ FIELDS = 7.9
 DEVIATE = 0.4                      # a real drop of the depth (below half: the slow path)
 # (name, keep lock)
 RUNS = [('darkfade', 0), ('darkfade', 1), ('fade10', 0), ('fade10', 1),
-        ('fades', 0), ('lowline', 0), ('dark', 0), ('deviate', 0), ('vtxoff', 0), ('vtxoff', 1)]
+        ('fades', 0), ('lowline', 0), ('dark', 0), ('deviate', 0), ('vtxoff', 0), ('vtxoff', 1), ('vchop', 0)]
 VTX_OFF = int(0.080 * FS)          # vtxoff: RF noise only before the VTX appears
 K8_NOMINAL = 26112 / ((PORCH - TIP) * 8)
 SCENARIOS = sorted({r[0] for r in RUNS})
@@ -131,7 +139,7 @@ def scenario(name):
     if name == 'vtxoff':
         n = VTX_OFF + int(5 * FIELD)
     depth = (lambda k: np.where(k < EVENT, 1.0, DEVIATE)) if name == 'deviate' else None
-    v = ntsc(n, dark=name == 'dark', depth=depth, rng=rng)
+    v = ntsc(n, dark=name == 'dark', depth=depth, rng=rng, chop=6.0 if name == 'vchop' else 0)
     end = None
     if name == 'darkfade':                     # deep from 3 lines before the field's vertical sync
         s, ln = int(EVENT - 3 * L), int(0.010 * FS); v = dark_fade(v, rng, s, ln); end = s + ln
@@ -201,6 +209,11 @@ def check(name, keep, end, a):
         fail.append(f'{conc} lines concealed, want the forced line only')
     if name in ('dark', 'deviate') and conc:
         fail.append(f'{conc} clean lines concealed')
+    real = a[:, 10]
+    if end is None and name in ('dark', 'lowline', 'vchop') and (real[smp > 3 * FIELD] == 0).any():
+        fail.append('fields_real dropped on a clean signal')
+    if name == 'darkfade' and not (real[(smp > end) & (smp < end + 2 * FIELD)] == 0).any():
+        fail.append('fields_real stayed set through a fade across the vertical sync')
     if end is None and name != 'deviate':
         if kmax > 1.03 * k8c or kmin < 0.97 * k8c:
             fail.append(f'k8 moved without a fade ({kmin}..{kmax} vs {k8c})')

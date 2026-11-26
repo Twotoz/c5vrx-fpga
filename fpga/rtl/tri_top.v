@@ -179,10 +179,10 @@ module tri_top (
                       .avail_b(b_alive & use_b), .avail_c(c_alive & use_c), .va(va), .vb(vb), .vc(vc), .rmode(sg_a[4:3]), .code(code), .ract(ract), .d3_degrade(d3_degrade), .ref_lost(ref_lost), .wts(lg_w));
     // ---- video timing and line capture ----
     wire        wr_en, line_tog, field_tog, pal, locked;
-    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide;
+    wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
     vid_sync #(.D3_ADAPT(1)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
-                   .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide),
+                   .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide), .fields_real(fields_real),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
@@ -206,7 +206,7 @@ module tri_top (
                             mode_s[3:2], sg_a,                                 // 7: mode, Signal switches
                             ans_lev, ch_a,                                     // 6: noise level, channel
                             sync_q,                                            // 4, 5
-                            1'b0, ract, c_alive, b_alive, en_c, en_b, locked, pal, // 3: flags
+                            fields_real, ract, c_alive, b_alive, en_c, en_b, locked, pal, // 3: flags
                             lg_w};                                             // 0 .. 2: weights A, B, C
     dvr_hq u_dvr (.clk(a_gclk), .rst(rst), .rec(dvr_l), .lg(lg_l), .lg_data(lg_data), .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb),
                   .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity), .pal(pal), .sd_cs(sd_cs), .sd_sck(sd_sck), .sd_mosi(sd_mosi),
