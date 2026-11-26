@@ -269,8 +269,8 @@ module tri_top (
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .tx(link_tx));
-`ifdef TRI_HDMI90
-    assign log_tx = 1'b1;                    // the 90 Hz HDMI build has no room left
+`ifndef TRI_DEBUG
+    assign log_tx = 1'b1;                    // only DEBUG=1 builds (fpga/build.sh) carry the live status
 `else
     wire [15:0] rx_clicks; wire [6:0] rx_rescue;
     rx_stats u_rxs (.clk(a_gclk), .rst(rst), .click_ev(click_ev), .ract(ract), .clicks(rx_clicks), .rescue_pct(rx_rescue));

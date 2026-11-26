@@ -12,7 +12,7 @@ on:
         description: Bitstream to build
         type: choice
         default: lcd
-        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90]
+        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90, lcd-debug, lcd-live-debug, hdmi-debug, hdmi-live-debug]
       placement:
         description: Exact placement (e.g. 3:0.8), empty for automatic
         type: string

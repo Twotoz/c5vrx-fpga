@@ -2,7 +2,7 @@ name: Build FPGA bitstream
 description: Build a Tang Nano 20K variant with a pinned toolchain and optional exact placement.
 inputs:
   variant:
-    description: lcd, lcd-live, hdmi, hdmi-live, or hdmi90
+    description: lcd, lcd-live, hdmi, hdmi-live, or hdmi90; -debug adds the live USB status (DEBUG=1)
     required: true
   placement:
     description: Exact seed or seed:beta. Leave empty for the build script defaults.
@@ -27,7 +27,9 @@ runs:
         PLACEMENT: ${{ inputs.placement }}
         PNR_TIMEOUT: ${{ inputs.pnr-timeout }}
       run: |
-        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0
+        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0 DEBUG=0
+        suffix=""
+        case "$VARIANT" in *-debug) DEBUG=1; suffix=_debug; VARIANT=${VARIANT%-debug} ;; esac
         case "$VARIANT" in
           lcd) source=triversity.fs ;;
           lcd-live) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
@@ -36,7 +38,7 @@ runs:
           hdmi90) HDMI90=1; source=triversity_hdmi90.fs ;;
           *) printf 'Unknown FPGA variant: %s\n' "$VARIANT" >&2; exit 2 ;;
         esac
-        asset=${asset:-$source}
+        asset=${asset:-$source}; asset=${asset%.fs}$suffix.fs
         fpga/build.sh
         mkdir -p "$RUNNER_TEMP/bitstream"
         cp "fpga/build/$source" "$RUNNER_TEMP/bitstream/$asset"
