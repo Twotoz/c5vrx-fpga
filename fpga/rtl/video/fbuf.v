@@ -18,7 +18,12 @@
 // rows, 23 bursts (22 x 16 + 8 words, never across a row). A read waits for at
 // most one write burst: the engine looks at reads between write bursts.
 `default_nettype none
-module fbuf (
+module fbuf #(
+    parameter WPL = 360,           // SDRAM words a line: 720 pixels (HDMI) 360, 800 (LCD) 400
+    parameter RACE_N = 74,         // lines written before a frame may show the field still coming in
+    parameter RACE_P = 122,
+    parameter SMOOTH = 1           // Smooth (motion.v) for the 90 Hz HDMI output; the LCD has none
+) (
     input  wire        clk,
     input  wire        rst,
     input  wire        wr_en,
@@ -44,7 +49,10 @@ module fbuf (
     output wire [3:0]  O_sdram_dqm,
     inout  wire [31:0] IO_sdram_dq
 );
-    // ---- write line buffer: two lines of 360 words ----
+    // bursts a line: (WPL + 15) / 16, the last one LASTLEN words (360: 22 x 16 + 8; 400: 25 x 16)
+    localparam [4:0] LASTB = (WPL + 15) / 16 - 1;
+    localparam [4:0] LASTLEN = WPL - 16 * ((WPL + 15) / 16 - 1);
+    // ---- write line buffer: two lines of WPL words ----
     reg [31:0] wlb [0:1023];
     reg [15:0] lo;
     reg [9:0]  wl_ra; reg [31:0] wl_q;
@@ -81,7 +89,7 @@ module fbuf (
     reg [31:0] sr [0:15];
     reg        ld_v;
     reg [8:0]  rcnt;                   // words of the read line received
-    wire [4:0] wlen = wc == 5'd22 ? 5'd8 : 5'd16, rlen = rc == 5'd22 ? 5'd8 : 5'd16;
+    wire [4:0] wlen = wc == LASTB ? LASTLEN : 5'd16, rlen = rc == LASTB ? LASTLEN : 5'd16;
     wire       s_ack, s_next, s_rv; wire [31:0] s_rd;
     wire       s_req = est == E_WREQ || est == E_RREQ;
     wire       s_we = est == E_WREQ;
@@ -96,7 +104,7 @@ module fbuf (
     // 240 (NTSC) / 122 of 288 (PAL), 4 lines of margin ----
     reg  [1:0] md_m, md;
     always @(posedge clk) begin md_m <= mode_p; md <= md_m; end
-    wire       race = md != 2'd0 && wrow >= (pal ? 9'd122 : 9'd74);
+    wire       race = md != 2'd0 && wrow >= (pal ? RACE_P[8:0] : RACE_N[8:0]);
     wire [1:0] nrs = race ? wslot : latest;          // the slot a frame starting now shows
     reg  [9:0] lcnt, pfl;                            // source lines since the field started, the last field's
     reg  [9:0] age;                                  // lines from the start of the shown field to the frame start
@@ -145,14 +153,14 @@ module fbuf (
                     wn <= wn + 5'd1;
                     if (wn + 5'd1 == wlen) begin
                         est <= E_IDLE;
-                        if (wc == 5'd22) begin wact <= 1'b0; wp[wb] <= 1'b0; end
+                        if (wc == LASTB) begin wact <= 1'b0; wp[wb] <= 1'b0; end
                         else wc <= wc + 5'd1;
                     end
                 end
                 E_RREQ: if (s_ack) begin
-                    if (rc == 5'd22) est <= E_RWAIT; else rc <= rc + 5'd1;
+                    if (rc == LASTB) est <= E_RWAIT; else rc <= rc + 5'd1;
                 end
-                E_RWAIT: if (rcnt == 9'd360) est <= E_IDLE;
+                E_RWAIT: if (rcnt == WPL[8:0]) est <= E_IDLE;
                 default: est <= E_IDLE;
             endcase
             if (s_rv) begin
@@ -162,9 +170,13 @@ module fbuf (
     end
     // ---- Smooth: whole-picture motion (motion.v) and this frame's shifts ----
     wire signed [5:0] vh0, vh1, vh2, vh3, vv; wire mv;
+    generate if (SMOOTH) begin : gsm
     motion u_mo (.clk(clk), .rst(rst), .pal(pal), .px_we(wr_en), .px_x(wr_addr[9:0]), .px_g(wr_data[10:5]),
                  .row(wrow), .row_done(lt_p != line_tog && line_info[8] && wrow < 9'd288), .field_ev(ft_p != field_tog),
                  .vh0(vh0), .vh1(vh1), .vh2(vh2), .vh3(vh3), .vv(vv), .valid(mv));
+    end else begin : gnosm
+    assign vh0 = 6'sd0; assign vh1 = 6'sd0; assign vh2 = 6'sd0; assign vh3 = 6'sd0; assign vv = 6'sd0; assign mv = 1'b0;
+    end endgenerate
     // Shift = motion a field x (age - reference age) / field: the picture is put
     // where the scene is at a fixed delay after capture, so every output frame
     // moves by the same step. With f = age - LREF (source lines):
@@ -198,7 +210,7 @@ module fbuf (
             if (mk == 4'd7) mrun <= 1'b0; else mk <= mk + 4'd1;
         end else case (ms)
             3'd0: if (fr_ev_d) begin                 // a clock after the frame start: age is this frame's
-                      if (md == 2'd2 && mv) begin ms <= 3'd1; mstart({{13{fa[10]}}, fa}, $signed(pal ? KH_P : KH_N)); end
+                      if (SMOOTH && md == 2'd2 && mv) begin ms <= 3'd1; mstart({{13{fa[10]}}, fa}, $signed(pal ? KH_P : KH_N)); end
                       else begin sh_h <= 8'sd0; sh_r <= 8'sd0; sh_v <= 6'sd0; end
                   end
             3'd1: begin fkh <= pm[23:0]; ms <= 3'd2; mstart({{13{fa[10]}}, fa}, $signed(pal ? KR_P : KR_N)); end

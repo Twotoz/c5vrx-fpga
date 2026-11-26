@@ -15,7 +15,7 @@ module tb_video;
     wire [10:0] lb_raddr; wire [15:0] lb_rdata;
     linebuf u_lb (.wclk(clk_a), .we(wr_en), .waddr(wr_addr), .wdata(wr_data), .rclk(clk_l), .raddr(lb_raddr), .rdata(lb_rdata));
     reg [11:0] osd [0:2047]; wire osd_we; wire [10:0] osd_waddr, osd_raddr; wire [11:0] osd_wdata; reg [11:0] osd_rdata;
-    integer i; initial for (i = 0; i < 2048; i = i + 1) osd[i] = 0;
+    integer i; initial for (i = 0; i < 2048; i = i + 1) begin osd[i] = 0; u_lb.mem[i] = 0; end   // BSRAM powers up as zeros
     always @(posedge clk_l) begin if (osd_we) osd[osd_waddr] <= osd_wdata; osd_rdata <= osd[osd_raddr]; end
     wire bl, boot;
     menu #(.CLK_HZ(33750000)) u_menu (.clk(clk_l), .rst(rst), .mk_tog_a(1'b0), .mk_src_a(2'd3), .mk_pl_a(16'd0), .s1_n(1'b1), .s2_n(1'b1),
