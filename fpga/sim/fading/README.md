@@ -35,5 +35,26 @@ better output per 64 samples:
 | 100 Hz / 20 | 5.4 | 6.8 | 6.5 |
 | 300 Hz / 20 | 5.3 | 7.0 | 6.8 |
 
+## What is built (`mrc3_core.v`, Rescue Auto)
+
+Look-ahead with W = 1024 pairs and K = 2. On top of that, a steady-clicks
+switch: when 48 of the 64 sub-windows of 4096 pairs (13 ms) held a click, the
+PLL runs all the time. On a very weak signal the PLL is better even between
+the clicks, and without the switch that case lost up to 1 dB
+(`fade_study10.py`, `fade_study11.py`, `click_density.py`). `mrc3_model.rescue50`
+matches the RTL bit for bit (`run_tb3.py`). `results/fade10_final.txt`
+compares old Auto with the new one (SINAD dB):
+
+| | old Auto | new Auto |
+|---|---|---|
+| 1 C5, static 10 dB | 4.6 | 5.0 |
+| 1 C5, 30 Hz / 14 dB | 4.8 | 6.3 |
+| 1 C5, 100 Hz / 20 dB | 5.7 | 7.2 |
+| 1 C5, 300 Hz / 20 dB | 5.0 | 6.8 |
+| 3 C5s, 30 Hz / 8 dB | 3.3 | 4.7 |
+| 3 C5s, 300 Hz / 8 dB | 5.7 | 6.4 |
+| 3 C5s, static 4 dB | 5.0 | 5.0 |
+| worst case anywhere | | -0.1 |
+
 The rest of the loss against static (~3 dB) comes with having a single antenna;
 antenna diversity (more C5s) is what removes it.

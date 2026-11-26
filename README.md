@@ -157,10 +157,13 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
   - *Rescue*: a second demodulator for very weak signals, a phase-locked
     loop on the combined angle (FM threshold extension: it rides through the
     noise "clicks" that break up the normal discriminator's picture). It costs
-    some sharpness and colour, so Auto only uses it while the normal
-    discriminator clicks a lot (from 100 clicks per 13 ms, back below 25) and
-    hands back on a good signal. `sim/perf_rescue.py`, picture lock with the
-    goggle model, colour scene:
+    some sharpness and colour, so Auto uses it only where it helps: both
+    demodulators' output waits ~51 µs, and the PLL's goes out wherever the
+    normal discriminator clicks twice or more within ±51 µs (a fade: its
+    clicks come in a burst), the discriminator's everywhere else; on a very
+    weak signal (clicks in 48 of 64 stretches of 205 µs) the PLL runs all the
+    time. `sim/perf_rescue.py`, picture lock with the goggle model, colour
+    scene:
 
     | | Off | Auto |
     |---|---|---|
@@ -171,7 +174,11 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
     | 3 C5s, -2 dB, fading 300 Hz | 0.72 | 0.97 |
 
     About +4..5 dB SINAD while it is in use (1 C5 to 9 dB C/N, three to
-    ~5 dB); above that Auto stays on the normal discriminator. On shows the
+    ~5 dB); above that Auto stays on the normal discriminator, except through
+    fades: under Rayleigh fading up to +1.8 dB SINAD against picking per
+    13 ms (one C5, 300 Hz at 20 dB C/N: 5.0 -> 6.8 dB; three C5s, 30 Hz at
+    8 dB: 3.3 -> 4.7 dB), never more than 0.1 dB below it
+    (`sim/fading/`). On shows the
     PLL always (softer picture on a good signal). The link log records when
     it is in use.
 - **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
