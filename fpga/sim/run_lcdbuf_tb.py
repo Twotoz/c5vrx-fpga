@@ -168,7 +168,7 @@ def main():
     dec = {}
     for l in lines:
         if l.startswith('S '):
-            _, f, sk, age, cl = map(int, l.split()); dec.setdefault(f, set()).add((sk, age, cl))
+            f, sk, age, cl = map(int, l.split()[1:]); dec.setdefault(f, set()).add((sk, age, cl))
     for f, d in sorted(dec.items()):
         if any(sk and (not cl or age > 2) for sk, age, cl in d): fail(f'field {f}: skipped with an invalid source {d}')
     print('fbuf decisions per corrupt field (skipped, source age, source clean):', {f: sorted(d) for f, d in sorted(dec.items())})

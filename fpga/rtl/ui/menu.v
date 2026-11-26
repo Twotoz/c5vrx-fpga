@@ -31,6 +31,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     input  wire [15:0] sync_q_a,
     input  wire [1:0]  dvr_state_a,      // dvr.v: 0 no card, 1 ready, 2 recording, 3 error
     input  wire        wide_a,           // vid_sync: the camera signals 16:9
+    input  wire [6:0]  fps_real_a,       // vid_sync: fields in the last second from a real vertical sync (slow, clk_a)
+    input  wire [6:0]  fps_pred_a,       //   and fields the flywheel predicted
     output reg         osd_we,           // cell RAM write
     output reg  [10:0] osd_waddr,
     output reg  [11:0] osd_wdata,
@@ -80,7 +82,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                      F_SCANV = 9, F_RECV = 10, F_RXCNT = 11, F_RXROW = 12, F_GAINV = 13, F_AFCV = 14, F_BRIGHTV = 15,
                      F_CALV = 16, F_EDL = 17, F_EDR = 18, F_MODEV = 19,
                      F_ASPV = 20, F_LOGOV = 21, F_LOGO = 22, F_KLOCKV = 23, F_ASYNCV = 24, F_RESCV = 25, F_SPIKEV = 26, F_WEAKV = 27, F_NFILTV = 28, F_HZ90V = 29,
-                     F_BOOTBLD = 30, F_BOOTVER = 31, F_BOOTRX = 32, F_BOOTSD = 33, F_NATIVEV = 34;
+                     F_BOOTBLD = 30, F_BOOTVER = 31, F_BOOTRX = 32, F_BOOTSD = 33, F_NATIVEV = 34, F_VIDFPS = 35;
     localparam [4:0] ITEM0 = 5'd7;
     // ---- slow clock ---------------------------------------------------------------
     localparam MS = CLK_HZ / 1000;
@@ -93,8 +95,10 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     // ---- clock-domain crossing of the markers and the video status ----------------
     reg [1:0] wd;
     reg [2:0] mt; reg [1:0] lk, pl; reg [15:0] sq1, sq2; reg [1:0] ds1, ds2;
+    reg [6:0] fr1, fr2, fp1, fp2;        // fields per second (changes once a second: two flops are enough)
     always @(posedge clk) begin
         mt <= {mt[1:0], mk_tog_a}; lk <= {lk[0], locked_a}; pl <= {pl[0], pal_a}; sq1 <= sync_q_a; sq2 <= sq1;
+        fr1 <= fps_real_a; fr2 <= fr1; fp1 <= fps_pred_a; fp2 <= fp1;
         ds1 <= dvr_state_a; ds2 <= ds1; wd <= {wd[0], wide_a};
     end
     wire mk_ev = mt[2] ^ mt[1];          // payload/source stable for ~250 ms after a toggle
@@ -378,7 +382,9 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire [7:0]  gn = st_gain[rk] > 8'd99 ? 8'd99 : st_gain[rk];
     // one decimal converter for the number this cell shows (one cell a clock):
     // the scan step, the recording minutes, C/N or gain; seconds have their own
+    wire [6:0]  fr99 = fr2 > 7'd99 ? 7'd99 : fr2, fp99 = fp2 > 7'd99 ? 7'd99 : fp2;
     wire [7:0]  nv = fid == F_SCANV ? {2'b0, scan_ch} + 8'd1 :
+                     fid == F_VIDFPS ? {1'b0, fi <= 7'd7 ? fr99 : fp99} :
                      (fid == F_RXROW && fi <= 7'd14) ? cn_db : gn;
     wire [3:0]  T = tv(nv), O = ov(nv);
     reg  [6:0]  fch; reg fgv, fbv; reg [2:0] ffg; reg [1:0] fbg;
@@ -500,6 +506,24 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     fch = !fresh[bk] ? G_BARS : st_sig[bk] >= 7'd88 ? G_BARS + 7'd4 : st_sig[bk] >= 7'd63 ? G_BARS + 7'd3 :
                           st_sig[bk] >= 7'd38 ? G_BARS + 7'd2 : st_sig[bk] >= 7'd13 ? G_BARS + 7'd1 : G_BARS;
                 end else fch = SP;
+            end
+            // receivers page: video fields per second, real / predicted (gen_osd.py VIDFPS)
+            F_VIDFPS: begin
+                fch = SP; fgv = 1'b1; ffg = GREY;
+                case (fi)
+                    7'd0: fch = "V"; 7'd1: fch = "i"; 7'd2: fch = "d"; 7'd3: fch = "e"; 7'd4: fch = "o";
+                    7'd6, 7'd7: begin
+                        fch = fi == 7'd7 ? digit(O) : fr99 >= 7'd10 ? digit(T) : SP;
+                        ffg = fr99 == 7'd0 ? RED : fp99 != 7'd0 ? AMBER : GREEN;
+                    end
+                    7'd8: fch = "/"; 7'd9: fch = "s";
+                    7'd12: fch = "p"; 7'd13: fch = "r"; 7'd14: fch = "e"; 7'd15: fch = "d";
+                    7'd17, 7'd18: begin
+                        fch = fi == 7'd18 ? digit(O) : fp99 >= 7'd10 ? digit(T) : SP;
+                        ffg = fp99 != 7'd0 ? AMBER : GREY;
+                    end
+                    default: fch = SP;
+                endcase
             end
             F_RXROW: begin
                 fch = SP;

@@ -51,6 +51,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
     output reg         wide,          // the camera signals 16:9 (CGMS-A / WSS)
     output wire        fields_real,   // the last 6 field events were all real vertical syncs on the trusted grid (none predicted)
+    output reg  [6:0]  fps_real,      // field events in the last second from a real vertical sync (menu Receivers: Video n/s)
+    output reg  [6:0]  fps_pred,      //   and those the flywheel predicted (no usable vertical sync): the display ran on
     // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
     output reg         d_valid,
     output reg  [9:0]  d_x,
@@ -125,6 +127,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     localparam [19:0] NTSC_PERIOD = 20'd667333, PAL_PERIOD = 20'd800000;
     localparam [19:0] V_WINDOW = 20'd6000;  // +/- 150 us
     reg [19:0] field_age, raw_age;
+    reg [25:0] fps_tim; reg [6:0] fps_rc, fps_pc;      // the one-second window and its counts
     reg [11:0] broad_gap;
     reg [4:0] missed_fields;
     reg [1:0] other_count;
@@ -154,7 +157,17 @@ module vid_sync #(parameter D3_ADAPT = 0) (
         if (rst) begin
             field_age <= 0; raw_age <= 20'hfffff; broad_gap <= 12'hfff; missed_fields <= 0;
             other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
+            fps_tim <= 0; fps_rc <= 0; fps_pc <= 0; fps_real <= 0; fps_pred <= 0;
         end else begin
+            // fields per second: real (accepted vertical sync) and predicted (flywheel)
+            if (fps_tim == 26'd39999999) begin
+                fps_tim <= 0; fps_real <= fps_rc; fps_pred <= fps_pc;
+                fps_rc <= {6'd0, field_accept}; fps_pc <= {6'd0, field_coast};
+            end else begin
+                fps_tim <= fps_tim + 1'b1;
+                if (field_accept && !(&fps_rc)) fps_rc <= fps_rc + 1'b1;
+                if (field_coast && !(&fps_pc)) fps_pc <= fps_pc + 1'b1;
+            end
             if (broad) broad_gap <= 0;
             else if (!(&broad_gap)) broad_gap <= broad_gap + 1'b1;
             if (raw_start) raw_age <= 0;

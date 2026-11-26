@@ -47,12 +47,16 @@ P1 amplitude-gated PLL  bandwidth-matched (split gpll/disc vs split pll/disc):  
                         +0.0 .. +1.2 dB, largest in fades and dropouts; ungated   only (the gate needs the branch's
                         (gatedpll vs pll) +0.5 .. +2.5 dB but -1.2 .. -2.5 dB      energy); needs AGC-step and board-IQ
                         more detail loss                                          tests before RTL
-P1 real / predicted     implemented minimal: vid_sync fields_real -> link log      keep (done); line counters and an
-   counters             flag bit 7 (tools/trilog.py fields_real)                   OSD page: investigate
+P1 real / predicted     implemented: vid_sync fields_real -> link log flag bit 7   keep (done); per-line real / flywheel
+   counters             (tools/trilog.py), and fps_real / fps_pred (fields a       counters: investigate
+                        second from a real vertical sync / predicted) on the
+                        menu's Receivers page ("Video 59/s  pred  0")
 P1 confidence-gated     implemented in #12 (levels from real sync only, gain      keep (done)
    gain / levels        after trusted fields), run_video_levels_tb.py
-P2 integrating V sync   see run_video_levels_tb.py vchop (100 ns spikes every     see the test result in the PR
-                        6 us in every broad pulse)
+P2 integrating V sync   reproduced: 100 ns spikes every 6 us in every broad       fixed (minimal): a pulse ends only after
+   (fragmented pulses)  pulse -> no field was ever accepted (k8 never left its    0.8 us above the slicer (vid_sync
+                        reset value). With a 0.8 us release hold every field is  HI_HOLD); run_video_levels_tb.py vchop.
+                        accepted (fields_real held), all other cases unchanged   A full integrator: not needed so far
 P2 split luma / chroma  PLL luma (< 2.5 MHz) + discriminator chroma band: vs      investigate: helps at >= 8 dB C/N;
                         Rescue Auto +0 .. +3 dB at >= 8 dB (NTSC), -1.9 .. -2.8   not near threshold; PAL band misses
                         dB at 4 .. 6 dB; the control (Rescue luma filtered the    3 MHz detail
