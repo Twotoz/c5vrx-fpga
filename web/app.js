@@ -47,17 +47,26 @@ async function loadReleases() {
 const current = () => releases[parseInt($('release').value, 10)] || null;
 const asset = (rel, name) => rel && rel.assets.find(a => a.name === name);
 const assetUrl = a => a.local_url || a.url;
+const BITSTREAMS = [
+  ['triversity_lcd.fs', 'LCD'], ['triversity_lcd_dvr.fs', 'LCD-DVR'],
+  ['triversity_hdmi.fs', 'HDMI'], ['triversity_hdmi_dvr.fs', 'HDMI-DVR'], ['triversity_hdmi90.fs', 'HDMI90'],
+  ['triversity_lcd_debug.fs', 'LCD-DEBUG'], ['triversity_hdmi_debug.fs', 'HDMI-DEBUG'],
+];
 function showRelease() {
   const rel = current();
-  const fs = asset(rel, 'triversity.fs');
-  $('dlFs').href = fs ? assetUrl(fs) : '#';
-  $('dlFs').toggleAttribute('aria-disabled', !fs);
-  const hd = asset(rel, 'triversity_hdmi.fs');
-  $('dlFsHdmi').href = hd ? assetUrl(hd) : '#';
-  $('dlFsHdmi').toggleAttribute('aria-disabled', !hd);
-  const h9 = asset(rel, 'triversity_hdmi90.fs');
-  $('dlFsHdmi90').href = h9 ? assetUrl(h9) : '#';
-  $('dlFsHdmi90').toggleAttribute('aria-disabled', !h9);
+  // the standard builds (README "Bitstreams"), one download button each
+  const box = $('fsButtons');
+  box.replaceChildren();
+  BITSTREAMS.forEach(([name, label], i) => {
+    const a = document.createElement('a');
+    const f = asset(rel, name);
+    a.className = i === 0 ? 'action primary' : 'action';
+    a.href = f ? assetUrl(f) : '#';
+    a.download = '';
+    a.textContent = `${label} (${name})`;
+    a.toggleAttribute('aria-disabled', !f);
+    box.appendChild(a);
+  });
   $('infoName').textContent = rel ? (rel.name || rel.tag) : '-';
   $('infoDate').textContent = rel ? new Date(rel.published_at).toLocaleString() : '-';
   $('infoAssets').textContent = rel ? rel.assets.map(a => a.name).join(', ') : '-';

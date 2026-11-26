@@ -2,7 +2,7 @@ name: Build FPGA bitstream
 description: Build a Tang Nano 20K variant with a pinned toolchain and optional exact placement.
 inputs:
   variant:
-    description: lcd, lcd-live, hdmi, hdmi-live, or hdmi90; -debug adds the live USB status (DEBUG=1)
+    description: lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug or hdmi-debug (the standard builds)
     required: true
   placement:
     description: Exact seed or seed:beta. Leave empty for the build script defaults.
@@ -30,11 +30,13 @@ runs:
         export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0 DEBUG=0
         suffix=""
         case "$VARIANT" in *-debug) DEBUG=1; suffix=_debug; VARIANT=${VARIANT%-debug} ;; esac
+        # LCD: the buffered LCD (~3 ms), no DVR; LCD-DVR: the LCD line by line with
+        # the HQ DVR; HDMI: no DVR; HDMI-DVR: with the HQ DVR; HDMI90: 90 Hz, field buffer
         case "$VARIANT" in
-          lcd) source=triversity.fs ;;
-          lcd-live) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
-          hdmi) HDMI=1; source=triversity_hdmi.fs ;;
-          hdmi-live) HDMI=1; NODVR=1; source=triversity_hdmi.fs; asset=triversity_hdmi_live.fs ;;
+          lcd) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd.fs ;;
+          lcd-dvr) source=triversity.fs; asset=triversity_lcd_dvr.fs ;;
+          hdmi) HDMI=1; NODVR=1; source=triversity_hdmi.fs ;;
+          hdmi-dvr) HDMI=1; source=triversity_hdmi.fs; asset=triversity_hdmi_dvr.fs ;;
           hdmi90) HDMI90=1; source=triversity_hdmi90.fs ;;
           *) printf 'Unknown FPGA variant: %s\n' "$VARIANT" >&2; exit 2 ;;
         esac

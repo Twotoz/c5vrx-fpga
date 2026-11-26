@@ -12,7 +12,7 @@ on:
         description: Bitstream to build
         type: choice
         default: lcd
-        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90, lcd-debug, lcd-live-debug, hdmi-debug, hdmi-live-debug]
+        options: [lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug, hdmi-debug]
       placement:
         description: Exact placement (e.g. 3:0.8), empty for automatic
         type: string
@@ -38,11 +38,11 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y iverilog fonts-jetbrains-mono
           pip install numpy scipy numba pillow
-      - name: Combiner and discriminator, bit-exact with the model
+      - name: Combiner and Rescue PLL, bit-exact with the model
         run: python fpga/sim/run_tb3.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
-      - name: Fixed-point D3 and asymmetric RF failover
-        run: python fpga/sim/run_d3_tb.py && python fpga/sim/run_fade_failover_tb.py
+      - name: Asymmetric RF failover
+        run: python fpga/sim/run_fade_failover_tb.py
       - name: B / C alignment (shared engine against two separate ones)
         run: python fpga/sim/run_align_tb.py
       - name: Markers
@@ -104,9 +104,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { variant: lcd-live, pnr: 10m }
-          - { variant: hdmi-live, pnr: 10m }
-          - { variant: hdmi90, pnr: 25m }     # slower to place on the runners
+          # the standard builds; the DVR ones and HDMI90 are slower to place on the runners
+          - { variant: lcd, pnr: 10m }
+          - { variant: lcd-dvr, pnr: 20m }
+          - { variant: hdmi, pnr: 10m }
+          - { variant: hdmi-dvr, pnr: 20m }
+          - { variant: hdmi90, pnr: 25m }
+          - { variant: lcd-debug, pnr: 10m }
+          - { variant: hdmi-debug, pnr: 10m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga

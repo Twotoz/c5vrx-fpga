@@ -57,28 +57,34 @@ USB debugger). Every push to `main` that changes the firmware or the FPGA
 design publishes a release (`release.yml`); `pages.yml` mirrors the newest
 releases into the flasher.
 
-Three bitstreams with the same receiver; the LCD and HDMI share the Tang's
+### Bitstreams
+
+The standard builds. All have the same receiver (three C5s fused: Single /
+Diversity / Triversity, the Rescue PLL, colour NTSC / PAL, the full menu and
+OSD, Noise filter, Keep lock, Adaptive sync). The LCD and HDMI share the Tang's
 pins, so flash the one for your screen:
 
-| | `triversity.fs` | `triversity_hdmi.fs` | `triversity_hdmi90.fs` |
-|---|:---:|:---:|:---:|
-| Output | 800x480 RGB LCD | HDMI 720x480p60 / 720x576p50 | HDMI 720x480 @ 89.9 Hz / 720x576 @ 90 Hz |
-| Picture locked to the camera, line by line (no frame buffer) | ✅ | ✅ | ❌ field buffer in the SDRAM |
-| Extra delay | none | none | up to a field + a frame |
-| Three C5s fused (Single / Diversity / Triversity) | ✅ | ✅ | ✅ |
-| Colour (NTSC / PAL) | ✅ | ✅ | ✅ |
-| Full menu and OSD | ✅ | ✅ | ✅ |
-| Rescue, Noise filter, Keep lock, Adaptive | ✅ | ✅ | ✅ |
-| Aspect (4:3 / 16:9 / Stretch / Auto) | ✅ | ❌ the screen scales | ❌ the screen scales |
-| HQ DVR (colour JPEG of every field to the TF card) | ✅ | ✅ | ❌ |
-| Link log (with the DVR) | ✅ | ✅ | ❌ |
-| LUT4 / BSRAM used | 83 % / 45 of 46 | 84 % / 42 of 46 | 66 % / 31 of 46 |
+| build | file | output | picture | DVR | `fpga/build.sh` |
+|---|---|---|---|:---:|---|
+| **LCD** | `triversity_lcd.fs` | 800x480 RGB LCD | fixed panel timing from an SDRAM field buffer, ~3 ms behind the camera | ❌ | `NODVR=1 LCDBUF=1` |
+| **LCD-DVR** | `triversity_lcd_dvr.fs` | 800x480 RGB LCD | locked to the camera, line by line | ✅ | (default) |
+| **HDMI** | `triversity_hdmi.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | ❌ | `HDMI=1 NODVR=1` |
+| **HDMI-DVR** | `triversity_hdmi_dvr.fs` | HDMI 720x480p60 / 720x576p50 | locked to the camera, line by line | ✅ | `HDMI=1` |
+| **HDMI90** | `triversity_hdmi90.fs` | HDMI 720x480 @ 89.9 Hz / 720x576 @ 90 Hz | field buffer, up to a field + a frame late | ❌ | `HDMI90=1` |
+| **LCD-DEBUG** | `triversity_lcd_debug.fs` | as LCD | as LCD, plus the live status on the Tang's USB serial | ❌ | `NODVR=1 LCDBUF=1 DEBUG=1` |
+| **HDMI-DEBUG** | `triversity_hdmi_debug.fs` | as HDMI | as HDMI, plus the live status | ❌ | `HDMI=1 NODVR=1 DEBUG=1` |
+
+DVR: the HQ DVR, a colour JPEG of every field to the TF card, with the link
+log. Aspect (4:3 / 16:9 / Stretch / Auto) on the LCD builds; on HDMI the screen
+scales. The LCD buffer and the DVR both use the SDRAM, so LCD-DVR is not
+buffered. CI builds all seven on every pull request; every release carries
+them (`release.yml`).
 
 The HQ DVR buffers the fields in the Tang's built-in 8 MB SDRAM (block order,
 up to four fields), so recording never takes block RAM or time from the
-picture; the 90 Hz build uses that SDRAM for its field buffer instead. Timing
-is met in all three (`fpga/build.sh` tries placements, seed and density, until
-one routes: at 85 % not every one does). `PLACEMENT=3:0.8 fpga/build.sh` builds
+picture; the LCD and the 90 Hz builds use that SDRAM for their field buffer
+instead. `fpga/build.sh` tries placements, seed and density, until one routes:
+at ~85 % (the DVR builds) not every one does. `PLACEMENT=3:0.8 fpga/build.sh` builds
 exactly one placement; every build writes `fpga/build/placement.txt` (commit,
 placement, Yosys and nextpnr versions). CI and releases use the same pinned OSS
 CAD Suite (2026-11-24, `.github/actions/build-fpga`), so a placement that routed
@@ -141,11 +147,10 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
 - **Record**: Off -> On (video + link log) -> Log (link log only) -> Off;
   No card, Ready, the recording time, Log, Card err. The link log: every
   sixth field (0.1 s) a record with per C5 the C/N, signal and AFC / video
-  flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, whether Rescue
-  is in use, the Noise filter's level and the DVR's field number (so it lines up with the video).
+  flags, the combining weights, sync lock and quality, channel, mode, the Signal switches, the Noise filter's level and the DVR's field number (so it lines up with the video).
   `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
-- **Signal** (Keep lock, Adaptive sync and Noise filter On / Off, On after power-up; Rescue Off / Auto / On, On after power-up: on the board its smoothing looked better than Auto's sharper but grainier picture):
+- **Signal** (Keep lock, Adaptive sync, Noise filter and Native AGC On / Off; the first three On after power-up):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
     is lost (8000 lines) instead of going to the black free-run screen
     (`sim/sync_perf.py`: three 10 ms dropouts at 6 dB C/N, 525 lines on the
@@ -159,34 +164,7 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
     one-pole low-pass of that strength (`y += (x - y) >> level`). Level 0
     above ~13 dB C/N, so a good picture keeps all its detail; +2.4 to +3.9
     dB luma SINAD between 3 and 9 dB C/N (`sim/perf_vrx.py`).
-  - *Rescue*: a second demodulator for very weak signals, a phase-locked
-    loop on the combined angle (FM threshold extension: it rides through the
-    noise "clicks" that break up the normal discriminator's picture). It costs
-    some sharpness and colour, so Auto uses it only where it helps: both
-    demodulators' output waits ~51 µs, and the PLL's goes out wherever the
-    normal discriminator clicks twice or more within ±51 µs (a fade: its
-    clicks come in a burst), the discriminator's everywhere else; on a very
-    weak signal (clicks in 48 of 64 stretches of 205 µs) the PLL runs all the
-    time. `sim/perf_rescue.py`, picture lock with the goggle model, colour
-    scene:
-
-    | | Off | Auto |
-    |---|---|---|
-    | 1 C5, -2 dB C/N | 0.04 | 0.93 |
-    | 1 C5, 0 dB | 0.31 | 1.00 |
-    | 1 C5, 0 dB, fading 300 Hz | 0.46 | 0.76 |
-    | 3 C5s, -4 dB | 0.38 | 1.00 |
-    | 3 C5s, -2 dB, fading 300 Hz | 0.72 | 0.97 |
-
-    About +4..5 dB SINAD while it is in use (1 C5 to 9 dB C/N, three to
-    ~5 dB); above that Auto stays on the normal discriminator, except through
-    fades: under Rayleigh fading up to +1.8 dB SINAD against picking per
-    13 ms (one C5, 300 Hz at 20 dB C/N: 5.0 -> 6.8 dB; three C5s, 30 Hz at
-    8 dB: 3.3 -> 4.7 dB), never more than 0.1 dB below it
-    (`sim/fading/`). On shows the
-    PLL always (softer picture on a good signal). The link log records when
-    it is in use.
-- **Settings**: gain model (Level, Keel, RSSI), AFC, aspect, logo,
+- **Settings**: Direct Gain model (Level, Ultra, RSSI), AFC, aspect, logo,
   brightness, calibrate (filter and DC on every C5). The 90 Hz HDMI build has
   **90 Hz** in place of brightness: Free (the output runs on the crystal, the
   newest complete field; the default), Camera (the frames are locked to the
@@ -240,10 +218,30 @@ channel model (NTSC, independent noise, Rayleigh fading per antenna):
 | 2 C5s, lock 50 % | +1.6 dB | +2.5 dB | +2.5 dB |
 | 2 C5s, lock 90 % | +2.1 dB | +4.4 dB | +2.0 dB |
 
-Picture noise at equal C/N is 5-6 dB lower with three C5s. Requires the
-click-suppressed discriminator (D32-R2's 50 ns rule on the combined angle);
-the plain per-sample discriminator loses 3-5 dB. Simulation only: no board,
-goggle or range result.
+Picture noise at equal C/N is 5-6 dB lower with three C5s. Simulation only:
+no board, goggle or range result.
+
+### Demodulator: the Rescue PLL
+
+One demodulator: a phase-locked loop on the combined angle (FM threshold
+extension: it rides through the noise "clicks" that break up a plain
+discriminator's picture), its code from the D32-R2 table. On the board
+(2026-11-26, one C5 close by) its smoothing looked better than the sharper but
+grainier discriminator, and under fading it holds the picture. The
+discriminator, Auto (look-ahead selection, `sim/fading/`) and the D3
+experiment are gone. `sim/perf_rescue.py`, picture lock with the goggle model,
+colour scene (On = the PLL, Off = the old discriminator):
+
+| | Off | PLL |
+|---|---|---|
+| 1 C5, -2 dB C/N | 0.04 | 0.93 |
+| 1 C5, 0 dB | 0.31 | 1.00 |
+| 1 C5, 0 dB, fading 300 Hz | 0.46 | 0.76 |
+| 3 C5s, -4 dB | 0.38 | 1.00 |
+| 3 C5s, -2 dB, fading 300 Hz | 0.72 | 0.97 |
+
+On a strong signal the simulation scores it ~3 dB below the discriminator
+(softer detail: 20 dB C/N, one C5, SINAD 9.5 -> 6.9 dB).
 
 ## Wiring
 
@@ -317,8 +315,8 @@ all three C5s (ESP-IDF v6.0.2, `idf.py set-target esp32c5 build`; CI builds it
 and runs the host tests in `c5/test/run_tests.sh`).
 
 Kept from C5VRX, unchanged in behaviour: RF front end and PHY baseline (11p
-helper, digital filter mode 12), Direct Gain with LEVEL AGC, LEVEL TOP and
-STRONG LANE, C/N-AUTO noise maps, DC tables, base map and live DC servo, LOW
+helper, digital filter mode 12), Direct Gain with LEVEL AGC (and ULTRA, RSSI)
+and LEVEL TOP, C/N-AUTO noise maps, DC tables, base map and live DC servo, LOW
 DC, sampling-phase alignment at boot, manual filter/DC calibration (F, B),
 AFC with PAL/NTSC detection, VTX profiles, flight log and field diagnostics.
 
@@ -349,7 +347,7 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 
 - IQ path on C5 A's 40 MHz clock: capture of the three C5s, alignment of B and
   C to A, marker detection (a C5 sending a marker is left out for those
-  samples), pre-detection MRC and the click-suppressed 50 ns discriminator
+  samples), pre-detection MRC and the Rescue PLL
   (`rtl/rx/mrc3_core.v`, bit-exact with `model/mrc3_model.py`).
 - Video: sync slicer on a low-passed luma (locks down to 0 dB C/N; on the
   plain luma it needed 14 dB: FM clicks cut the sync pulses and pulled the
@@ -384,7 +382,7 @@ USB console: `T` status, `h` keys, `L` IQ LED, `` ` `` reboot to download.
 HQ DVR on the PC:
 
 ```
-fpga/build.sh                                    # the bitstream (or triversity.fs from a release)
+fpga/build.sh                                    # the bitstream (or triversity_lcd_dvr.fs from a release)
 python tools/make_dvr_file.py /media/TF          # once, on a freshly formatted FAT32 card
 python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4          # 720x480 at 29.97 fps (PAL 720x576, 25)
 python tools/hqdvr_to_mp4.py /media/TF/TRIDVR.BIN rec.mp4 --bob    # every field, 59.94 / 50 fps
@@ -401,7 +399,7 @@ The HQ build's screen while recording:
 
 ![HQ DVR live view](docs/osd_hq_rec.png)
 
-HDMI (`HDMI=1 fpga/build.sh` -> `triversity_hdmi.fs`): the LCD's pins 33-40
+HDMI (`HDMI=1 [NODVR=1] fpga/build.sh` -> `triversity_hdmi.fs`; HDMI and HDMI-DVR): the LCD's pins 33-40
 carry the TMDS pairs (emulated LVDS, LVCMOS33D), so one bitstream drives one
 of the two. 720x480p59.94 (NTSC) or 720x576p50 (PAL, all 288 lines a field)
 at 27 MHz, exactly twice the analog line rate: the same genlocked line
@@ -410,7 +408,7 @@ the DVR records the same pixels; the OSD is the LCD's grid cropped to
 columns 3..62 (`run_osd_tb.py --hdmi` checks it pixel for pixel, the TMDS
 encoder `run_tmds_tb.py`).
 
-Buffered LCD (`NODVR=1 LCDBUF=1 fpga/build.sh`, released as `triversity_lcd_live.fs`;
+Buffered LCD (`NODVR=1 LCDBUF=1 fpga/build.sh`, the **LCD** build, `triversity_lcd.fs`;
 without the HQ DVR): the panel runs on fixed timing from the crystal (every line
 1072 / 1080 clocks) and reads each source line from the SDRAM field buffer
 (`fbuf.v`, 400 words a line), one frame a field, about 3 ms behind the camera
@@ -419,7 +417,7 @@ source, so a lock, a dropout or a field-length change cannot shift the picture
 or the OSD; while the frame lock settles it shows the last complete field.
 `run_lcdbuf_tb.py` checks it from the source to the panel.
 
-HDMI at 90 Hz (`HDMI90=1 fpga/build.sh` -> `triversity_hdmi90.fs`, for screens
+HDMI at 90 Hz (`HDMI90=1 fpga/build.sh` -> `triversity_hdmi90.fs`, the **HDMI90** build, for screens
 that need 90 Hz; without the HQ DVR): the output free-runs from the crystal at
 48.6 MHz, 720x480 at 89.88 Hz (NTSC, 1030 x 525) or 720x576 at 90.00 Hz (PAL,
 864 x 625), and shows the newest complete field from a three-slot field buffer
@@ -434,7 +432,7 @@ Simulation (`fpga/sim/`): `run_tb3.py` (combiner, bit-exact), `run_marker_tb.py`
 `run_align_tb.py` (the shared B/C alignment against two separate engines on FM-modulated video),
 `run_jpeg_tb.py` (JPEG encoder byte for byte against `model/jpeg_model.py`; NTSC, PAL, stalled output),
 `run_dvr_hq_tb.py` (HQ DVR to the SD card model, every record byte-exact, read back with `tools/hqdvr_to_mp4.py`; `--log` with the link log, read back with `tools/trilog.py`),
-`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter), `perf_rescue.py` (Rescue Off / Auto / On; `run_tb3.py` checks the PLL bit-exact, on and switching),
+`run_ans_tb.py` (Noise filter, bit-exact), `perf_vrx.py` (picture performance: one C5 against three per scenario, the Noise filter), `perf_rescue.py` (the PLL against the old discriminator; `run_tb3.py` checks the PLL bit-exact),
 `run_aspect_tb.py` (CGMS-A / WSS through the receive chain),
 `run_hdmi90_tb.py` (the 90 Hz HDMI output: field buffer, SDRAM and output, every pixel, NTSC and PAL),
 `run_video_tb.py` (test picture through the whole chain; needs C5VRX's
