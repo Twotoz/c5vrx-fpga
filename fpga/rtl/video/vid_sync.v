@@ -50,6 +50,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     output reg         locked,
     output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
     output reg         wide,          // the camera signals 16:9 (CGMS-A / WSS)
+    output wire        fields_real,   // the last 6 field events were all real vertical syncs on the trusted grid (none predicted)
     // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
     output reg         d_valid,
     output reg  [9:0]  d_x,
@@ -93,6 +94,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     reg  [6:0] lev_miss;                    // consecutive otherwise good lines with a shallow depth
     reg  [8:0] lev_cnt, lev_field;          // qualified lines in this / the previous field
     reg        fld_trusted;                 // the previous field event was an accepted vertical sync
+    reg  [5:0] fld_hist;                    // accepted (1) / predicted (0), the last 6 field events
+    assign fields_real = &fld_hist;
     // The two 9-bit levels can sum to more than 511 before averaging.
     wire [9:0] level_sum = {1'b0, tip} + {1'b0, porch};
     wire [9:0] slice = lev_n[4] ? {1'b0, level_sum[9:1]} : {1'b0, minprev} + 10'd16;
@@ -311,7 +314,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0;
             low_px <= 10'd0; conc_run <= 8'd0; line_skip <= 1'b0;
-            tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
+            tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; fld_hist <= 6'd0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
             aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
         end else begin
             // line counter, with the flywheel correction below
@@ -400,6 +403,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             if (field_event) begin
                 field_lines <= vline;
                 lev_field <= lev_cnt; lev_cnt <= 9'd0; fld_trusted <= field_accept;
+                fld_hist <= {fld_hist[4:0], field_accept};
                 vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0;
             end
             // ---- active pixels ----

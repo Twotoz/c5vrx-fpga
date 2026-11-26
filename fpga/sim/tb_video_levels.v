@@ -1,6 +1,6 @@
 // Triversity: vid_sync on a code file (code.hex), one record per line start
 // to lv.txt: sample, vline, locked, k8, tip, porch, written / black / saturated
-// pixels of the line just finished, shown (0: concealed / not shown) (run_video_levels_tb.py, issue #12).
+// pixels of the line just finished, shown (0: concealed / not shown), fields_real (run_video_levels_tb.py, issue #12).
 `timescale 1ns/1ps
 module tb_video_levels;
     reg clk = 0, rst = 1;
@@ -24,7 +24,7 @@ module tb_video_levels;
     always @(posedge clk) begin
         // at hc = 1 line_info holds the line just finished, whose pixels were counted
         if (!rst && u_vs.hc == 12'd1) begin
-            $fwrite(fl, "%0d %0d %0d %0d %0d %0d %0d %0d %0d %0d\n", k, u_vs.vline, locked, u_vs.k8, u_vs.tip, u_vs.porch, nwr, nblk, nsat, line_info[8]);
+            $fwrite(fl, "%0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d\n", k, u_vs.vline, locked, u_vs.k8, u_vs.tip, u_vs.porch, nwr, nblk, nsat, line_info[8], u_vs.fields_real);
             nwr = 0; nblk = 0; nsat = 0;
         end
         if (wr_en) begin
