@@ -18,7 +18,6 @@
 #include "phase8_gain_lut.h"
 #include "phy.h"
 #include "rf.h"
-#include "strong_lane.h"
 
 direct_gain_t s_gain;
 volatile uint8_t s_current_gain = 62u;
@@ -44,9 +43,9 @@ static esp_timer_handle_t s_gain_timer;
 static TaskHandle_t s_observer, s_sentinel;
 static volatile uint8_t s_gain_mode = GAIN_MODE_DEFAULT;
 
-/* Menu/console cycle: LEVEL (the default), KEEL (KEEL-1), RSSI, ULTRA
- * (experimental), MAX, then fixed G78 down to G24. */
-static const uint8_t s_gain_modes[] = {GAIN_MODE_LEVEL, GAIN_MODE_AUTO, GAIN_MODE_RSSI, GAIN_MODE_ULTRA, GAIN_MODE_MAX,
+/* Console cycle: LEVEL (the default), ULTRA, RSSI, MAX, then fixed G78 down
+ * to G24. */
+static const uint8_t s_gain_modes[] = {GAIN_MODE_LEVEL, GAIN_MODE_ULTRA, GAIN_MODE_RSSI, GAIN_MODE_MAX,
                                        78, 72, 66, 60, 54, 48, 42, 36, 30, 24};
 
 uint8_t receiver_gain_mode(void) { return s_gain_mode; }
@@ -76,7 +75,6 @@ uint8_t receiver_gain_mode_next(uint8_t mode)
 
 const char *receiver_gain_mode_name(uint8_t mode, char *buf, unsigned size)
 {
-    if (mode == GAIN_MODE_AUTO) return "KEEL";
     if (mode == GAIN_MODE_LEVEL) return "LEVEL";
     if (mode == GAIN_MODE_RSSI) return "RSSI";
     if (mode == GAIN_MODE_ULTRA) return "ULTRA";
@@ -220,76 +218,12 @@ static void fold_measure(dg_observation_t *o, const uint8_t *samples, unsigned n
 }
 
 /* Fixed modes bypass the controller; apply_target clamps to the live table. */
-/* STRONG LANE (strong_lane.h): with the gain on the floor rows and no lower
- * row asked, a carrier that keeps folding moves to the fine and then the
- * coarse IQ lane; a small or absent carrier moves back. On a coarser lane
- * the gain is held (its controller reads ultrafine cells) and the DC, level
- * and C/N accumulators stand still (observer_task); the DC servo, the C/N
- * reference and map learning are off there (experimental_transfer_active).
- * The route is eight GPIO-matrix writes by the observer, no PHY register;
- * the control epoch invalidates what was observed on the old lane. */
-static strong_lane_t s_strong;
-unsigned receiver_strong_lane(void) { return s_strong.steps; }
-/* Every lane move into the flight log: the FPGA sees 2x / 4x coarser IQ steps
- * on the fine / coarse lane, so close-range picture trouble can be matched
- * against it (FLOG_E_LANE). */
-static void strong_log(uint8_t released)
-{
-    const uint8_t d[8] = {(uint8_t)rf_lane(), s_current_gain, (uint8_t)s_strong.steps,
-                          (uint8_t)s_strong.ups, (uint8_t)(s_strong.ups >> 8),
-                          (uint8_t)s_strong.downs, (uint8_t)(s_strong.downs >> 8), released};
-    flightlog_event(FLOG_E_LANE, d, sizeof(d));
-}
-static void strong_route(int step, uint64_t observed_us)
-{
-    /* The observation's own clock: the next ticks compare against it. */
-    strong_lane_applied(&s_strong, step, observed_us);
-    rf_reroute_lane(RF_LANE_ULTRAFINE - s_strong.steps);
-    ++s_control_epoch;
-    printf("STRONG_LANE lane=%s gain=G%u ups=%lu downs=%lu\n", rf_lane_name(rf_lane()), s_current_gain,
-           (unsigned long)s_strong.ups, (unsigned long)s_strong.downs);
-    strong_log(0);
-}
-/* Back to the ultrafine lane at once: a pause owner (calibration, scan), a
- * fixed gain, the pair sweep or STRONG LANE = OFF. */
-static void strong_release(void)
-{
-    /* Only a lane STRONG LANE routed itself: a boot lane chosen with IQ LANE
-     * (steps 0) is not its to change. */
-    if (!s_strong.steps) return;
-    while (s_strong.steps) strong_lane_applied(&s_strong, -1, (uint64_t)esp_timer_get_time());
-    rf_reroute_lane(RF_LANE_ULTRAFINE);
-    ++s_control_epoch;
-    printf("STRONG_LANE lane=ultrafine released\n");
-    strong_log(1);
-}
-static bool strong_allowed(uint8_t mode)
-{
-    return !experimental_get(EXP_STRONG_LANE) && receiver_gain_mode_auto(mode) && !s_pair_active &&
-           experimental_boot_lane() == RF_LANE_ULTRAFINE;
-}
-
 static uint8_t gain_decision(const dg_observation_t *o)
 {
     const uint8_t mode = s_gain_mode;
-    if (s_strong.steps) {
-        if (!strong_allowed(mode)) strong_release();
-        else {
-            const int step = strong_lane_tick(&s_strong, true, agc_folded(o), o->clip_pm >= 20u, o->pwr_x16, o->observed_us);
-            if (step) strong_route(step, o->observed_us);
-            return s_current_gain;
-        }
-    }
     if (s_pair_active) return pair_decision(o);
-    if (mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI || mode == GAIN_MODE_ULTRA) {
-        const uint8_t t = mode == GAIN_MODE_AUTO ? dg_tick(&s_gain, o) : agc_decision(mode, o);
-        if (strong_allowed(mode) && rf_lane() == RF_LANE_ULTRAFINE &&
-            strong_lane_tick(&s_strong, strong_lane_no_room(s_current_gain, t), agc_folded(o),
-                             o->clip_pm >= 20u, o->pwr_x16, o->observed_us) > 0) {
-            strong_route(1, o->observed_us);
-            return s_current_gain;
-        }
-        if (mode == GAIN_MODE_AUTO) return t;
+    if (receiver_gain_mode_auto(mode)) {
+        const uint8_t t = agc_decision(mode, o);
         if (t == s_current_gain && s_gain.state != DG_HOLD &&
             o->observed_us > (uint64_t)s_last_gain_write_us && o->observed_us - (uint64_t)s_last_gain_write_us >= 2000u)
             s_gain.state = DG_HOLD;
@@ -424,7 +358,6 @@ bool receiver_pause(const char *tag)
     if (s_last_video_us && s_pause_us - s_last_video_us < 3000000) ++s_pauses_video;
     s_paused = true;
     vTaskDelay(pdMS_TO_TICKS(20));   /* let an in-flight window finish */
-    strong_release();                /* the owner measures on the ultrafine lane */
     return true;
 }
 
@@ -514,10 +447,8 @@ static void apply_target(uint8_t target, uint32_t control, uint32_t phy)
      * and T read 0 writes while the gain moves (blackbox session 279, LEVEL:
      * G20..G83, gain_writes 0, no attack events). Counted as applied writes
      * by direction: down is the attack, up the release. */
-    if (s_gain_mode != GAIN_MODE_AUTO || s_pair_active) {
-        ++s_gain.writes;
-        if (target < s_current_gain) ++s_gain.writes_severe; else ++s_gain.writes_moderate;
-    }
+    ++s_gain.writes;
+    if (target < s_current_gain) ++s_gain.writes_severe; else ++s_gain.writes_moderate;
     s_current_gain = target;
     s_last_gain_write_us = esp_timer_get_time();
     ++s_gain_epoch;
@@ -1156,7 +1087,7 @@ static void observer_task(void *arg)
         const dg_map_context_t after_context = map_context();
         if (phy != phy_generation() || phy_busy() || gain_epoch != s_gain_epoch || control != s_control_epoch ||
             table != rf_table_generation() || !dg_map_context_equal(&context, &after_context)) continue;
-        if (!s_strong.steps && cn_gain_settled((uint64_t)t0, (uint64_t)s_last_gain_write_us, s_gain.state == DG_SETTLE)) {
+        if (cn_gain_settled((uint64_t)t0, (uint64_t)s_last_gain_write_us, s_gain.state == DG_SETTLE)) {
             dc_accumulate(&o, sizeof(sample), s_current_gain, control, phy, table);
             level_accumulate(&o, s_current_gain);
             cna_probe(sample, sizeof(sample), &o, s_current_gain, t0);
@@ -1257,8 +1188,6 @@ void receiver_print(void)
         printf("RX_LEVEL unknown probes=%lu clipped_pm=%u\n", (unsigned long)lv.probes, lv.clipped_pm);
     printf("GAIN_SAT one_sided=%lu two_sided=%lu to_dc_servo=%lu (saturated observer windows: one rail per axis = DC-pushed, both = large signal; one-sided ones go to the DC servo, not the gain)\n",
            (unsigned long)s_sat_one_sided, (unsigned long)s_sat_two_sided, (unsigned long)s_gain.one_sided_clips);
-    printf("STRONG_LANE enabled=%u lane=%s steps=%u ups=%lu downs=%lu (a coarser IQ lane while the floor rows still fold; EXPERIMENTAL > STRONG LANE)\n",
-           !experimental_get(EXP_STRONG_LANE), rf_lane_name(rf_lane()), s_strong.steps, (unsigned long)s_strong.ups, (unsigned long)s_strong.downs);
     printf("GAIN_WRITES attack=%lu release=%lu refused=%lu rebinds=%lu overloads=%lu overloads_after_write=%lu heat_events=%lu sentinel_forwarded=%lu sentinel_dropped=%lu (why the gain moved; rebinds keep the core's memory on the same receiver; sentinel = 64-sample fast path, gross saturation only)\n",
            (unsigned long)s_gain.writes_severe, (unsigned long)s_gain.writes_moderate, (unsigned long)s_gain.writes_refused,
            (unsigned long)s_rebinds, (unsigned long)s_gain.overloads, (unsigned long)s_gain.overloads_after_write, (unsigned long)s_gain.heat_events,
@@ -1296,7 +1225,7 @@ void receiver_print(void)
            "map_imports=%lu preset_imports=%lu "
            "obs_windows=%lu obs_us_max=%lu\n",
            s_paused ? "paused" :
-           s_gain_mode == GAIN_MODE_AUTO ? "keel1" : s_gain_mode == GAIN_MODE_LEVEL ? "level" :
+           s_gain_mode == GAIN_MODE_LEVEL ? "level" :
            s_gain_mode == GAIN_MODE_RSSI ? "rssi" : s_gain_mode == GAIN_MODE_ULTRA ? "ultra" : "manual",
            receiver_gain_mode_name(s_gain_mode, mode, sizeof(mode)),
            s_current_gain, (unsigned)s_gain.state, s_obs_p50, s_obs_p95, s_obs_coherence, s_obs_env_ratio_x100,

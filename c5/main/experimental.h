@@ -38,7 +38,7 @@ static const experimental_item_t experimental_items[EXP_ITEMS] = {
     {"IQ LANE", 3, {"ULTRA", "FINE", "COARSE"}},
     {"Clock Pin D10", 2, {"OFF", "ON"}},
     {"AUTO OUTPUT", 2, {"OFF", "ON"}},     /* output_auto.h: the video level from the measured sync and white (v2 order) */
-    {"STRONG LANE", 2, {"ON", "OFF"}},     /* strong_lane.h: a coarser IQ lane when the lowest gain rows still fold */
+    {"STRONG LANE", 2, {"ON", "OFF"}},     /* retired (Triversity lean, 2026-11-26): the slot stays, the wire ids follow */
     /* agc.h LEVEL_TOP_NOISE_MAX_X16: the most receiver noise (cells^2) the top
      * gain row may carry; behind an external LNA it sets the highest row. */
     {"LEVEL TOP", 4, {"9", "12", "16", "6"}},

@@ -60,7 +60,7 @@ enum {
     FLOG_E_OUTPUT_GAP = 15, FLOG_E_OUTPUT_UNLOCK = 16,
     FLOG_E_OUTPUT_AUTO = 18,   /* AUTO OUTPUT applied: gain x8, source tip code, sync depth x4 (control.c) */
     FLOG_E_PAUSE = 19,         /* receiver pause ended: duration ms (u32), first 8 characters of its owner tag */
-    FLOG_E_LANE = 20,          /* STRONG LANE moved the IQ lane (Triversity): lane (0 coarse, 1 fine, 2 ultrafine),
+    FLOG_E_LANE = 20,          /* retired (STRONG LANE removed); old logs: STRONG LANE moved the IQ lane (Triversity): lane (0 coarse, 1 fine, 2 ultrafine),
                                   gain, steps, ups (u16), downs (u16), released (1: back to ultrafine at once) */
 };
 

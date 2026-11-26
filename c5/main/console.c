@@ -47,7 +47,7 @@ static void status(void)
     printf("TRIVERSITY_C5 version=%s lane=%s gain_owner=%s uptime_s=%lld heap_internal=%u heap_largest=%u heap_min=%u "
            "heap_dma=%u heap_lp=%u fw=%s\n",
            esp_app_get_description()->version, rf_lane_name(rf_lane()),
-           rf_native_agc() ? "native_exp" : gm == GAIN_MODE_AUTO ? "keel1" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : gm == GAIN_MODE_ULTRA ? "ultra" : "manual",
+           rf_native_agc() ? "native_exp" : gm == GAIN_MODE_LEVEL ? "level" : gm == GAIN_MODE_RSSI ? "rssi" : gm == GAIN_MODE_ULTRA ? "ultra" : "manual",
            esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -100,7 +100,7 @@ static void help(void)
 {
     printf("Triversity C5 keys: T status, I IQ snapshot, C calibration data dump (read only), D range/health report,\n"
            "  M gain map, R per-second FIELD_DIAG lines on/off, Y/W/X flight log,\n"
-           "  G gain model LEVEL -> KEEL -> RSSI -> MAX -> fixed (automatic models kept across reboots),\n"
+           "  G gain model LEVEL -> ULTRA -> RSSI -> MAX -> fixed (automatic models kept across reboots),\n"
            "  c next channel, b next band, a AFC on/off, d digital RX filter mode, f analog filter AUTO/NARROW/NORMAL/WIDE,\n"
            "  A live VTX profile switch on/off, Q bench gain-pair sweep,\n"
            "  F calibrate the current filter, B full RF optimisation (ground only),\n"

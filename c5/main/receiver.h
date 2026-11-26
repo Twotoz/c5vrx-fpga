@@ -105,8 +105,11 @@ void receiver_set_gain(uint8_t gain);
 void receiver_print(void);
 void receiver_print_map(void);   /* console M: GAINMAP line */
 /* Gain mode: GAIN_MODE_LEVEL (agc.h, the measured-quality AGC, the
- * default), GAIN_MODE_AUTO (KEEL-1, gain.c; shown as KEEL), GAIN_MODE_RSSI
- * (agc.h, a baseline), GAIN_MODE_MAX (table maximum) or a fixed gain index
+ * default), GAIN_MODE_ULTRA, GAIN_MODE_RSSI (agc.h), GAIN_MODE_MAX (table
+ * maximum) or a fixed gain index. GAIN_MODE_AUTO (KEEL-1's own decision,
+ * gain.c dg_tick) is no longer a choice: a stored or linked KEEL starts
+ * LEVEL. KEEL-1's home rows and gain table stay, the models run on them.
+ * Fixed gain index
  * 20..max. Fixed modes skip the controller entirely; paused owners
  * (calibration, scan) still write and the mode returns after. The codes
  * are stored (prefs) and logged (flight log), so they keep their values. */
@@ -123,10 +126,9 @@ void receiver_print_map(void);   /* console M: GAINMAP line */
 /* A mode with an automatic controller (not a fixed gain). */
 static inline bool receiver_gain_mode_auto(uint8_t mode)
 {
-    return mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI || mode == GAIN_MODE_ULTRA;
+    return mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI || mode == GAIN_MODE_ULTRA;
 }
 uint8_t receiver_gain_mode(void);
-unsigned receiver_strong_lane(void);   /* STRONG LANE steps in use: 0 none, 1 fine, 2 coarse (strong_lane.h) */
 void receiver_set_gain_mode(uint8_t mode, bool save);
 uint8_t receiver_gain_mode_next(uint8_t mode);
 const char *receiver_gain_mode_name(uint8_t mode, char *buf, unsigned size);

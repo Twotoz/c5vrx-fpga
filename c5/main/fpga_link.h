@@ -11,7 +11,7 @@
  * absolute settings continuously; a C5 acts when the value differs from its
  * own. One-shot requests carry a sequence number and act when it changes.
  *     'C' channel index (band * 8 + channel)           absolute
- *     'G' Direct Gain model 0 LEVEL, 1 KEEL, 2 RSSI    absolute
+ *     'G' Direct Gain model 0 LEVEL, 2 RSSI (1, the retired KEEL: LEVEL)   absolute
  *         3 Native AGC, 4 restore saved Direct Gain (reboot on ownership change),
  *         5 ULTRA (experimental Direct Gain model, agc.h)
  *     'A' AFC 0 off, 1 on                              absolute

@@ -81,10 +81,10 @@ unsigned experimental_boot_lane(void)
 }
 /* A lane STRONG LANE selected live (receiver.c) is no IQ LANE experiment and
  * needs no reboot; the transfer is still not the calibrated one. */
-static bool lane_experiment(void) { return rf_lane() != RF_LANE_ULTRAFINE && !receiver_strong_lane(); }
+static bool lane_experiment(void) { return rf_lane() != RF_LANE_ULTRAFINE; }
 bool experimental_reboot_needed(void)
 {
-    return (rf_lane() != experimental_boot_lane() && !receiver_strong_lane());
+    return rf_lane() != experimental_boot_lane();
 }
 bool experimental_set(unsigned item, uint8_t value)
 {

@@ -97,20 +97,18 @@ bool video_recent(void)
 }
 
 /* Manual request (menu or console): runs the startup phase once more, in
- * this task (the console keeps draining USB). A live STRONG LANE step is no
- * PHY experiment: the calibration's pause returns to the ultrafine lane
- * (receiver_pause) before anything is measured. */
+ * this task (the console keeps draining USB). */
 static volatile bool s_manual_requested, s_full_requested;
 void filter_request(void)
 {
-    if (experimental_transfer_active() && !receiver_strong_lane()) { printf("CAL refused: reset PHY experiments first\n"); return; }
+    if (experimental_transfer_active()) { printf("CAL refused: reset PHY experiments first\n"); return; }
     if (rf_native_agc()) { puts("COMMAND F refused=native_agc"); return; }
     if (s_startup) { printf("COMMAND F refused=busy\n"); return; }
     s_manual_requested = true;
 }
 void filter_request_full(void)
 {
-    if (experimental_transfer_active() && !receiver_strong_lane()) { printf("CAL refused: reset PHY experiments first\n"); return; }
+    if (experimental_transfer_active()) { printf("CAL refused: reset PHY experiments first\n"); return; }
     if (rf_native_agc()) { puts("COMMAND B refused=native_agc"); return; }
     if (s_startup) { printf("COMMAND B refused=busy\n"); return; }
     s_full_requested = true; s_manual_requested = true;
