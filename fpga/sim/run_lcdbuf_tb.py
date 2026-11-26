@@ -6,9 +6,12 @@ its pixels. The lock drops once and comes back.
 Checked:
   - the panel: every line HHALF (1072) clocks, every frame 480 rows of 800 pixels,
     frame lengths within VFRAME +- 4: whatever the source does;
-  - once locked and settled: each LCD row shows the source row it belongs to, all
-    rows of a frame from one field, the fields in order (none skipped or
-    repeated), and the camera-to-panel delay of row 0 between 2 and 5 ms;
+  - every frame (outside the lock loss): each LCD row shows the source row it
+    belongs to, all rows from one field, never an older field than before;
+  - settled (from the first frame 2 .. 5 ms behind the camera, after the start and
+    again after the relock, which must come): every frame the next field, row 0
+    2 .. 5 ms behind the camera. While acquiring, the frame lock may show each
+    field one frame later (~19 ms) until the frame start has moved past it;
   - no SDRAM timing violation.
     python fpga/sim/run_lcdbuf_tb.py [--frames=N] [--pdelay=ns]
 """
@@ -37,7 +40,7 @@ module tb;
                 line_info <= {show[0], orow[7:0]}; line_tog <= ~line_tog;
                 if (show) begin
                     orow <= orow + 1;
-                    $fwrite(fs, "W %0t %0d %0d\n", $time, fld, orow);        // row orow of field fld complete
+                    $fwrite(fs, "W %0d %0d %0d\n", $time, fld, orow);        // row orow of field fld complete
                 end
                 if (ln == flines - 1) begin ln <= 0; fld <= fld + 1; field_tog <= ~field_tog; orow <= 0; show <= 0; end
                 else begin ln <= ln + 1; show <= (ln + 1 >= SHOW0 && ln + 1 < SHOW0 + NSHOW); end
@@ -77,17 +80,17 @@ module tb;
         cyc = cyc + 1;
         hs_p <= hs; vs_p <= vs; de_p <= de;
         if (hs_p && !hs) begin
-            if (last_hs != 0) $fwrite(fs, "H %0d %0t %0d\n", cyc - last_hs, $time, u_lcd.lv);
+            if (last_hs != 0) $fwrite(fs, "H %0d %0d %0d\n", cyc - last_hs, $time, u_lcd.lv);
             last_hs = cyc; lines = lines + 1;
         end
         if (vs_p && !vs) begin
-            $fwrite(fs, "V %0t %0d %0d %0d\n", $time, row, lines, locked);
+            $fwrite(fs, "V %0d %0d %0d %0d\n", $time, row, lines, locked);
             nfr = nfr + 1; row = 0; lines = 0;
             if (nfr > __FRAMES__) begin $display("sdram_errors %0d", u_ram.errors); $fclose(fs); $finish; end
         end
         if (de) begin npx = npx + 1; if (npx == 400) mid = u_lcd.lb_data; end
         if (de_p && !de) begin
-            $fwrite(fs, "R %0t %0d %0d %04x\n", $time, row, npx, mid);
+            $fwrite(fs, "R %0d %0d %0d %04x\n", $time, row, npx, mid);
             row = row + 1; npx = 0;
         end
     end
@@ -101,8 +104,8 @@ endmodule
 
 
 def main():
-    frames = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--frames=')), 40))
-    pdelay = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--pdelay=')), 3000))
+    frames = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--frames=')), 44))
+    pdelay = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--pdelay=')), 2_300_000))   # panel starts near the lock
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         tb = TB
@@ -122,7 +125,7 @@ def main():
         nonlocal ok
         ok = False; print('FAIL', m)
     if 'sdram_errors 0' not in r.stdout: fail('SDRAM timing: ' + r.stdout[-200:])
-    hs = [l.split() for l in lines if l.startswith('H ')]
+    hs = [l.split() for l in lines if l.startswith('H ')][1:]     # the first: counted from hs_p's start value
     bad = [(int(h[1]), int(h[2]) / 1e6, int(h[3])) for h in hs if int(h[1]) != 1072]
     if bad: fail(f'{len(bad)} LCD lines other than 1072 clocks (clocks, ms, lv): {bad[:6]}')
     # writes: time of row orow of field f complete
@@ -141,31 +144,41 @@ def main():
             frames.append((int(tm), cur, int(nlines), int(lk))); cur = []
     frames = frames[1:]                     # the first is partial
     unlock_t, relock_t = 250_000_000 + 1000 + pdelay, 280_000_000 + 1000 + pdelay
-    last_field, shown, delays, since_relock = None, 0, [], 0
+    # settled: from the first frame whose row 0 is 2 .. 5 ms behind the camera, after
+    # the start and again after the relock; from then on every frame shows the next
+    # field 2 .. 5 ms late. Before that (acquiring) the panel may show a field late
+    # (one frame more), but every frame still shows one whole field, never an older one.
+    last_field, shown, delays, settled, settle_t = None, 0, [], False, []
     for k, (tm, rows, nlines, lk) in enumerate(frames):
         if len(rows) != 480 or any(r[2] != 800 for r in rows):
             fail(f'frame {k}: {len(rows)} rows, pixels {sorted({r[2] for r in rows})[:4]}')
         if not 521 <= nlines <= 529: fail(f'frame {k}: {nlines} lines')
         t0 = rows[0][0] if rows else tm
-        settled = (t0 > 60_000_000 and t0 < unlock_t) or t0 > relock_t + 120_000_000
-        if not settled: continue
-        flds = {r[3] >> 8 for r in rows}
+        if unlock_t - 20_000_000 < t0 < relock_t + 20_000_000:
+            settled = False; last_field = None; continue          # around the lock loss: snow / the held field
+        if t0 < 40_000_000: continue                               # SDRAM start, first fields
+        flds = {r[3] >> 8 for r in rows if r[3] >= 0}
         want = [r[1] // 2 for r in rows]
-        got = [r[3] & 255 for r in rows]
+        got = [r[3] & 255 if r[3] >= 0 else -1 for r in rows]
         if len(flds) != 1: fail(f'frame {k}: rows from fields {sorted(flds)}'); continue
         if got != want:
             i = next(j for j in range(len(got)) if got[j] != want[j])
             fail(f'frame {k}: row {i} shows source row {got[i]}, wants {want[i]}'); continue
         f = flds.pop()
-        first_after_relock = t0 > relock_t and since_relock == 0
-        if last_field is not None and f != (last_field + 1) % 256 and not first_after_relock:
+        w = wr.get((f, 0))
+        d = (rows[0][0] - w) / 1e6 if w is not None else None
+        if '--log' in sys.argv: print(f'frame {k} t0 {t0/1e6:.2f} ms field {f} delay {d}')
+        if last_field is not None and (f - last_field) % 256 not in ((1,) if settled else (0, 1, 2)):
             fail(f'frame {k}: field {f} after {last_field}')
         last_field = f
-        if t0 > relock_t: since_relock += 1
-        w = wr.get((f, 0))
-        if w is not None: delays.append((rows[0][0] - w) / 1e6)
-        shown += 1
+        if not settled and d is not None and 2.0 <= d <= 5.0:
+            settled = True; settle_t.append(t0)
+        if settled:
+            shown += 1
+            if d is not None: delays.append(d)
     if shown < 10: fail(f'only {shown} settled frames checked')
+    if not any(t > relock_t for t in settle_t): fail('not settled again after the relock')
+    print('settled at', [f'{t / 1e6:.1f} ms' for t in settle_t], '(lock lost', unlock_t / 1e6, 'back', relock_t / 1e6, 'ms)')
     if delays:
         print(f'row 0 camera-to-panel delay: {min(delays):.2f} .. {max(delays):.2f} ms over {len(delays)} frames')
         if not all(2.0 <= d <= 5.0 for d in delays): fail('delay outside 2 .. 5 ms')
