@@ -170,10 +170,17 @@ module tri_top (
     wire       use_b = mode_s[3:2] != 2'd0, use_c = mode_s[3:2] == 2'd2;
     wire [5:0] code;
     wire [23:0] lg_w; wire [1:0] ans_lev, d3_degrade; wire ract, click_ev;
-`ifdef TRI_NO_C
-    mrc3_core #(.HAS_C(0), .FAILOVER(1)) u_core (
+    // D3 (experimental demod) is left out of the buffered LCD build: with it
+    // the build no longer places (LUT4 83 %). Demod D3 is Rescue On there.
+`ifdef TRI_LCDBUF
+    localparam D3 = 0;
 `else
-    mrc3_core #(.FAILOVER(1)) u_core (
+    localparam D3 = 1;
+`endif
+`ifdef TRI_NO_C
+    mrc3_core #(.HAS_C(0), .FAILOVER(1), .HAS_D3(D3)) u_core (
+`else
+    mrc3_core #(.FAILOVER(1), .HAS_D3(D3)) u_core (
 `endif
                       .clk(a_gclk), .rst(rst), .raw_a(a_m), .raw_b(b_m), .raw_c(c_m),
                       .en_b(en_b & b_alive & use_b), .en_c(en_c & c_alive & use_c),
@@ -182,7 +189,7 @@ module tri_top (
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real; wire [6:0] fps_real, fps_pred; wire [15:0] gain_k8;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
-    vid_sync #(.D3_ADAPT(1)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
+    vid_sync #(.D3_ADAPT(D3)) u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .d3_on(sg_a[4:3] == 2'd3), .d3_degrade(d3_degrade), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide), .fields_real(fields_real), .fps_real(fps_real), .fps_pred(fps_pred), .gain_k8(gain_k8),
                    .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----

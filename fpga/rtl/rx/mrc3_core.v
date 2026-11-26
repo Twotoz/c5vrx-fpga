@@ -78,6 +78,7 @@ module mrc3_trk (
 endmodule
 
 module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
+                   parameter HAS_D3 = 1,                            // 0: no D3 (rmode 3 is Rescue On), for builds at the size limit
                    parameter RS_WSH = 10, parameter [11:0] RS_K = 12'd2,    // rescue Auto: look-ahead 2^RS_WSH sample pairs, RS_K clicks
                    parameter RS_SSH = 12, parameter [6:0] RS_T = 7'd48) (   //   steady: RS_T of 64 sub-windows of 2^RS_SSH pairs with a click
     input  wire       clk,
@@ -462,6 +463,7 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
         assign enough_clicks = age[RS_K-1] != EXPIRED;
     end endgenerate
     wire [5:0] d3_code;
+    generate if (HAS_D3) begin : d3
     reg [15:0] d3_phi;
     reg d3_run, d3_valid, d3_even, d3_click, d3_steady;
     always @(posedge clk) begin
@@ -475,8 +477,12 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0,    // HAS_C 0: t
     d3_fm u_d3 (.clk(clk), .rst(rst), .run(d3_run), .valid(d3_valid),
                .even_sample(d3_even), .phi(d3_phi), .click(d3_click),
                .steady(d3_steady), .degrade(d3_degrade), .code(d3_code));
+    end else begin : no_d3
+    assign d3_code = 6'd0;
+    assign d3_degrade = 2'd0;
+    end endgenerate
     reg [5:0] rescue_code;
-    always @* code = rmode == 2'd3 ? d3_code : rescue_code;
+    always @* code = HAS_D3 && rmode == 2'd3 ? d3_code : rescue_code;
     wire        sel_n = rmode[1] || (rmode == 2'd1 && (enough_clicks || st_on));
     always @(posedge clk) begin
         if (rst) begin
