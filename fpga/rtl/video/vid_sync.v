@@ -39,11 +39,11 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     input  wire [1:0]  d3_degrade,
     output wire [1:0]  ans_lev,       // logger: the noise level 0..3 (the filter's strength when on)
     output reg         wr_en,
-    output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
+    output reg  [10:0] wr_addr,       // {bank, px[9:0]}
     output reg  [15:0] wr_data,       // RGB565
     output reg  [7:0]  wr_gray,       // luma 0..255
     output reg         line_tog,      // toggles at each line start
-    output reg  [8:0]  line_info,     // {show, orow[7:0]} of the line just written; stable after line_tog
+    output reg  [8:0]  line_info,     // {show, orow[7:1], bank} of the line just written; stable after line_tog
     output reg         line_skip,     // field-buffer builds: that line is corrupt, keep the buffer's older row (fbuf.v)
     output reg         field_tog,
     output reg         pal,
@@ -208,10 +208,9 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     //    the line before (lcd_out / line-only HDMI read the newest shown bank);
     //    at most 4 lines in a row (a longer span would smear one line), never
     //    the field's row 0 (the LCD aligns on it);
-    //  - field-buffer builds, TRI_LCDBUF / TRI_HDMI90 (temporal): line_skip,
-    //    fbuf keeps the slot's row from an earlier field (2 .. 3 fields old);
-    //    up to 255 lines in a row (~16 ms, a field), then the picture shows
-    //    the fade as it is rather than freezing.
+    //  - field-buffer builds, TRI_LCDBUF / TRI_HDMI90: line_skip, fbuf writes
+    //    the line before into the row (same 4-line limit). An earlier field's
+    //    row (the first version) showed old, displaced bars on a moving picture.
 `ifdef TRI_LCDBUF
     localparam CONCEAL = 2;
 `elsif TRI_HDMI90
@@ -219,11 +218,29 @@ module vid_sync #(parameter D3_ADAPT = 0) (
 `else
     localparam CONCEAL = 1;
 `endif
-    localparam [7:0] CONC_MAX = CONCEAL == 2 ? 8'd255 : 8'd4;
+    localparam [7:0] CONC_MAX = 8'd4;
     reg  [9:0] low_px;                       // pixels of this line below the slicer level
     reg  [7:0] conc_run;                     // lines concealed in a row
     wire       line_bad = low_px >= 10'd64 && (CONCEAL == 2 || orow_cur != 8'd0) && conc_run != CONC_MAX;
     wire       line_hide = CONCEAL == 1 && line_bad;
+    // Line-buffer bank: it moves on only after a shown line. A hidden line is
+    // overwritten by the next one, so the bank the display repeats (the last
+    // shown line) is never written while it is read; with the bank on orow[0]
+    // the line after a hidden one tore the repeated line. Row 0 is bank 0, so
+    // line_info[7:0] == 0 still marks the field's first row.
+`ifdef TRI_HDMI
+`ifndef TRI_HDMI90
+    wire       shown_end = show_cur && lock >= 4'd8 && !line_hide;
+`else
+    wire       shown_end = show_cur;
+`endif
+`else
+    wire       shown_end = show_cur && !line_hide;
+`endif
+    reg        bank_cur;
+    // field-buffer builds: a corrupt line is counted (fbuf's row) but its bank
+    // is not kept: fbuf writes the last good line, still in the other bank
+    wire       bank_nx = shown_end && !(CONCEAL == 2 && line_bad) ? ~bank_cur : bank_cur;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
     assign gain_k8 = k8;
@@ -336,7 +353,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0;
             low_px <= 10'd0; conc_run <= 8'd0; line_skip <= 1'b0;
             tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; fld_hist <= 6'd0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
-            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
+            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0; bank_cur <= 1'b0;
         end else begin
             // line counter, with the flywheel correction below
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
@@ -383,17 +400,8 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             end
             // ---- line start ----
             if (hc == 12'd0) begin
-`ifdef TRI_HDMI
-`ifndef TRI_HDMI90
-                // Line-only HDMI displays only complete lines while the
-                // receive line flywheel has actual recent H-sync evidence.
-                line_info <= {show_cur && lock >= 4'd8 && !line_hide, orow_cur};
-`else
-                line_info <= {show_cur, orow_cur};
-`endif
-`else
-                line_info <= {show_cur && !line_hide, orow_cur};
-`endif
+                line_info <= {shown_end, orow_cur[7:1], bank_cur};
+                bank_cur <= bank_nx;
                 line_skip <= CONCEAL == 2 && line_bad;
                 if (show_cur) conc_run <= line_bad ? conc_run + 8'd1 : low_px >= 10'd64 ? conc_run : 8'd0;
                 low_px <= 10'd0;
@@ -417,6 +425,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
                     show_cur <= !pal || (vline >= 10'd43 && vline < 10'd283);
 `endif
                     orow_cur <= orow_n;
+                    bank_cur <= orow_n == 8'd0 ? 1'b0 : bank_nx;
 `ifdef TRI_HDMI
                     orow_n <= orow_n + 8'd1;
 `else
@@ -435,7 +444,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
             if (act && hc >= HSTART && px < PXN) begin
                 if (dda + {2'd0, PXN} >= ACT) begin
                     dda <= dda + {2'd0, PXN} - ACT;
-                    p_tick <= 1'b1; p_show <= show_cur; p_row0 <= orow_cur[0]; p_px <= px;
+                    p_tick <= 1'b1; p_show <= show_cur; p_row0 <= bank_cur; p_px <= px;
                     p_y <= ny; p_u <= show_u; p_v <= show_v;
                     if ({1'b0, ny} < level_sum[9:1] + {9'd0, level_sum[0]} && low_px != 10'h3ff) low_px <= low_px + 10'd1;
                     px <= px + 10'd1;

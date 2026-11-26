@@ -12,11 +12,9 @@ Checked:
     again after the relock, which must come): every frame the next field, row 0
     2 .. 5 ms behind the camera. While acquiring, the frame lock may show each
     field one frame later (~19 ms) until the frame start has moved past it;
-  - rows marked corrupt (line_skip, fields 4 and 7 of every 9) show the same row
-    of one valid older field (1 .. 3 fields before, complete, locked, without
-    corrupt rows), or themselves when the slot holds no valid field (field 7's
-    slot may hold field 4); fbuf never skips onto an invalid source (temporal
-    concealment, #12);
+  - rows marked corrupt (line_skip, fields 4 and 7 of every 9) show the last good
+    row of the same field (the line before the span: spatial concealment, #12),
+    fed like vid_sync does: the bank moves on only after a good line;
   - no SDRAM timing violation.
     python fpga/sim/run_lcdbuf_tb.py [--frames=N] [--pdelay=ns]
 """
@@ -36,26 +34,28 @@ module tb;
     reg wr_en = 0; reg [10:0] wr_addr = 0; reg [15:0] wr_data = 0;
     reg line_tog = 0, field_tog = 0; reg [8:0] line_info = 0; reg line_skip = 0;
     integer hc = 0, ln = 0, fld = 0, flines, px, orow = 0, show = 0;
+    reg bank = 0, bad;
     always @(posedge aclk) begin
         wr_en <= 0;
         if (!rst) begin
             flines = fld[0] ? 263 : 262;
             if (hc == LT - 1) begin
                 hc <= 0;
-                line_info <= {show[0], orow[7:0]}; line_tog <= ~line_tog;
-                // corrupt rows (vid_sync's line_skip): SKIP_R0 .. SKIP_R1 - 1 of fields 4 and 7 of every 9:
-                // field 7's slot may hold field 4 (corrupt rows): it must not be a source then
-                line_skip <= show && (fld % 9 == 4 || fld % 9 == 7) && orow >= __SKIP_R0__ && orow < __SKIP_R1__;
+                line_info <= {show[0], orow[7:1], bank}; line_tog <= ~line_tog;
+                // corrupt rows (vid_sync's line_skip): SKIP_R0 .. SKIP_R1 - 1 of fields 4 and 7 of every 9
+                bad = show && (fld % 9 == 4 || fld % 9 == 7) && orow >= __SKIP_R0__ && orow < __SKIP_R1__;
+                line_skip <= bad;
+                if (show && !bad) bank <= ~bank;        // vid_sync: the bank moves on only after a good line
                 if (show) begin
                     orow <= orow + 1;
                     $fwrite(fs, "W %0d %0d %0d\n", $time, fld, orow);        // row orow of field fld complete
                 end
-                if (ln == flines - 1) begin ln <= 0; fld <= fld + 1; field_tog <= ~field_tog; orow <= 0; show <= 0; end
+                if (ln == flines - 1) begin ln <= 0; fld <= fld + 1; field_tog <= ~field_tog; orow <= 0; show <= 0; bank <= 0; end
                 else begin ln <= ln + 1; show <= (ln + 1 >= SHOW0 && ln + 1 < SHOW0 + NSHOW); end
                 px = 0;
             end else hc <= hc + 1;
             if (show && hc >= 300 && px < 800 && hc[0]) begin
-                wr_en <= 1; wr_addr <= {orow[0], px[9:0]};
+                wr_en <= 1; wr_addr <= {bank, px[9:0]};
                 wr_data <= {fld[7:0], orow[7:0]};
                 px = px + 1;
             end
@@ -115,7 +115,7 @@ endmodule
 '''
 
 
-SKIP = (100, 130)     # source rows skipped (line_skip) in every 7th field: an earlier field's rows stay
+SKIP = (100, 130)     # source rows skipped (line_skip) in fields 4 and 7 of every 9: they show the row before
 
 
 def main():
@@ -169,9 +169,6 @@ def main():
     for l in lines:
         if l.startswith('S '):
             f, sk, age, cl = map(int, l.split()[1:]); dec.setdefault(f, set()).add((sk, age, cl))
-    for f, d in sorted(dec.items()):
-        if any(sk and (not cl or age > 2) for sk, age, cl in d): fail(f'field {f}: skipped with an invalid source {d}')
-    print('fbuf decisions per corrupt field (skipped, source age, source clean):', {f: sorted(d) for f, d in sorted(dec.items())})
     for k, (tm, rows, nlines, lk) in enumerate(frames):
         if len(rows) != 480 or any(r[2] != 800 for r in rows):
             fail(f'frame {k}: {len(rows)} rows, pixels {sorted({r[2] for r in rows})[:4]}')
@@ -188,13 +185,12 @@ def main():
         f0 = next(iter(flds))
         src = {r[3] >> 8 for r, c in zip(rows, conc) if c}
         if f0 % 9 in (4, 7):
-            # the corrupt rows: kept from one valid older field (1 .. 3 fields before, itself
-            # without corrupt rows), or written as they are when the slot held no valid field
-            if len(src) != 1: fail(f'frame {k}: corrupt rows from fields {sorted(src)}')
-            g = src.pop()
-            if g == f0: written_anyway += 1
-            elif (f0 - g) % 256 in (1, 2, 3) and g % 9 not in (4, 7): concealed += 1
-            else: fail(f'frame {k}: field {f0} rows {SKIP} from field {g}: not a valid source')
+            # the corrupt rows: this field's last good row, the one before the span
+            if src != {f0}: fail(f'frame {k}: corrupt rows from fields {sorted(src)}, not {f0}')
+            if any(g != SKIP[0] - 1 for g, c in zip(got, conc) if c):
+                fail(f'frame {k}: corrupt rows show {sorted({g for g, c in zip(got, conc) if c})}, not row {SKIP[0] - 1}')
+            else: concealed += 1
+            got = [w if c else g for g, w, c in zip(got, want, conc)]
         elif src != {f0}:
             fail(f'frame {k}: rows {SKIP} from {sorted(src)}, not field {f0}, although it was not skipped')
         if got != want:
@@ -214,9 +210,7 @@ def main():
             if d is not None: delays.append(d)
     if shown < 10: fail(f'only {shown} settled frames checked')
     if concealed < 2: fail(f'only {concealed} frames with concealed rows checked')
-    if not any(not sk for d in dec.values() for sk, _, _ in d): fail('no corrupt field without a valid source was seen')
-    print(f'{concealed} frames with rows {SKIP[0]} .. {SKIP[1] - 1} concealed from an earlier field, '
-          f'{written_anyway} written as they are (no valid source)')
+    print(f'{concealed} frames with rows {SKIP[0]} .. {SKIP[1] - 1} concealed with row {SKIP[0] - 1} of the same field')
     if not any(t > relock_t for t in settle_t): fail('not settled again after the relock')
     print('settled at', [f'{t / 1e6:.1f} ms' for t in settle_t], '(lock lost', unlock_t / 1e6, 'back', relock_t / 1e6, 'ms)')
     if delays:

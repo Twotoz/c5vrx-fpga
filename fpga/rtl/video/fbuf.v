@@ -27,11 +27,11 @@ module fbuf #(
     input  wire        clk,
     input  wire        rst,
     input  wire        wr_en,
-    input  wire [10:0] wr_addr,        // {orow[0], x}
+    input  wire [10:0] wr_addr,        // {bank, x}
     input  wire [15:0] wr_data,
     input  wire        line_tog,
-    input  wire [8:0]  line_info,      // {show, orow} of the line just written
-    input  wire        line_skip,      // that line is corrupt (vid_sync): the row keeps the slot's older field
+    input  wire [8:0]  line_info,      // {show, orow[7:1], bank} of the line just written
+    input  wire        line_skip,      // that line is corrupt (vid_sync): the row gets the line above (the other bank)
     input  wire        locked,         // vid_sync's lock (this clock): a field written without it is no concealment source
     input  wire        field_tog,
     input  wire        pal,
@@ -135,8 +135,12 @@ module fbuf #(
             if (lt_p != line_tog && lcnt != 10'h3ff) lcnt <= lcnt + 10'd1;
             if (ft_p != field_tog) begin lcnt <= 10'd0; pfl <= lcnt; end
             if (lt_p != line_tog && line_info[8] && wrow < 9'd288) begin
-                // a skipped line is not written: the slot's row still holds an earlier field's
-                if (!skip) begin wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot; end
+                // a corrupt line: the row gets the last good line of this field, still in
+                // the other half (vid_sync did not move its bank on); a corrupt first row
+                // keeps the slot's older row (or is written as it is)
+                if (line_skip && wrow != 9'd0 && !wp[!line_info[0]]) begin
+                    wp[!line_info[0]] <= 1'b1; wp_line[!line_info[0]] <= wrow; wp_slot[!line_info[0]] <= wslot;
+                end else if (!skip) begin wp[line_info[0]] <= 1'b1; wp_line[line_info[0]] <= wrow; wp_slot[line_info[0]] <= wslot; end
                 wrow <= wrow + 9'd1;
             end
             if (lt_p != line_tog && line_skip) cur_bad <= 1'b1;
