@@ -79,6 +79,8 @@ jobs:
           vvp -n "$RUNNER_TEMP/vsync_levels"
       - name: Video levels and gain through fades and VTX off/on (#12, #15)
         run: python fpga/sim/run_video_levels_tb.py
+      - name: Live status over the Tang Nano's USB serial
+        run: python fpga/sim/run_log_uart_tb.py
       - name: TMDS encoder (HDMI), against the model
         run: python fpga/sim/run_tmds_tb.py
       - name: 90 Hz HDMI, field buffer to pixels (NTSC and PAL)

@@ -53,6 +53,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     output wire        fields_real,   // the last 6 field events were all real vertical syncs on the trusted grid (none predicted)
     output reg  [6:0]  fps_real,      // field events in the last second from a real vertical sync (menu Receivers: Video n/s)
     output reg  [6:0]  fps_pred,      //   and those the flywheel predicted (no usable vertical sync): the display ran on
+    output wire [15:0] gain_k8,       // the video gain in use (k8, log_uart.v)
     // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
     output reg         d_valid,
     output reg  [9:0]  d_x,
@@ -225,6 +226,7 @@ module vid_sync #(parameter D3_ADAPT = 0) (
     wire       line_hide = CONCEAL == 1 && line_bad;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
+    assign gain_k8 = k8;
     // gain only from a field on the trusted grid with mostly qualified lines
     wire        gain_ok = lev_n[4] && fld_trusted && lev_field >= 9'd128;
     reg  [15:0] dv_q; reg [9:0] dv_rem; reg [8:0] dv_den; reg [4:0] dv_n; reg dv_run;
