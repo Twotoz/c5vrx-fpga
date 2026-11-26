@@ -137,7 +137,7 @@ module tb_osd;
         u_menu.direct_model = 2'd3; repeat (20) @(posedge clk); shot;   // 7 Direct Gain: Ultra (experimental)
         u_menu.direct_model = 2'd0;
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Back
-        press(5'b00001); press(5'b00010); press(5'b00010); shot;     // 8 Signal page, Keep lock on
+        press(5'b00001); press(5'b00010); press(5'b00010); press(5'b00010); shot;   // 8 Signal page, Keep lock off and on again
         press(5'b10010); shot;                                       // 9 closed: live view
         press(5'b00001); shot;                                       // 10 next channel (pill lit)
         locked = 0; repeat (20000) @(posedge clk); shot;             // 11 no signal

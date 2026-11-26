@@ -145,7 +145,7 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
   is in use, the Noise filter's level and the DVR's field number (so it lines up with the video).
   `tools/trilog.py` turns it into CSV and a plot.
 - **Receivers**: per C5 signal, C/N, gain row and AFC state.
-- **Signal** (Keep lock, Adaptive sync and Noise filter On / Off, Off after power-up; Rescue Off / Auto / On, Auto after power-up):
+- **Signal** (Keep lock, Adaptive sync and Noise filter On / Off, On after power-up; Rescue Off / Auto / On, On after power-up: on the board its smoothing looked better than Auto's sharper but grainier picture):
   - *Keep lock*: the picture and its timing stay up for ~0.5 s after the sync
     is lost (8000 lines) instead of going to the black free-run screen
     (`sim/sync_perf.py`: three 10 ms dropouts at 6 dB C/N, 525 lines on the

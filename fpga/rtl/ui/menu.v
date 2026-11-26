@@ -196,7 +196,8 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     wire [3:0] n_items = page == 3'd2 ? 4'd1 : page == 3'd4 ? 4'd6 : page == 3'd1 ? 4'd8 : 4'd7;
     always @(posedge clk) begin
         if (rst) begin
-            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b0; async_on <= 1'b0; nfilt <= 1'b0; rescue <= 2'd1; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
+            // Signal defaults (board 2026-11-26): Keep lock, Adaptive sync, Noise filter on, Rescue On
+            open <= 1'b0; edit <= 1'b0; page <= 3'd1; klock <= 1'b1; async_on <= 1'b1; nfilt <= 1'b1; rescue <= 2'd2; cursor <= 3'd0; bright <= 3'd7; hz90_r <= 2'd0; aspect <= 2'd3; logo <= 1'b1; dvr <= 1'b0; lg <= 1'b0; mode <= 2'd2; channel <= 6'd8;
             link_on <= 1'b0; g_set <= 1'b0; a_set <= 1'b0; direct_model <= 2'd0; native_requested <= 1'b0; owner_set <= 1'b0; afc <= 1'b1; f_seq <= 8'd0;
             scanning <= 1'b0; toast_ms <= 11'd0; cal_ms <= 12'd0; sec_ms <= 10'd0; rm_t <= 4'd0; rm_o <= 4'd0; rs_t <= 3'd0; rs_o <= 4'd0;
             boot <= 1'b1; boot_ms <= 12'd0; bskip <= 1'b0;
