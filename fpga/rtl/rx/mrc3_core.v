@@ -1,14 +1,15 @@
 // C5VRX by Twotoz and the C5VRX contributors: three-branch ("Tripleversity")
 // combiner and demodulator. Pre-detection maximal-ratio combining of C5 A
 // with up to two more C5s (3-bit I/Q each: the top three bits of their 4-bit
-// lane), a cross-product phase tracker per extra branch, then the CORDIC FM
-// discriminator. The arithmetic and pipeline of mrc_core.v, generalised;
-// bit-exact with fpga/model/mrc3_model.py run(..., disc=True, valid=...)
+// lane), a cross-product phase tracker per extra branch, then the CORDIC angle
+// and the Rescue PLL, the only demodulator. The arithmetic and pipeline of
+// mrc_core.v, generalised; bit-exact with fpga/model/mrc3_model.py
+// run(..., disc=True, valid=..., rescue=2)
 // (fpga/sim/run_tb3.py). raw_b / raw_c must be aligned to raw_a (align_b.v).
 // va/vb/vc: the sample of that C5 is IQ (0 while it sends a marker): weight 0,
 // its moments hold, a tracker holds while its branch or C5 A is invalid.
-// Discriminator: the D32-R2 rule on the combined 16-bit angle (1024 sectors,
-// 50 ns step, 0.7 of a step outside the video window), one code per 50 ns.
+// The PLL's code comes from the D32-R2 table (1024 sectors, 0.7 of a step
+// outside the video window), one code per sample.
 `default_nettype none
 
 // tracker and rotation of one extra branch k against A (the mrc_core.v B path)
@@ -77,8 +78,7 @@ module mrc3_trk (
     end
 endmodule
 
-module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's tracker and products left out
-                   parameter RS_WSH = 18, parameter [7:0] RS_ON = 8'd100, parameter [7:0] RS_OFF = 8'd25) (   // rescue: window 2^RS_WSH sample pairs
+module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0) (   // HAS_C 0: two C5s (A, B), C's tracker and products left out
     input  wire       clk,
     input  wire       rst,
     input  wire [5:0] raw_a,        // {I2 I1 I0, Q2 Q1 Q0}, two's complement per component
@@ -86,10 +86,10 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     input  wire [5:0] raw_c,
     input  wire       en_b,
     input  wire       en_c,
+    input  wire       avail_b, avail_c, // live receiver & selected in the menu, independent of A alignment
     input  wire       va, vb, vc,   // per sample, with raw_*
-    input  wire [1:0] rmode,        // rescue PLL: 0 off, 1 auto, 2/3 on
-    output reg  [5:0] code,
-    output reg        ract,         // rescue PLL in use
+    output reg  [5:0] code,         // the Rescue PLL's code (the only demodulator)
+    output wire       ref_lost,
     output wire [23:0] wts          // logger: the weights in use {C, B, A}
 );
     reg [7:0] g_rom   [0:255];
@@ -140,12 +140,14 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
         idx2 <= idx1; run2 <= run1 & ~rst; v2 <= v1;
     end
 
+    wire poor_a;
+
     // ---- trackers (B, C) -----------------------------------------------------------
     wire signed [12:0] rb_i3, rb_q3, rc_i3, rc_q3;
-    mrc3_trk u_tb (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[1]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
+    mrc3_trk u_tb (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[1] & ~poor_a), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cb_i1), .ck_q1(cb_q1), .rk_i3(rb_i3), .rk_q3(rb_q3));
     generate if (HAS_C) begin : tc
-    mrc3_trk u_tc (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[2]), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
+    mrc3_trk u_tc (.clk(clk), .rst(rst), .run2(run2), .upd2(v2[0] & v2[2] & ~poor_a), .idx2(idx2), .ca_i1(ca_i1), .ca_q1(ca_q1),
                    .ck_i1(cc_i1), .ck_q1(cc_q1), .rk_i3(rc_i3), .rk_q3(rc_q3));
     end else begin : notc
     assign rc_i3 = 13'sd0; assign rc_q3 = 13'sd0;
@@ -249,8 +251,59 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
         endcase
     end
 
+    // Per-branch quality from the weight engine's scale-free M4/M2^2.
+    // Maintain a deadband and require persistent evidence before re-entry.
+    // This detects envelope variability, not absolute power or guaranteed RF validity.
+    wire [2:0] good;
+    generate if (FAILOVER) begin : quality
+        reg [3:0] score [0:2];
+        reg [2:0] stable;
+        integer b;
+        always @(posedge clk) begin
+            if (rst) begin
+                score[0] <= 4'd8;
+                score[1] <= 4'd0;
+                score[2] <= 4'd0;
+            end else if (st == S_STORE) begin
+                if (rq <= 10'd360 && m2j >= 16'd2048) begin
+                    if (!(&score[wj])) score[wj] <= score[wj] + 1'b1;
+                end else if (rq >= 10'd400 || m2j < 16'd2048) begin
+                    if (score[wj] != 0) score[wj] <= score[wj] - 1'b1;
+                end
+            end
+            if (rst) stable <= 3'b001;
+            else for (b = 0; b < 3; b = b + 1)
+                if (score[b] >= 4'd12) stable[b] <= 1'b1;
+                else if (score[b] <= 4'd3) stable[b] <= 1'b0;
+        end
+        assign good = stable;
+    end else begin : no_quality
+        assign good = 3'b001;
+    end endgenerate
+
     // ---- S4: combine ------------------------------------------------------------------
     reg signed [23:0] zi4, zq4;
+    wire raw_b_ok = avail_b && v3[1] && good[1];
+    wire raw_c_ok = HAS_C && avail_c && v3[2] && good[2];
+    assign ref_lost = FAILOVER && !good[0] &&
+        ((avail_b && good[1]) || (HAS_C && avail_c && good[2]));
+    assign poor_a = ref_lost;
+    // During a short A marker the existing rotated, aligned branches can
+    // still carry the picture. If A loses RF, its rotations are unreliable;
+    // select a proven B or C directly while A-based alignment reacquires.
+    wire need_backup = FAILOVER && (poor_a ||
+        (!v3[0] && !(en_b && v3[1]) && !(HAS_C && en_c && v3[2])));
+    reg [1:0] source4;
+    wire select_b = need_backup && raw_b_ok && (source4 != 2'd2 || !raw_c_ok);
+    wire select_c = need_backup && raw_c_ok && !select_b;
+    wire [1:0] source_n = select_b ? 2'd1 : select_c ? 2'd2 : 2'd0;
+    reg signed [4:0] backup_i3, backup_q3, c_i3_raw, c_q3_raw, cb_i2, cb_q2, cc_i2, cc_q2;
+    always @(posedge clk) begin
+        cb_i2 <= cb_i1; cb_q2 <= cb_q1; cc_i2 <= cc_i1; cc_q2 <= cc_q1;
+        backup_i3 <= cb_i2; backup_q3 <= cb_q2; c_i3_raw <= cc_i2; c_q3_raw <= cc_q2;
+    end
+    wire signed [4:0] raw_i = select_b ? backup_i3 : c_i3_raw;
+    wire signed [4:0] raw_q = select_b ? backup_q3 : c_q3_raw;
     wire [7:0] wa_eff = v3[0] ? w_use[0] : 8'd0;
     assign wts = {w_use[2], w_use[1], w_use[0]};
     wire [7:0] wb_eff = en_b && v3[1] ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
@@ -266,39 +319,52 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
     end else begin : nopc
     assign c_i = 36'd0; assign c_q = 36'd0;
     end endgenerate
+    reg valid4;
+    reg [11:0] run_d;                  // run, carried along zi4 and the CORDIC (below)
     always @(posedge clk) begin
         if (rst) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= 8'd1;
         end else if (run3 && idx3 == 7'd127 && have_pend) begin
             for (ku = 0; ku < 3; ku = ku + 1) w_use[ku] <= pend[ku];
         end
-        zi4 <= $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
-        zq4 <= $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
+        source4 <= rst ? 2'd0 : source_n;
+        valid4 <= (wa_eff != 0 || wb_eff != 0 || wc_eff != 0 || source_n != 0) && !rst;
+        zi4 <= source_n != 0 ? $signed({{7{raw_i[4]}}, raw_i, 12'd0}) : $signed({a_i[17:0], 6'd0}) + $signed(b_i[23:0]) + $signed(c_i[23:0]);
+        zq4 <= source_n != 0 ? $signed({{7{raw_q[4]}}, raw_q, 12'd0}) : $signed({a_q[17:0], 6'd0}) + $signed(b_q[23:0]) + $signed(c_q[23:0]);
     end
 
-    // ---- discriminator: D32-R2 rule on the combined angle (mrc3_model.disc50) ----
-    wire [15:0] phi;
-    cordic_angle #(.W(18), .N(10)) u_phi (.clk(clk), .x_in(zi4[23:6]), .y_in(zq4[23:6]), .ang(phi));
-    // sample parity and run, carried along zi4 (1) and the CORDIC (N + 1 = 11)
-    reg [11:0] ev_d, run_d;
+    // ---- combined angle and the Rescue PLL (mrc3_model.rescue50) ----
+    reg [10:0] valid_d;
+    reg [10:0] source_b_d, source_c_d;
     always @(posedge clk) begin
-        ev_d  <= {ev_d[10:0], ~idx3[0]};
-        run_d <= rst ? 12'd0 : {run_d[10:0], run3};
+        valid_d <= {valid_d[9:0], valid4};
+        source_b_d <= {source_b_d[9:0], source4 == 2'd1};
+        source_c_d <= {source_c_d[9:0], source4 == 2'd2};
     end
-    wire        ev_phi = ev_d[11] & run_d[11];
-    wire [9:0]  tok = phi[15:6] ^ 10'h200;          // ((phi + 32768) >> 6) & 1023
-    reg  [9:0]  st_s;
-    reg         st_ok;
-    wire signed [9:0]  d = tok - st_s;               // wrapped to -512..511
-    // step and code per d from a table in block RAM (gen_tables.disc_rom: the same
-    // arithmetic as mrc3_model.disc50); read at ev_phi, applied the clock after
-    // (ev_phi comes every other clock, so st_s is updated before the next d)
+    wire [15:0] phi_raw;
+    wire [1:0] phi_src = {source_c_d[10], source_b_d[10]};
+    reg [1:0] prior_src;
+    reg [15:0] phase_bias, last_phi, last_step;
+    wire seam = FAILOVER && phi_src != prior_src;
+    wire [15:0] phi = seam ? last_phi + last_step : phi_raw + phase_bias;
+    always @(posedge clk) begin
+        if (rst || !run_d[11]) begin
+            phase_bias <= 0; last_phi <= 0; last_step <= 0; prior_src <= 0;
+        end else if (FAILOVER) begin
+            if (seam) phase_bias <= phi - phi_raw;
+            if (valid_d[10]) begin last_phi <= phi; last_step <= phi - last_phi; end
+            prior_src <= phi_src;
+        end
+    end
+    cordic_angle #(.W(18), .N(10)) u_phi (.clk(clk), .x_in(zi4[23:6]), .y_in(zq4[23:6]), .ang(phi_raw));
+    // run, carried along zi4 (1) and the CORDIC (N + 1 = 11)
+    always @(posedge clk) run_d <= rst ? 12'd0 : {run_d[10:0], run3};
+    // code table in block RAM (gen_tables.disc_rom: mrc3_model.disc50's arithmetic);
+    // the PLL reads it at its step, d = (fo + fo[k-1]) / 4
     reg [15:0] disc [0:1023];
 `include "disc_rom.vh"
-    reg [15:0] dq; reg dv; reg [5:0] dcode;
-    // rescue PLL on phi[15:4] (mrc3_model.rescue50): e = p - th, fo = F/128 + e/4,
-    // F += e (saturating, 17 bits), th += fo (all from 0 at reset); its code is the
-    // discriminator table's for d = (fo + fo[k-1]) / 4 (a second read port)
+    // Rescue PLL on phi[15:4] (mrc3_model.rescue50): e = p - th, fo = F/128 + e/4,
+    // F += e (saturating, 17 bits), th += fo (all from 0 at reset)
     reg  [11:0] th;
     reg  signed [16:0] F;
     reg  signed [10:0] fo_r;
@@ -317,33 +383,6 @@ module mrc3_core #(parameter HAS_C = 1,    // HAS_C 0: two C5s (A, B), C's track
             fo_r <= fo;
         end
     end
-    // Auto: disc50's out-of-window steps (clicks) per 2^RS_WSH pairs, hysteresis RS_ON / RS_OFF
-    wire        click = st_ok && (d < -10'sd312 || d > 10'sd384);
-    reg  [RS_WSH-1:0] pj;
-    reg  [7:0]  ncl;
-    wire [7:0]  ncl_n = (click && ncl != 8'hff) ? ncl + 8'd1 : ncl;
-    always @(posedge clk) begin
-        dq <= disc[$unsigned(d)];                 // d as its 10 bits (negative d at 512 .. 1023)
-        dv <= 1'b0;
-        if (rst) begin st_ok <= 1'b0; dcode <= 6'd25; code <= 6'd25; pj <= 0; ncl <= 8'd0; ract <= 1'b0; end
-        else begin
-            if (ev_phi) begin
-                if (!st_ok) begin st_s <= tok; st_ok <= 1'b1; end
-                else dv <= 1'b1;
-                pj <= pj + 1'b1;
-                if (rmode == 2'd1) begin
-                    if (&pj) begin
-                        if (ncl_n >= RS_ON) ract <= 1'b1;
-                        else if (ncl_n < RS_OFF) ract <= 1'b0;
-                        ncl <= 8'd0;
-                    end else ncl <= ncl_n;
-                end else begin
-                    ract <= rmode[1]; ncl <= 8'd0;
-                end
-            end
-            if (dv) begin st_s <= st_s + dq[15:6]; dcode <= dq[5:0]; end
-            code <= ract ? pq[5:0] : dv ? dq[5:0] : dcode;
-        end
-    end
+    always @(posedge clk) code <= rst ? 6'd25 : pq[5:0];
 endmodule
 `default_nettype wire

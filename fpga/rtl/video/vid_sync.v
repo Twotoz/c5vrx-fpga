@@ -5,12 +5,14 @@
 //    low-passed luma (tau 0.4 us): locks down to 0 dB C/N (sim/sync_perf.py)
 //  - H flywheel: a line counter that a qualified sync edge (low >= 2 us)
 //    pulls in a +-1 us window, snaps to after losing lock, and free-runs
-//    without one; V: a broad pulse (low >= 17.5 us) starts a field, line
-//    count flywheel otherwise; PAL when 291..329 lines lie between two
-//    broad pulses (counted apart from the flywheel, which wraps an NTSC
-//    count before a PAL field ends)
+//    without one; V: broad pulses qualify on the trusted field grid or
+//    form a serrated pulse train for acquisition. A missed field advances
+//    the flywheel, while a format change needs three alternate intervals.
 //  - auto levels: gray = (y - porch) * 102 / (porch - tip), white at
-//    +100 IRE for a sync of -40 IRE, whatever the VTX deviation
+//    +100 IRE for a sync of -40 IRE, whatever the VTX deviation. Levels come
+//    only from lines with a real sync (tip and porch windows clean, plausible
+//    depth), so neither fades nor the vertical interval's broad pulses pull
+//    them; the gain is recomputed only after a trusted field (#12)
 //  - colour: chroma.v gives luma, U and V; each pixel is
 //    Y = (luma - porch) x k8 / 256 and the shift-add YUV -> RGB matrix,
 //    U and V averaged with the line above (stored for every line): PAL's
@@ -35,16 +37,21 @@ module vid_sync (
     input  wire        ans,           // menu Signal: adaptive noise suppression on the luma
     output wire [1:0]  ans_lev,       // logger: the noise level 0..3 (the filter's strength when on)
     output reg         wr_en,
-    output reg  [10:0] wr_addr,       // {orow[0], px[9:0]}
+    output reg  [10:0] wr_addr,       // {bank, px[9:0]}
     output reg  [15:0] wr_data,       // RGB565
     output reg  [7:0]  wr_gray,       // luma 0..255
     output reg         line_tog,      // toggles at each line start
-    output reg  [8:0]  line_info,     // {show, orow[7:0]} of the line just written; stable after line_tog
+    output reg  [8:0]  line_info,     // {show, orow[7:1], bank} of the line just written; stable after line_tog
+    output reg         line_skip,     // field-buffer builds: that line is corrupt, keep the buffer's older row (fbuf.v)
     output reg         field_tog,
     output reg         pal,
     output reg         locked,
     output reg  [15:0] sync_q,        // in-window sync edges in the last 100 ms
     output reg         wide,          // the camera signals 16:9 (CGMS-A / WSS)
+    output wire        fields_real,   // the last 6 field events were all real vertical syncs on the trusted grid (none predicted)
+    output reg  [6:0]  fps_real,      // DEBUG=1 builds (log_uart.v): field events in the last second from a real vertical sync
+    output reg  [6:0]  fps_pred,      //   and those the flywheel predicted (no usable vertical sync): the display ran on
+    output wire [15:0] gain_k8,       // the video gain in use (k8, log_uart.v)
     // HQ DVR (TRI_HQDVR build): 720 JPEG pixels a line, every active line (PAL all 288)
     output reg         d_valid,
     output reg  [9:0]  d_x,
@@ -79,6 +86,17 @@ module vid_sync (
     reg [12:0] tip_f, porch_f;              // x16 IIR state
     reg  [8:0] linemin, minprev;
     reg  [4:0] lev_n;                       // level updates so far (slicer on measured levels at 16)
+    // Level qualification (#12): a line updates tip / porch only with an
+    // in-window sync edge, the whole tip window below the slicer, the whole
+    // porch window above it and a plausible depth. During a fade the noise
+    // pulls the measured porch - tip toward zero; those lines are skipped, so
+    // the levels (and the gain derived from them) hold their last good values.
+    reg        tip_all_low, porch_all_high;
+    reg  [6:0] lev_miss;                    // consecutive otherwise good lines with a shallow depth
+    reg  [8:0] lev_cnt, lev_field;          // qualified lines in this / the previous field
+    reg        fld_trusted;                 // the previous field event was an accepted vertical sync
+    reg  [5:0] fld_hist;                    // accepted (1) / predicted (0), the last 6 field events
+    assign fields_real = &fld_hist;
     // The two 9-bit levels can sum to more than 511 before averaging.
     wire [9:0] level_sum = {1'b0, tip} + {1'b0, porch};
     wire [9:0] slice = lev_n[4] ? {1'b0, level_sum[9:1]} : {1'b0, minprev} + 10'd16;
@@ -95,8 +113,83 @@ module vid_sync (
     reg        low;
     reg [11:0] low_len, hc_cross;
     reg        qual_pend;
+    // A pulse ends only after HI_HOLD samples in a row above the slicer: a
+    // click or noise spike inside a broad vertical pulse (zubon2003's weak-signal
+    // failure, #14 / #15) no longer cuts it short of the 17.5 us a broad pulse
+    // needs. Serrations (4.7 us) and line syncs end as before, 0.8 us later.
+    localparam [5:0] HI_HOLD = 6'd32;
+    reg  [5:0] hi_run;
     // ---- field ----------------------------------------------------------------------
-    reg [9:0]  vline, vguard, field_lines, bpl;
+    reg [9:0]  vline, field_lines;
+    // Track the accepted field grid independently of vline, which is also
+    // used to generate pictures during holdover. Periods are at 40 MS/s.
+    localparam [19:0] NTSC_PERIOD = 20'd667333, PAL_PERIOD = 20'd800000;
+    localparam [19:0] V_WINDOW = 20'd6000;  // +/- 150 us
+    reg [19:0] field_age, raw_age;
+    reg [25:0] fps_tim; reg [6:0] fps_rc, fps_pc;      // the one-second window and its counts
+    reg [11:0] broad_gap;
+    reg [4:0] missed_fields;
+    reg [1:0] other_count;
+    reg field_armed, field_parity;
+    wire [19:0] period = pal ? PAL_PERIOD : NTSC_PERIOD;
+    wire [19:0] other_period = pal ? NTSC_PERIOD : PAL_PERIOD;
+    wire [11:0] half_ht = HT >> 1;
+    wire half_edge = hc_cross >= half_ht - 12'd128 && hc_cross <= half_ht + 12'd128;
+    wire line_edge = hc_cross <= 12'd128 || hc_cross >= HT - 12'd128;
+    wire broad = low && low_len == 12'd700;
+    wire v_candidate = broad && (line_edge || half_edge) && (lock >= 4'd8 || khold >= 13'd7980);
+    // Acquisition is independent of the old H line period: two broad
+    // pulses at half-line spacing identify a serrated vertical train.
+    wire serrated = broad && broad_gap >= 12'd1100 && broad_gap <= 12'd1440;
+    wire raw_start = serrated && raw_age >= 20'd500000;
+    wire other_interval = raw_start && raw_age >= other_period - V_WINDOW && raw_age <= other_period + V_WINDOW;
+    wire standard_change = other_interval && other_count == 2'd2;
+    wire in_field = field_age >= period - V_WINDOW && field_age <= period + V_WINDOW;
+    // An off-grid candidate can establish a fresh anchor after a long loss
+    // without itself changing the video standard.
+    wire same_interval = raw_age >= period - V_WINDOW && raw_age <= period + V_WINDOW;
+    wire field_accept = (field_armed && in_field && (v_candidate || raw_start)) || standard_change ||
+                        (raw_start && (!field_armed || (missed_fields == 5'd31 && same_interval)));
+    wire field_coast = field_age >= period + V_WINDOW && !field_accept;
+    wire field_event = field_accept || field_coast;
+    // fields per second, real (accepted vertical sync) and predicted (flywheel):
+    // only the DEBUG=1 builds' live status (log_uart.v) shows them
+`ifdef TRI_DEBUG
+    always @(posedge clk) begin
+        if (rst) begin
+            fps_tim <= 0; fps_rc <= 0; fps_pc <= 0; fps_real <= 0; fps_pred <= 0;
+        end else if (fps_tim == 26'd39999999) begin
+            fps_tim <= 0; fps_real <= fps_rc; fps_pred <= fps_pc;
+            fps_rc <= {6'd0, field_accept}; fps_pc <= {6'd0, field_coast};
+        end else begin
+            fps_tim <= fps_tim + 1'b1;
+            if (field_accept && !(&fps_rc)) fps_rc <= fps_rc + 1'b1;
+            if (field_coast && !(&fps_pc)) fps_pc <= fps_pc + 1'b1;
+        end
+    end
+`else
+    always @(posedge clk) begin fps_real <= 7'd0; fps_pred <= 7'd0; end
+`endif
+    always @(posedge clk) begin
+        if (rst) begin
+            field_age <= 0; raw_age <= 20'hfffff; broad_gap <= 12'hfff; missed_fields <= 0;
+            other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
+        end else begin
+            if (broad) broad_gap <= 0;
+            else if (!(&broad_gap)) broad_gap <= broad_gap + 1'b1;
+            if (raw_start) raw_age <= 0;
+            else if (!(&raw_age)) raw_age <= raw_age + 1'b1;
+            if (raw_start) other_count <= other_interval && !standard_change ? other_count + 1'b1 : 2'd0;
+            if (standard_change) pal <= ~pal;
+            if (field_accept) begin
+                field_age <= 0; field_armed <= 1'b1; missed_fields <= 0; field_parity <= half_edge;
+            end else if (field_coast) begin
+                field_age <= V_WINDOW + 1'b1;
+                if (!(&missed_fields)) missed_fields <= missed_fields + 1'b1;
+                field_parity <= ~field_parity;
+            end else field_age <= field_age + 1'b1;
+        end
+    end
     wire [9:0] VSTART = pal ? 10'd20 : 10'd18;
     wire [9:0] VROWS  = pal ? 10'd288 : 10'd240;
 `ifdef TRI_HDMI
@@ -104,7 +197,6 @@ module vid_sync (
 `else
     localparam [9:0] PXN = 10'd800;
 `endif
-    wire [9:0] VMAX   = pal ? 10'd313 : 10'd263;
     // ---- active line ----------------------------------------------------------------
     wire [11:0] HSTART = pal ? 12'd408 : 12'd364;
     wire [11:0] ACT    = pal ? 12'd2080 : 12'd2104;
@@ -114,8 +206,52 @@ module vid_sync (
     reg  [7:0]  orow_cur;
     reg  [9:0]  aidx;
     reg  [7:0]  orow_n;
+    // ---- concealment of corrupted lines (#12) ------------------------------------------
+    // Valid video never sits halfway down to the sync tip. A line with >= 64
+    // pixels whose luma is below the slicer level (between tip and porch) is a
+    // fade's corruption, not dark content. No extra latency either way:
+    //  - line-buffer builds (spatial): marked not shown, the display repeats
+    //    the line before (lcd_out / line-only HDMI read the newest shown bank);
+    //    at most 4 lines in a row (a longer span would smear one line), never
+    //    the field's row 0 (the LCD aligns on it);
+    //  - field-buffer builds, TRI_LCDBUF / TRI_HDMI90: line_skip, fbuf writes
+    //    the line before into the row (same 4-line limit). An earlier field's
+    //    row (the first version) showed old, displaced bars on a moving picture.
+`ifdef TRI_LCDBUF
+    localparam CONCEAL = 2;
+`elsif TRI_HDMI90
+    localparam CONCEAL = 2;
+`else
+    localparam CONCEAL = 1;
+`endif
+    localparam [7:0] CONC_MAX = 8'd4;
+    reg  [9:0] low_px;                       // pixels of this line below the slicer level
+    reg  [7:0] conc_run;                     // lines concealed in a row
+    wire       line_bad = low_px >= 10'd64 && (CONCEAL == 2 || orow_cur != 8'd0) && conc_run != CONC_MAX;
+    wire       line_hide = CONCEAL == 1 && line_bad;
+    // Line-buffer bank: it moves on only after a shown line. A hidden line is
+    // overwritten by the next one, so the bank the display repeats (the last
+    // shown line) is never written while it is read; with the bank on orow[0]
+    // the line after a hidden one tore the repeated line. Row 0 is bank 0, so
+    // line_info[7:0] == 0 still marks the field's first row.
+`ifdef TRI_HDMI
+`ifndef TRI_HDMI90
+    wire       shown_end = show_cur && lock >= 4'd8 && !line_hide;
+`else
+    wire       shown_end = show_cur;
+`endif
+`else
+    wire       shown_end = show_cur && !line_hide;
+`endif
+    reg        bank_cur;
+    // field-buffer builds: a corrupt line is counted (fbuf's row) but its bank
+    // is not kept: fbuf writes the last good line, still in the other bank
+    wire       bank_nx = shown_end && !(CONCEAL == 2 && line_bad) ? ~bank_cur : bank_cur;
     // ---- gain -----------------------------------------------------------------------
     reg  [15:0] k8;                          // 26112 / depth
+    assign gain_k8 = k8;
+    // gain only from a field on the trusted grid with mostly qualified lines
+    wire        gain_ok = lev_n[4] && fld_trusted && lev_field >= 9'd128;
     reg  [15:0] dv_q; reg [9:0] dv_rem; reg [8:0] dv_den; reg [4:0] dv_n; reg dv_run;
     // ---- quality window ---------------------------------------------------------------
     reg  [22:0] qtim; reg [15:0] qcnt;
@@ -123,6 +259,14 @@ module vid_sync (
 
     wire signed [12:0] e = (hc_cross > (HT >> 1)) ? $signed({1'b0, hc_cross}) - $signed({1'b0, HT}) : $signed({1'b0, hc_cross});
     wire inwin = e >= -13'sd40 && e <= 13'sd40;
+    // this line's levels: averages of the two windows (y units)
+    wire [8:0]  tip_line = tip_acc[14:6], porch_line = porch_acc[15:7];
+    wire [9:0]  depth_line = {1'b0, porch_line} - {1'b0, tip_line};   // [9]: porch below tip
+    wire [9:0]  depth_cur  = {1'b0, porch} - {1'b0, tip};
+    wire        lev_shape_ok = seen && tip_all_low && porch_all_high && !depth_line[9] && depth_line >= 10'd16;
+    // at least half the smoothed depth once the levels are acquired
+    wire        lev_deep = !lev_n[4] || depth_cur[9] || {depth_line, 1'b0} >= depth_cur;
+    wire        lev_line_ok = lev_shape_ok && (lev_deep || lev_miss == 7'd96);
     // ---- colour (chroma.v) and the pixel stage ----
     wire [9:0] cy8u; wire signed [9:0] cug, cvg;
     chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg));
@@ -138,11 +282,14 @@ module vid_sync (
     reg  [21:0] nacc = 22'd0;
     reg  [5:0]  nln = 6'd0;
     reg  [1:0]  nlev = 2'd0;
+    wire [1:0] ylevel = nlev;
     assign ans_lev = nlev;
     reg  [12:0] yacc = 13'd0;
     wire signed [13:0] ydel = $signed({1'b0, cy8u, 3'd0}) - $signed({1'b0, yacc});
-    wire signed [13:0] ystep = ydel >>> nlev;
+    wire signed [13:0] ystep = ydel >>> ylevel;
     wire [9:0]  ny = ans ? yacc[12:3] : cy8u;
+    wire signed [9:0] show_u = cug;
+    wire signed [9:0] show_v = cvg;
     wire [8:0]  nhi = nacc[21:13];            // the noise sum in units of 8192 (mean |dY| x 2.67)
     wire [1:0]  ntgt = nhi >= 9'd12 ? 2'd3 : nhi >= 9'd5 ? 2'd2 : nhi >= 9'd3 ? 2'd1 : 2'd0;
     wire        nwin = hc[11:6] == 6'd5 && hc[5:4] != 2'd3;   // hc 320..367
@@ -187,21 +334,26 @@ module vid_sync (
     always @(posedge clk) begin
         p_tick <= 1'b0;
         if (rst) begin
-            hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0;
+            hc <= 12'd0; lock <= 4'd0; low <= 1'b0; low_len <= 12'd0; qual_pend <= 1'b0; hi_run <= 6'd0;
             tip <= 9'd120; porch <= 9'd168; tip_f <= 13'd1920; porch_f <= 13'd2688; lev_n <= 5'd0; seen <= 1'b0;
             linemin <= 9'h1ff; minprev <= 9'd100;
-            vline <= 10'd0; vguard <= 10'd0; field_lines <= 10'd0; bpl <= 10'd0; pal <= 1'b0; locked <= 1'b0; khold <= 13'd0;
+            vline <= 10'd0; field_lines <= 10'd0; locked <= 1'b0; khold <= 13'd0;
             line_tog <= 1'b0; field_tog <= 1'b0; line_info <= 9'd0; act <= 1'b0;
-            k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
-            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0;
+            k8 <= 16'd580; dv_q <= 16'd580; dv_run <= 1'b0;
+            low_px <= 10'd0; conc_run <= 8'd0; line_skip <= 1'b0;
+            tip_all_low <= 1'b0; porch_all_high <= 1'b0; lev_miss <= 7'd0; lev_cnt <= 9'd0; lev_field <= 9'd0; fld_trusted <= 1'b0; fld_hist <= 6'd0; qtim <= 23'd0; qcnt <= 16'd0; sync_q <= 16'd0;
+            aidx <= 10'd0; orow_n <= 8'd0; show_cur <= 1'b0; orow_cur <= 8'd0; bank_cur <= 1'b0;
         end else begin
             // line counter, with the flywheel correction below
             hc <= (hc >= HT - 12'd1) ? 12'd0 : hc + 12'd1;
             // ---- sync edges ----
             ysa <= ysa + {4'd0, y} - {4'd0, yf};
-            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; end
-            else if (low && yf >= slice + 10'd4) begin low <= 1'b0; qual_pend <= 1'b0; end
-            else if (low && low_len != 12'hfff) low_len <= low_len + 12'd1;
+            if (!low && yf < slice) begin low <= 1'b1; low_len <= 12'd0; hc_cross <= hc; hi_run <= 6'd0; end
+            else if (low && yf >= slice + 10'd4 && hi_run == HI_HOLD) begin low <= 1'b0; qual_pend <= 1'b0; end
+            else if (low) begin
+                hi_run <= yf >= slice + 10'd4 ? hi_run + 6'd1 : 6'd0;
+                if (low_len != 12'hfff) low_len <= low_len + 12'd1;
+            end
             if (low && low_len == 12'd80) begin                      // a sync pulse (>= 2 us)
                 if (lock != 4'd0 && inwin) begin
                     // pull in by e/4 (e/8 with adaptive sync once the lock is full: less jitter)
@@ -213,28 +365,35 @@ module vid_sync (
                     lock <= 4'd1; seen <= 1'b1;
                 end
             end
-            if (low && low_len == 12'd700 && vguard == 10'd0) begin    // broad pulse: vertical sync
-                field_lines <= vline;
-                pal <= bpl > 10'd290 && bpl < 10'd330;
-                bpl <= 10'd0;
-                vline <= 10'd0; vguard <= 10'd200;
-                field_tog <= ~field_tog;
-                aidx <= 10'd0; orow_n <= 8'd0;
-            end
             // ---- levels: tip 40..103 and porch 220..347 clocks after the line start ----
             if (hc == 12'd40) tip_acc <= y; else if (hc > 12'd40 && hc < 12'd104) tip_acc <= tip_acc + y;
             if (hc == 12'd220) porch_acc <= y; else if (hc > 12'd220 && hc < 12'd348) porch_acc <= porch_acc + y;
+            if (hc == 12'd40) tip_all_low <= yf < slice; else if (hc > 12'd40 && hc < 12'd104 && yf >= slice) tip_all_low <= 1'b0;
+            // (both windows on the comparator itself: low ends HI_HOLD samples after a pulse)
+            if (hc == 12'd220) porch_all_high <= yf >= slice; else if (hc > 12'd220 && hc < 12'd348 && yf < slice) porch_all_high <= 1'b0;
             if (yf < linemin) linemin <= yf;
             if (lock == 4'd0) lev_n <= 5'd0;
             else if (hc == 12'd400 && lock >= 4'd8) begin
-                if (!lev_n[4]) lev_n <= lev_n + 5'd1;
-                tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);
-                porch_f <= porch_f - (porch_f >> 3) + (porch_acc[15:7] << 1);
-                tip <= tip_f[12:4]; porch <= porch_f[12:4];
+                if (lev_line_ok) begin
+                    if (!lev_n[4]) lev_n <= lev_n + 5'd1;
+                    if (lev_cnt != 9'h1ff) lev_cnt <= lev_cnt + 9'd1;
+                    tip_f   <= tip_f - (tip_f >> 3) + (tip_acc[14:6] << 1);
+                    porch_f <= porch_f - (porch_f >> 3) + (porch_acc[15:7] << 1);
+                    tip <= tip_f[12:4]; porch <= porch_f[12:4];
+                end
+                // a real drop of the depth (lower deviation) is taken after 96
+                // good-looking lines in a row (~6 ms) at full lock
+                if (lev_shape_ok && !lev_deep && lock == 4'd15) begin
+                    if (lev_miss != 7'd96) lev_miss <= lev_miss + 7'd1;
+                end else lev_miss <= 7'd0;
             end
             // ---- line start ----
             if (hc == 12'd0) begin
-                line_info <= {show_cur, orow_cur};
+                line_info <= {shown_end, orow_cur[7:1], bank_cur};
+                bank_cur <= bank_nx;
+                line_skip <= CONCEAL == 2 && line_bad;
+                if (show_cur) conc_run <= line_bad ? conc_run + 8'd1 : low_px >= 10'd64 ? conc_run : 8'd0;
+                low_px <= 10'd0;
                 line_tog <= ~line_tog;
                 show_cur <= 1'b0;
                 if (seen) begin if (lock != 4'd15) lock <= lock + 4'd1; end
@@ -244,10 +403,7 @@ module vid_sync (
                 // keep lock: still "locked" for ~0.5 s (8000 lines) after the sync was lost
                 if (lock >= 4'd8) khold <= 13'd8000; else if (khold != 13'd0) khold <= khold - 13'd1;
                 locked <= lock >= 4'd8 || (keep_lock && khold != 13'd0);
-                if (vguard != 10'd0) vguard <= vguard - 10'd1;
-                if (bpl != 10'h3ff) bpl <= bpl + 10'd1;
-                if (vline >= VMAX + 10'd4) begin vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0; end
-                else vline <= vline + 10'd1;
+                if (!(&vline)) vline <= vline + 10'd1;
                 // the line that starts now: active?
                 if (vline + 10'd1 >= VSTART && vline + 10'd1 < VSTART + VROWS) begin
                     act <= 1'b1; dda <= 12'd0; px <= 10'd0;
@@ -258,6 +414,7 @@ module vid_sync (
                     show_cur <= !pal || (vline >= 10'd43 && vline < 10'd283);
 `endif
                     orow_cur <= orow_n;
+                    bank_cur <= orow_n == 8'd0 ? 1'b0 : bank_nx;
 `ifdef TRI_HDMI
                     orow_n <= orow_n + 8'd1;
 `else
@@ -266,17 +423,25 @@ module vid_sync (
                     aidx <= aidx + 10'd1;
                 end else act <= 1'b0;
             end
+            if (field_event) begin
+                field_lines <= vline;
+                lev_field <= lev_cnt; lev_cnt <= 9'd0; fld_trusted <= field_accept;
+                fld_hist <= {fld_hist[4:0], field_accept};
+                vline <= 10'd0; field_tog <= ~field_tog; aidx <= 10'd0; orow_n <= 8'd0;
+            end
             // ---- active pixels ----
             if (act && hc >= HSTART && px < PXN) begin
                 if (dda + {2'd0, PXN} >= ACT) begin
                     dda <= dda + {2'd0, PXN} - ACT;
-                    p_tick <= 1'b1; p_show <= show_cur; p_row0 <= orow_cur[0]; p_px <= px;
-                    p_y <= ny; p_u <= cug; p_v <= cvg;
+                    p_tick <= 1'b1; p_show <= show_cur; p_row0 <= bank_cur; p_px <= px;
+                    p_y <= ny; p_u <= show_u; p_v <= show_v;
+                    if ({1'b0, ny} < level_sum[9:1] + {9'd0, level_sum[0]} && low_px != 10'h3ff) low_px <= low_px + 10'd1;
                     px <= px + 10'd1;
                 end else dda <= dda + {2'd0, PXN};
             end
             // ---- gain once per field: k8 = 26112 / max(porch - tip, 8), restoring division ----
-            if (vline == 10'd5 && hc == 12'd0) begin
+            // (only from qualified levels on a trusted field; otherwise k8 holds)
+            if (vline == 10'd5 && hc == 12'd0 && gain_ok) begin
                 dv_den <= (porch > tip + 9'd8) ? porch - tip : 9'd8;
                 dv_q <= 16'd0; dv_rem <= 10'd0; dv_n <= 5'd16; dv_run <= 1'b1;
             end else if (dv_run) begin
@@ -320,7 +485,7 @@ module vid_sync (
     always @(posedge clk) begin
         d_ft <= {d_ft[1:0], field_tog};
         d_fstart <= d_ft[2] ^ d_ft[1];
-        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        if (d_ft[2] ^ d_ft[1]) d_parity <= field_parity;
         if (hc == 12'd1) d_ln <= aidx[8:0] - 9'd1;
         d_valid <= p_tick;
         if (p_tick) begin d_x <= p_px; d_line <= d_ln; d_y <= y8; d_cb <= clq(q_cb); d_cr <= clq(q_cr); end
@@ -343,7 +508,7 @@ module vid_sync (
     always @(posedge clk) begin
         d_ft <= {d_ft[1:0], field_tog};
         d_fstart <= d_ft[2] ^ d_ft[1];
-        if (low && low_len == 12'd700 && vguard == 10'd0) d_parity <= hc >= (HT >> 1);
+        if (d_ft[2] ^ d_ft[1]) d_parity <= field_parity;
         // line: the main block set act and aidx at hc = 0
         if (hc == 12'd1) begin d_act <= act; d_ln <= aidx[8:0] - 9'd1; d_dda <= 12'd0; d_px <= 10'd0; end
         q_tick <= 1'b0;

@@ -1,7 +1,7 @@
 /* C5VRX-5 by Twotoz and the C5VRX contributors: receive-only RF front end.
- * From legacy/c5vrx4/main/rf.c (C5VRX-2 wifi5.c lineage), native-AGC, lab and
- * adaptive-lane paths removed. */
+ * From legacy/c5vrx4/main/rf.c (C5VRX-2 wifi5.c lineage). */
 #include "rf.h"
+#include "receiver.h"
 #include "phy.h"
 #include <stdio.h>
 #include <string.h>
@@ -65,12 +65,30 @@ extern void phy_wifi_fbw_sel(uint32_t val);
 extern void phy_force_rx_gain(bool enable, uint8_t gain_idx);
 extern void phy_disable_agc(void);
 extern void phy_rfagc_disable(void);
+extern void phy_fft_scale_force(bool enable, int8_t value);
 extern void phy_set_freq(uint16_t freq_mhz, int offset);
 extern void phy_chip_set_chan_offset(int offset_khz);
 
 static arc_gain_table_t s_table;
 static uint32_t s_table_generation;
-static uint8_t s_gain = 52u;
+static uint8_t s_rf_gain = 52u;
+static bool s_native_agc;   /* immutable after RF boot */
+
+bool rf_native_agc(void) { return s_native_agc; }
+
+void rf_request_agc(bool native)
+{
+    if (s_native_agc == native) return;
+    const uint8_t value = native;
+    if (!blob_store("native_agc", &value, sizeof(value))) return;
+    printf("RF_AGC requested=%s applied=%s restarting\n", native ? "native_exp" : "direct",
+           s_native_agc ? "native_exp" : "direct");
+    fflush(stdout);
+    /* Reinitialise vendor RF-side AGC via the normal PHY boot, as in
+     * legacy C5VRX. The baseband enable alone does not restore RF AGC. */
+    (void)esp_wifi_stop();
+    esp_restart();
+}
 static void (*volatile s_post_gain_hook)(uint8_t gain);
 static rf_filter_t s_filter = {PHY_FILTER_CALIBRATED, 0, false};
 
@@ -209,17 +227,22 @@ static void apply_filter(void)
 }
 
 /* Every tuning/filter transaction restores the same receive state: vendor
- * AGC off, forced gain, 11p baseline, analog profile, digital filter, DC hold. */
+ * gain ownership, 11p baseline, analog profile, digital filter, DC hold. */
 static void restore_lock(void)
 {
     experimental_phy_prepare_restore();
     (void)phy_dco_release();          /* the restore must replay vendor rows */
     enable_continuous_modem();
     ESP_ERROR_CHECK(lock_rx_only());
-    phy_disable_agc();
-    phy_rfagc_disable();
     phy_wifi_fbw_sel(s_filter.bw20 ? 0u : 1u);
-    phy_force_rx_gain(true, s_gain);
+    if (s_native_agc) {
+        phy_force_rx_gain(false, 0);
+        phy_fft_scale_force(false, 0);
+    } else {
+        phy_disable_agc();
+        phy_rfagc_disable();
+        phy_force_rx_gain(true, s_rf_gain);
+    }
     const esp_err_t p11 = phy_11p_apply_default();
     if (p11 == ESP_ERR_NOT_SUPPORTED)
         ESP_EARLY_LOGW(TAG, "11p baseline not applied (unsupported PHY)");
@@ -229,7 +252,7 @@ static void restore_lock(void)
     if (!phy_dfilt_apply_default())
         ESP_EARLY_LOGW(TAG, "digital RX filter mode not applied (unsupported PHY or readback mismatch)");
     (void)experimental_phy_restore();
-    if (s_post_gain_hook) s_post_gain_hook(s_gain);
+    if (!s_native_agc && s_post_gain_hook) s_post_gain_hook(s_rf_gain);
 }
 
 /* The reconstructed table against the PHY's AGC memory (T GAIN_TABLE_HW).
@@ -377,6 +400,8 @@ esp_err_t rf_start(void)
         if (err == ESP_OK) err = nvs_flash_init();
     }
     if (err != ESP_OK) return err;
+    uint8_t owner = 0;
+    s_native_agc = blob_load("native_agc", &owner, sizeof(owner)) && owner == 1u;
     /* No esp_netif_init: no network interface exists, and its TCP/IP task
      * (3 KiB stack plus queues) took heap the menu needs. */
     err = esp_event_loop_create_default();
@@ -433,16 +458,16 @@ void rf_reboot_to_download(void)
 
 bool rf_set_gain(uint8_t gain, uint32_t expected_generation)
 {
-    if (!phy_try_actuator(expected_generation)) return false;
+    if (s_native_agc || !phy_try_actuator(expected_generation)) return false;
     /* Re-writing the gain in force while the DC pair is held changes
      * nothing but would leave debug mode for ~2 us: skip it (V5 used to
      * re-write the same gain 50-100 times a second; seen as rolling). */
-    if (gain == s_gain && phy_dco_held()) { phy_end_actuator(); return true; }
+    if (gain == s_rf_gain && phy_dco_held()) { phy_end_actuator(); return true; }
     phy_observation_changed();
     experimental_phy_prepare_restore();
     (void)phy_dco_release();          /* a held hold keeps PBUS in debug mode */
     phy_force_rx_gain(true, gain);
-    s_gain = gain;
+    s_rf_gain = gain;
     (void)experimental_phy_restore();
     if (s_post_gain_hook) s_post_gain_hook(gain);
     phy_end_actuator();
@@ -451,11 +476,12 @@ bool rf_set_gain(uint8_t gain, uint32_t expected_generation)
 
 void rf_force_gain(uint8_t gain)
 {
+    if (s_native_agc) return;
     phy_begin();
     experimental_phy_prepare_restore();
     (void)phy_dco_release();
     phy_force_rx_gain(true, gain);
-    s_gain = gain;
+    s_rf_gain = gain;
     (void)experimental_phy_restore();
     if (s_post_gain_hook) s_post_gain_hook(gain);
     phy_end();

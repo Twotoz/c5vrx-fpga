@@ -1,5 +1,6 @@
 """Triversity: link_tx in simulation. Runs tb_link_tx.v (channel 21, gain
-model 2, calibration sequence 7, AFC not set), decodes the inverted 8N1 line
+model 2, calibration sequence 7, AFC not set, menu settings 'S' 0xB7 and
+'T' 5), decodes the inverted 8N1 line
 at the RTL's bit time and checks the frames against c5/main/fpga_link.h:
 0xC5, tag, value, 0x79 ^ value ^ tag ^ 'C'.
 
@@ -35,7 +36,7 @@ def main():
             i += 4
         else:
             i += 1
-    want = {'C': 21, 'G': 2, 'F': 7}
+    want = {'C': 21, 'G': 2, 'F': 7, 'S': 0xB7, 'T': 5}
     print('frames', frames, 'bytes', len(data))
     ok = frames == want
     print('PASS' if ok else f'FAIL, want {want}')

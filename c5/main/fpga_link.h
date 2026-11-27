@@ -11,9 +11,16 @@
  * absolute settings continuously; a C5 acts when the value differs from its
  * own. One-shot requests carry a sequence number and act when it changes.
  *     'C' channel index (band * 8 + channel)           absolute
- *     'G' gain model 0 LEVEL, 1 KEEL, 2 RSSI           absolute
+ *     'G' Direct Gain model 0 LEVEL, 2 RSSI (1, the retired KEEL: LEVEL)   absolute
+ *         3 Native AGC, 4 restore saved Direct Gain (reboot on ownership change),
+ *         5 ULTRA (experimental Direct Gain model, agc.h)
  *     'A' AFC 0 off, 1 on                              absolute
  *     'F' calibrate the current filter (console F)     sequence number
+ *     'S' menu settings, stored here (NVS) and sent back as marker 7: bit 0 Keep
+ *         lock, 1 Adaptive sync, 2 Noise filter, 3 Logo, 5..4 Aspect, 7..6 Mode
+ *                                                       absolute
+ *     'T' menu brightness (90 Hz build: its output mode), stored with 'S'
+ *                                                       absolute
  *     'B' full RF optimisation (console B)             sequence number
  *
  * C5 -> FPGA (in-band, on the IQ pads): the six FPGA data pads leave
@@ -26,14 +33,31 @@
  * two preamble words in a row; the FPGA leaves this C5 out of the combination
  * while a marker runs. Types:
  *     1 BUTTON   bit 0 UP, 1 SELECT, 2 DOWN (pressed); bit 4 long press
- *     2 GAIN     gain row in use
+ *     2 GAIN     Direct Gain row in use (0 if native owns gain)
  *     3 CN       C/N x10 + 1000 (clamped 0..4095; 0 unknown)
  *     4 FLAGS    bit 0 AFC locked, 1 video, 2 busy (calibration), 3 DC fault,
- *                4..5 IQ lane (0 coarse, 1 fine, 2 ultrafine), 6 PAL
+ *                4..5 IQ lane (0 coarse, 1 fine, 2 ultrafine), 6 PAL, 7 Native AGC applied
  *     5 CHANNEL  channel index
- *     6 SIGNAL   signal strength 0..100 */
+ *     6 SIGNAL   signal strength 0..100
+ *     7 MENU     the stored menu settings: bit 11 stored (0: nothing yet),
+ *                10..8 'T', 7..0 'S'. The FPGA takes the first one at start-up.
+ *     8 GAINSET  Direct Gain model 0 LEVEL, 1 ULTRA, 2 RSSI (3 another mode or
+ *                Native AGC), bit 2 AFC on: the menu shows what the C5 keeps */
 #pragma once
 #include <stdint.h>
+
+enum { FPGA_GAIN_NATIVE = 3, FPGA_GAIN_DIRECT_RESTORE = 4, FPGA_GAIN_ULTRA = 5, FPGA_FLAG_NATIVE = 1u << 7 };
+
+/* Interpret a gain frame against the current owner. Keep the old 0..2
+ * firmware-policy selections, while 4 rolls back without altering prefs. */
+enum { FPGA_GAIN_IGNORE, FPGA_GAIN_POLICY, FPGA_GAIN_TO_NATIVE, FPGA_GAIN_TO_DIRECT };
+static inline unsigned fpga_link_gain_action(uint8_t value, int native_active)
+{
+    if (value == FPGA_GAIN_NATIVE) return native_active ? FPGA_GAIN_IGNORE : FPGA_GAIN_TO_NATIVE;
+    if (value > FPGA_GAIN_ULTRA) return FPGA_GAIN_IGNORE;
+    if (native_active) return FPGA_GAIN_TO_DIRECT;
+    return value < FPGA_GAIN_NATIVE || value == FPGA_GAIN_ULTRA ? FPGA_GAIN_POLICY : FPGA_GAIN_IGNORE;
+}
 
 #define FPGA_LINK_SYNC 0xC5u
 #define FPGA_LINK_KEY  0x79u
@@ -49,7 +73,7 @@ static inline uint8_t fpga_link_check(uint8_t tag, uint8_t value)
 
 static inline int fpga_link_known(uint8_t tag)
 {
-    return tag == 'C' || tag == 'G' || tag == 'A' || tag == 'F' || tag == 'B';
+    return tag == 'C' || tag == 'G' || tag == 'A' || tag == 'F' || tag == 'B' || tag == 'S' || tag == 'T';
 }
 
 /* Feed one byte; returns 1 and fills *out on a complete valid frame, else 0.
@@ -77,7 +101,31 @@ static inline int fpga_link_feed(fpga_link_t *p, uint8_t b, fpga_link_frame_t *o
 #define FPGA_MARK_WORDS 6u
 #define FPGA_MARK_PRE_A 0x38u
 #define FPGA_MARK_PRE_B 0x07u
-enum { FPGA_MARK_BUTTON = 1, FPGA_MARK_GAIN, FPGA_MARK_CN, FPGA_MARK_FLAGS, FPGA_MARK_CHANNEL, FPGA_MARK_SIGNAL };
+enum { FPGA_MARK_BUTTON = 1, FPGA_MARK_GAIN, FPGA_MARK_CN, FPGA_MARK_FLAGS, FPGA_MARK_CHANNEL, FPGA_MARK_SIGNAL,
+       FPGA_MARK_MENU, FPGA_MARK_GAINSET };
+
+/* The menu settings the FPGA sends ('S', 'T') and this C5 keeps. They are
+ * stored once both frames arrived and the pair held FPGA_MENU_SETTLE_US
+ * unchanged (the FPGA repeats them: one flash write per change, not per frame). */
+#define FPGA_MENU_SETTLE_US 2000000
+typedef struct { uint8_t version, s, t; } fpga_menu_t;
+#define FPGA_MENU_VERSION 1u
+static inline unsigned fpga_menu_marker(int stored, uint8_t s, uint8_t t)
+{
+    return stored ? (1u << 11) | ((unsigned)(t & 7u) << 8) | s : 0u;
+}
+static inline int fpga_menu_should_store(int have_s, int have_t, uint8_t rx_s, uint8_t rx_t, int stored,
+                                         uint8_t st_s, uint8_t st_t, int64_t since_change_us)
+{
+    if (!have_s || !have_t || rx_t > 7u) return 0;
+    if (stored && rx_s == st_s && rx_t == st_t) return 0;
+    return since_change_us >= FPGA_MENU_SETTLE_US;
+}
+/* GAINSET: code 0 LEVEL, 1 ULTRA, 2 RSSI, 3 other; bit 2 AFC. */
+static inline unsigned fpga_gainset_value(unsigned code, int afc_on)
+{
+    return (code & 3u) | (afc_on ? 4u : 0u);
+}
 enum { FPGA_BTN_UP = 1, FPGA_BTN_SELECT = 2, FPGA_BTN_DOWN = 4, FPGA_BTN_LONG = 16 };
 
 /* The six words of one marker. */

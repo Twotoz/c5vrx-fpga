@@ -26,10 +26,15 @@ module tb_osd;
             vcnt <= 0;
             vline = vline == 261 ? 0 : vline + 1;
             if (vline == 0) field_tog <= ~field_tog;
+`ifdef TRI_HDMI
+            for (i = 0; i < PXN; i = i + 1) lb[{vline[0], 10'd0} + i] = pic[PX0 + i];
+            line_info <= {1'b1, 8'(vline)};
+`else
             if (vline >= 18 && vline < 258) begin
                 for (i = 0; i < PXN; i = i + 1) lb[{vline[0] ^ 1'b0, 10'd0} + i] = pic[(vline - 18) * 800 + PX0 + i];
                 line_info <= {1'b1, 8'(vline - 18)};
             end else line_info <= 9'd0;
+`endif
             line_tog <= ~line_tog;
         end else vcnt <= vcnt + 1;
     end
@@ -104,8 +109,8 @@ module tb_osd;
         #100 rst = 0;
         repeat (100) @(posedge clk);
         mark(2'd0, {4'd5, 12'd8});                                   // C5 A: channel A1
-        mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd1}); mark(2'd0, {4'd6, 12'd78});
-        mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd1}); mark(2'd1, {4'd6, 12'd55});
+        mark(2'd0, {4'd2, 12'd54}); mark(2'd0, {4'd3, 12'd1184}); mark(2'd0, {4'd4, 12'd33}); mark(2'd0, {4'd6, 12'd78});   // A: locked, ultrafine lane
+        mark(2'd1, {4'd2, 12'd61}); mark(2'd1, {4'd3, 12'd1121}); mark(2'd1, {4'd4, 12'd17}); mark(2'd1, {4'd6, 12'd55});   // B: locked, fine lane
         shot;                                                        // 0 start-up screen
         locked = 0; u_menu.boot_ms = 12'd1500; shot; locked = 1;      // 1 after 1 s without C5 C: its dot red
         u_menu.boot = 1'b0; repeat (20) @(posedge clk);              // (it would end after 1 s with video)
@@ -126,11 +131,13 @@ module tb_osd;
         press(5'b00100); press(5'b00100); shot;                      // 5 settings, Aspect
         press(5'b00010); press(5'b00100); shot;                      // 6 editing Aspect: Stretch
         press(5'b00010);                                             // done
+        u_menu.direct_model = 2'd1; repeat (20) @(posedge clk); shot;   // 7 Direct Gain: Ultra (experimental)
+        u_menu.direct_model = 2'd0;
         press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00100); press(5'b00010);   // Back
-        press(5'b00001); press(5'b00010); press(5'b00010); shot;     // 7 Signal page, Keep lock on
-        press(5'b10010); shot;                                       // 8 closed: live view
-        press(5'b00001); shot;                                       // 9 next channel (pill lit)
-        locked = 0; repeat (20000) @(posedge clk); shot;             // 10 no signal
+        press(5'b00001); press(5'b00010); press(5'b00010); press(5'b00010); shot;   // 8 Signal page, Keep lock off and on again
+        press(5'b10010); shot;                                       // 9 closed: live view
+        press(5'b00001); shot;                                       // 10 next channel (pill lit)
+        locked = 0; repeat (20000) @(posedge clk); shot;             // 11 no signal
         $display("shots %0d", nshot);
         $finish;
     end

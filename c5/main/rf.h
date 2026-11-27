@@ -41,6 +41,8 @@ void rf_reboot_to_download(void);
 
 /* Firmware gain (vendor table index). True only when written under the
  * expected PHY generation. */
+bool rf_native_agc(void);
+void rf_request_agc(bool native);    /* save ownership and reboot if it changes */
 bool rf_set_gain(uint8_t gain, uint32_t expected_generation);
 void rf_force_gain(uint8_t gain);           /* caller owns the receiver */
 /* Called after every gain write and PHY restore (DC hold re-assert). */
@@ -76,7 +78,7 @@ static inline bool rf_filter_equal(rf_filter_t a, rf_filter_t b)
 enum { RF_LANE_COARSE, RF_LANE_FINE, RF_LANE_ULTRAFINE, RF_LANES };
 esp_err_t rf_set_lane(unsigned lane);
 unsigned rf_lane(void);
-void rf_reroute_lane(unsigned lane);   /* live, GPIO matrix only (STRONG LANE) */
+void rf_reroute_lane(unsigned lane);   /* live, GPIO matrix only (marker end) */
 /* In-band marker to the FPGA (fpga_link.c): the six FPGA data pads leave
  * MODEM_DIAG and are driven by the CPU, one six-bit word at a time; the RX
  * clock keeps running. rf_marker_end routes the current lane back. The

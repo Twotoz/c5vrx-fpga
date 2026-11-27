@@ -152,20 +152,25 @@ def disc50(phis, out):
 #   F   = F + e, saturating at 17 bits            ki = 1/128
 #   th  = (th + fo) & 0xFFF
 #   code = disc50's code for d = (fo + fo[k-1]) >> 2 (the same table), output at k+2
-# th, F and fo[-1] start at 0. Auto: disc50's out-of-window steps (clicks) are
-# counted per RS_WIN sample pairs (saturating at 255); at the end of a window
-# the PLL takes over from RS_ON clicks and hands back below RS_OFF, from that
-# pair's output (k+2) on. Mode 0 off, 1 auto, 2 on.
-RS_WIN, RS_ON, RS_OFF = 1 << 18, 100, 25
+# th, F and fo[-1] start at 0. Mode 0 off, 1 auto, 2 on.
+# Auto (look-ahead): per sample pair j disc50's step is a click when it is out of
+# its window; pair j's two outputs (k+2, k+3) are the PLL's when pairs
+# j - RS_W + 1 .. j + RS_W hold at least RS_K clicks, else the discriminator's
+# (sim/fading: a fade's clicks cluster; the PLL is better through them, the
+# discriminator elsewhere). The RTL delays its output by RS_W pairs for this.
+# And steady clicks (a very weak signal: the PLL is better there between the
+# clicks too): the pairs are counted in sub-windows of 2^RS_SSH (pair j in
+# sub-window j >> RS_SSH); at the end of every 64th sub-window the PLL is
+# switched on for all pairs when at least RS_T of those 64 held a click, else
+# off. Pair j's output uses the switch as it stands after pair j + RS_W.
+RS_W, RS_K, RS_SSH, RS_T = 1024, 2, 12, 48
 
 
 @njit(cache=True)
-def rescue50(phis, out, mode, win, ton, toff, act):
+def rescue50(phis, out, mode, w, kon, ssh, tst, act):
     n = len(phis)
     s = ((phis[0] + 32768) >> 6) & 1023
     th = 0; F = 0; fop = 0
-    on = mode >= 2
-    cnt = 0; j = 0
     pll = np.zeros(n, np.int64)
     for k in range(n):
         e = (((phis[k] >> 4) - th + 2048) & 0xFFF) - 2048
@@ -179,19 +184,30 @@ def rescue50(phis, out, mode, win, ton, toff, act):
         c = (105 * step + 32896) // 1280
         pll[k] = 0 if c < 0 else (63 if c > 63 else c)
         fop = fo
-    for k in range(0, n - 3, 2):
+    npr = len(range(0, n - 3, 2))
+    psum = np.zeros(npr + 1, np.int64)            # clicks before pair j
+    for j in range(npr):
+        k = 2 * j
         t = ((phis[k] + 32768) >> 6) & 1023
         d = ((t - s + 512) & 1023) - 512
         cl = not (d >= DISC_WL and d <= DISC_WH)
         step = d if not cl else (d * 179) >> 8
         s = (s + step) & 1023
+        psum[j + 1] = psum[j] + (1 if cl else 0)
+    st = np.zeros(npr, np.bool_)                   # the steady switch after pair j
+    sub = 1 << ssh; on_ = False; nocc = 0; occ = 0
+    for j in range(npr):
+        occ |= psum[j + 1] - psum[j]
+        if j % sub == sub - 1:
+            nocc += occ; occ = 0
+            if (j >> ssh) % 64 == 63:
+                on_ = nocc >= tst; nocc = 0
+        st[j] = on_
+    for j in range(npr):
+        k = 2 * j
+        on = mode >= 2
         if mode == 1:
-            cnt = cnt + 1 if cl and cnt < 255 else cnt
-            if j % win == win - 1:
-                if cnt >= ton: on = True
-                elif cnt < toff: on = False
-                cnt = 0
-        j += 1
+            on = psum[min(j + w + 1, npr)] - psum[max(j - w + 1, 0)] >= kon or st[min(j + w, npr - 1)]
         if on:
             out[k + 2] = pll[k]
             out[k + 3] = pll[k + 1]
@@ -200,7 +216,7 @@ def rescue50(phis, out, mode, win, ton, toff, act):
 
 
 def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=None,
-        rescue=0, rwin=RS_WIN, ron=RS_ON, roff=RS_OFF, return_act=False):
+        rescue=0, rw=RS_W, rk=RS_K, rss=RS_SSH, rt=RS_T, return_act=False):
     """raws: list of 1..3 arrays of 6-bit samples {I2..I0, Q2..Q0}, C5 A first.
     return_phi: also return the combined angle per sample (2^-16 turn).
     rescue (with disc): 0 off, 1 auto, 2 on; return_act: also the per-sample rescue flag."""
@@ -217,7 +233,7 @@ def run(raws, enable=(True, True, True), return_phi=False, disc=False, valid=Non
         disc50(phis, out)
         act = np.zeros(raw.shape[1], np.int64)
         if rescue:
-            rescue50(phis, out, rescue, rwin, ron, roff, act)
+            rescue50(phis, out, rescue, rw, rk, rss, rt, act)
         if return_act:
             return (out.astype(np.uint8), phis, act) if return_phi else (out.astype(np.uint8), act)
     return (out.astype(np.uint8), phis) if return_phi else out.astype(np.uint8)

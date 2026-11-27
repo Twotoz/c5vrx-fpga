@@ -14,6 +14,9 @@ IO_LOC "c_clk" 73;
 IO_PORT "c_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
 IO_LOC "link_tx" 51;
 IO_PORT "link_tx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// live status to the PC: the Tang Nano 20K's USB serial (BL616 UART), log_uart.v
+IO_LOC "log_tx" 69;
+IO_PORT "log_tx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC "lcd_clk" 77;
 IO_PORT "lcd_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC "lcd_hs" 25;

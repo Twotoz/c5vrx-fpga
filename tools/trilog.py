@@ -9,7 +9,8 @@ Record (25 bytes, little-endian):
    6  video field number (the HQ DVR's JPEG records, tools/hqdvr_to_mp4.py)
    8  weight in use A, B, C (8 bit each)
   11  flags: bit 0 PAL, 1 sync locked, 2 B enabled (aligned), 3 C enabled,
-      4 B alive, 5 C alive, 6 Rescue PLL in use
+      4 B alive, 5 C alive, 6 Rescue PLL in use, 7 the last six fields all came
+      from a real vertical sync (0: at least one was predicted by the flywheel)
   12  sync quality (in-window sync edges in the last 100 ms, 16 bit)
   14  channel index (bits 0..5), Noise filter level 0..3 (bits 6..7)
   15  Signal switches (bit 0 Keep lock, 2 Adaptive sync, 3..4 Rescue 0 Off
@@ -46,7 +47,7 @@ def records(data):
         row = dict(log=num, video_field=vid, pal=fl & 1, locked=fl >> 1 & 1, sync_q=sq,
                    channel=chn & 63, noise_level=chn >> 6, mode=['Single', 'Diversity', 'Triversity', '?'][sw >> 6])
         row.update({s: sw >> k & 1 for k, s in enumerate(SW) if s})
-        row.update(rescue=RESCUE[sw >> 3 & 3], rescue_active=fl >> 6 & 1)
+        row.update(rescue=RESCUE[sw >> 3 & 3], rescue_active=fl >> 6 & 1, fields_real=fl >> 7 & 1)
         for b, name in enumerate('ABC'):
             v = int.from_bytes(r[16 + 3 * b:19 + 3 * b], 'little')
             cn, flags, sig = v & 4095, v >> 12 & 15, v >> 16

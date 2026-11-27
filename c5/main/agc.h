@@ -114,6 +114,16 @@ bool agc_level_fold_radius_used(void);
 
 void agc_rssi_reset(agc_rssi_t *a, const int16_t row_db_q8[DG_STATES], uint8_t max_index);
 uint8_t agc_rssi_tick(agc_rssi_t *a, const dg_observation_t *o, uint8_t current, uint64_t now_us);
+/* ULTRA (experimental, Triversity): RSSI's rows and fold drop, decided on
+ * every observer window (~200 us) instead of a 5 ms mean, with a 1.5 dB
+ * deadband. For close range, where multipath fades last a few ms and a gain
+ * held on the mean leaves the dips below one quantizer step. Windows that
+ * may still hold samples from before the last write (ULTRA_SETTLE_US) are
+ * skipped, so one error is not corrected twice. Shares agc_rssi_t. */
+#ifndef ULTRA_SETTLE_US
+#define ULTRA_SETTLE_US 300u
+#endif
+uint8_t agc_ultra_tick(agc_rssi_t *a, const dg_observation_t *o, uint8_t current, uint64_t now_us, uint64_t last_write_us);
 
 /* A window where carrier and noise reached both rails of both axes: folded. */
 bool agc_folded(const dg_observation_t *o);

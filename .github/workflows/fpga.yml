@@ -12,7 +12,7 @@ on:
         description: Bitstream to build
         type: choice
         default: lcd
-        options: [lcd, lcd-live, hdmi, hdmi-live, hdmi90]
+        options: [lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug, hdmi-debug]
       placement:
         description: Exact placement (e.g. 3:0.8), empty for automatic
         type: string
@@ -38,15 +38,17 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y iverilog fonts-jetbrains-mono
           pip install numpy scipy numba pillow
-      - name: Combiner and discriminator, bit-exact with the model
+      - name: Combiner and Rescue PLL, bit-exact with the model
         run: python fpga/sim/run_tb3.py
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
+      - name: Asymmetric RF failover
+        run: python fpga/sim/run_fade_failover_tb.py
       - name: B / C alignment (shared engine against two separate ones)
         run: python fpga/sim/run_align_tb.py
       - name: Markers
         run: python fpga/sim/run_marker_tb.py
       - name: Channel link
-        run: python fpga/sim/run_link_tx_tb.py
+        run: python fpga/sim/run_link_tx_tb.py && python fpga/sim/run_menu_settings_tb.py
       - name: DVR (fast and slow card)
         run: python fpga/sim/run_dvr_tb.py 12 && python fpga/sim/run_dvr_tb.py 12 400
       - name: Colour decoder, bit-exact (NTSC and PAL)
@@ -57,6 +59,8 @@ jobs:
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: OSD, pixel for pixel (menu build and HQ DVR build)
         run: python fpga/sim/run_osd_tb.py && python fpga/sim/run_osd_tb.py --hdmi && python fpga/sim/run_osd_tb.py --hq && python fpga/sim/run_osd_tb.py --tridvr
+      - name: Validate PAL/NTSC field qualification and continuous HDMI raster
+        run: python fpga/sim/run_field_timing_tb.py
       - name: LCD raster through video lock and standard changes
         run: |
           iverilog -g2012 -DTRI_LIVEUI -I fpga/rtl/video -I fpga/rtl/ui -s tb_lcd_raster -o "$RUNNER_TEMP/lcd_raster" fpga/sim/tb_lcd_raster.v fpga/rtl/video/lcd_out.v
@@ -73,6 +77,10 @@ jobs:
         run: |
           iverilog -g2012 -I fpga/rtl/video -I fpga/rtl/rx -s tb_vsync_levels -o "$RUNNER_TEMP/vsync_levels" fpga/sim/tb_vsync_levels.v fpga/rtl/video/{vid_sync,chroma}.v fpga/rtl/rx/{addsub,cordic_iter,mul_dsp}.v
           vvp -n "$RUNNER_TEMP/vsync_levels"
+      - name: Video levels and gain through fades and VTX off/on (#12, #15)
+        run: python fpga/sim/run_video_levels_tb.py
+      - name: Live status over the Tang Nano's USB serial
+        run: python fpga/sim/run_log_uart_tb.py
       - name: TMDS encoder (HDMI), against the model
         run: python fpga/sim/run_tmds_tb.py
       - name: 90 Hz HDMI, field buffer to pixels (NTSC and PAL)
@@ -96,9 +104,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { variant: lcd-live, pnr: 10m }
-          - { variant: hdmi-live, pnr: 10m }
-          - { variant: hdmi90, pnr: 25m }     # slower to place on the runners
+          # the standard builds; the DVR ones and HDMI90 are slower to place on the runners
+          - { variant: lcd, pnr: 10m }
+          - { variant: lcd-dvr, pnr: 20m }
+          - { variant: hdmi, pnr: 10m }
+          - { variant: hdmi-dvr, pnr: 20m }
+          - { variant: hdmi90, pnr: 25m }
+          - { variant: lcd-debug, pnr: 10m }
+          - { variant: hdmi-debug, pnr: 10m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga

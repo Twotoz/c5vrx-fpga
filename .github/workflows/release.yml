@@ -6,18 +6,8 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", ".github/workflows/release.yml", ".github/actions/**"]
+    paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", "fpga/placements.txt", ".github/workflows/release.yml", ".github/actions/**"]
   workflow_dispatch:
-    inputs:
-      lcd_placement:
-        description: "LCD: exact placement (seed or seed:beta, e.g. 3:0.8, from a local build's placement.txt); empty tries eight"
-        type: string
-      hdmi_placement:
-        description: "HDMI: exact placement; empty tries eight"
-        type: string
-      hdmi90_placement:
-        description: "HDMI 90 Hz: exact placement; empty for the build script's list"
-        type: string
 
 concurrency:
   group: release
@@ -41,68 +31,27 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: c5, path: out/ }
 
-  # At ~85 % LUT not every placement routes and one try can take most of an hour:
-  # the LCD and HDMI bitstreams try eight placements at once (seed:beta), each on
-  # its own runner, and publish takes one that routed. A manual run can pin one
-  # exact placement per variant (the one a local build reported in placement.txt);
-  # the toolchain is pinned in .github/actions/build-fpga, so the same commit and
-  # placement give the same bitstream.
+  # The standard builds (README "Bitstreams"), one job each: the placement in
+  # fpga/placements.txt first (the one that routed last), the build script's
+  # list after it only if that one no longer routes. The toolchain is pinned
+  # in .github/actions/build-fpga: the same commit and placement give the same
+  # bitstream.
   fpga:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
-    continue-on-error: true
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        placement: ${{ fromJSON(inputs.lcd_placement != '' && format('["{0}"]', inputs.lcd_placement) || '["default", "3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "2:0.7"]') }}
+        variant: [lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug, hdmi-debug]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga
         with:
-          variant: lcd
-          placement: ${{ matrix.placement }}
-          artifact: fpga-lcd-${{ strategy.job-index }}
-
-  fpga-hdmi:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        placement: ${{ fromJSON(inputs.hdmi_placement != '' && format('["{0}"]', inputs.hdmi_placement) || '["3:0.8", "1:0.8", "1:0.7", "5:0.8", "6:0.8", "7:0.8", "8:0.8", "2:0.7"]') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: hdmi
-          placement: ${{ matrix.placement }}
-          artifact: fpga-hdmi-${{ strategy.job-index }}
-
-  fpga-hdmi90:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: hdmi90
-          placement: ${{ inputs.hdmi90_placement }}
-          artifact: fpga-hdmi90
-
-  # the LCD from an SDRAM line buffer (no DVR): fixed panel timing, ~3 ms behind the camera
-  fpga-lcd-live:
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/build-fpga
-        with:
-          variant: lcd-live
-          artifact: fpga-lcd-live
+          variant: ${{ matrix.variant }}
+          artifact: fpga-${{ matrix.variant }}
 
   publish:
-    needs: [c5, fpga, fpga-hdmi, fpga-hdmi90, fpga-lcd-live]
+    needs: [c5, fpga]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,13 +63,7 @@ jobs:
         run: |
           mkdir out
           cp all/c5/* out/
-          cp all/fpga-hdmi90/triversity_hdmi90.fs* out/
-          cp all/fpga-lcd-live/triversity_lcd_live.fs* out/
-          lcd=$(ls all/fpga-lcd-*/triversity.fs 2>/dev/null | head -1)
-          hdmi=$(ls all/fpga-hdmi-*/triversity_hdmi.fs 2>/dev/null | head -1)
-          [ -n "$lcd" ] && [ -n "$hdmi" ] || { echo "no LCD or no HDMI placement routed"; exit 1; }
-          echo "LCD from $lcd, HDMI from $hdmi"
-          cp "$lcd" "$lcd.placement.txt" "$hdmi" "$hdmi.placement.txt" out/
+          for d in all/fpga-*; do cp $d/*.fs* out/; done
           for f in out/*.placement.txt; do echo "== ${f#out/}"; cat "$f"; done
       - name: Release
         env:
@@ -131,6 +74,6 @@ jobs:
           sha256sum * > SHA256SUMS
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Triversity $TAG" \
-            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams (Triversity, colour, menu and HQ DVR; triversity.fs for the LCD, triversity_hdmi.fs for HDMI; triversity_hdmi90.fs HDMI at 90 Hz without the HQ DVR; triversity_lcd_live.fs the LCD from an SDRAM line buffer, ~3 ms behind the camera, without the HQ DVR), built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams: triversity_lcd.fs (LCD, buffered ~3 ms), triversity_lcd_dvr.fs (LCD with the HQ DVR), triversity_hdmi.fs (HDMI), triversity_hdmi_dvr.fs (HDMI with the HQ DVR), triversity_hdmi90.fs (HDMI at 90 Hz), *_debug.fs (live status on the Tang's USB serial). Built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
             *
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

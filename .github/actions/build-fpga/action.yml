@@ -2,10 +2,10 @@ name: Build FPGA bitstream
 description: Build a Tang Nano 20K variant with a pinned toolchain and optional exact placement.
 inputs:
   variant:
-    description: lcd, lcd-live, hdmi, hdmi-live, or hdmi90
+    description: lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug or hdmi-debug (the standard builds)
     required: true
   placement:
-    description: Exact seed or seed:beta. Leave empty for the build script defaults.
+    description: Exact seed or seed:beta. Empty - the one in fpga/placements.txt first, then the build script's list.
     default: ""
   artifact:
     description: Unique artifact name for this job
@@ -27,16 +27,33 @@ runs:
         PLACEMENT: ${{ inputs.placement }}
         PNR_TIMEOUT: ${{ inputs.pnr-timeout }}
       run: |
-        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0
+        export NODVR=0 HDMI=0 HDMI90=0 LCDBUF=0 DEBUG=0
+        suffix=""
+        # the placement that routed last (fpga/placements.txt) first, then the fallback list
+        if [ -z "$PLACEMENT" ]; then
+          pin=$(awk -v v="$VARIANT" '$1 == v { print $2 }' fpga/placements.txt)
+          if [ -n "$pin" ]; then
+            list="default 3:0.8 1:0.8 1:0.7 5:0.8 6:0.8 7:0.8 8:0.8 2:0.7 3:0.7 4:0.7"
+            TRIES="$pin"
+            for t in $list; do [ "$t" = "$pin" ] || TRIES="$TRIES $t"; done
+            export TRIES TRIES_HDMI="$TRIES"
+            echo "placements: $TRIES"
+          fi
+        fi
+        case "$VARIANT" in *-debug) DEBUG=1; suffix=_debug; VARIANT=${VARIANT%-debug} ;; esac
+        # LCD: the buffered LCD (~3 ms), no DVR; LCD-DVR: the LCD line by line with
+        # the HQ DVR and the compact 7-segment OSD (hq_ui.v: the full menu does not
+        # fit next to the DVR); HDMI: no DVR; HDMI-DVR: as LCD-DVR on HDMI;
+        # HDMI90: 90 Hz, field buffer
         case "$VARIANT" in
-          lcd) source=triversity.fs ;;
-          lcd-live) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd_live.fs ;;
-          hdmi) HDMI=1; source=triversity_hdmi.fs ;;
-          hdmi-live) HDMI=1; NODVR=1; source=triversity_hdmi.fs; asset=triversity_hdmi_live.fs ;;
+          lcd) NODVR=1; LCDBUF=1; source=triversity.fs; asset=triversity_lcd.fs ;;
+          lcd-dvr) export TRIDVR=1; source=triversity_dvr.fs; asset=triversity_lcd_dvr.fs ;;
+          hdmi) HDMI=1; NODVR=1; source=triversity_hdmi.fs ;;
+          hdmi-dvr) HDMI=1; export TRIDVR=1; source=triversity_dvr_hdmi.fs; asset=triversity_hdmi_dvr.fs ;;
           hdmi90) HDMI90=1; source=triversity_hdmi90.fs ;;
           *) printf 'Unknown FPGA variant: %s\n' "$VARIANT" >&2; exit 2 ;;
         esac
-        asset=${asset:-$source}
+        asset=${asset:-$source}; asset=${asset%.fs}$suffix.fs
         fpga/build.sh
         mkdir -p "$RUNNER_TEMP/bitstream"
         cp "fpga/build/$source" "$RUNNER_TEMP/bitstream/$asset"

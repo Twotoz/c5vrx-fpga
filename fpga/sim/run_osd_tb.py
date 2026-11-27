@@ -18,12 +18,14 @@ import gen_osd as G  # noqa: E402
 
 BASE = dict(open=True, page=1, cursor=0, edit=False, toast=False, channel=8, locked=True, pal=False, scanning=False,
             scan_ch=0, dvr=True, dvr_state=2, rec_s=83, age=[0, 0, 4095], sig=[78, 55, 0], cn=[1184, 1121, 0],
-            gain=[54, 61, 0], flags=[1, 1, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2,
-            aspect=3, wide=False, logo=True)
+            gain=[54, 61, 0], flags=[33, 17, 0], gain_model=0, afc=True, bright=7, cal_ms=0, mode=2,
+            aspect=3, wide=False, logo=True,
+            klock=True, nfilt=True, **{'async': True})   # Signal defaults (menu.v)
 SHOTS = [('boot', dict(boot=True, open=False, dvr_state=1)),
          ('boot_missing', dict(boot=True, open=False, dvr_state=1, boot_ms=1500, locked=False)), ('menu', {}), ('menu_edit', dict(edit=True)), ('menu_mode', dict(cursor=1, edit=True, mode=1)), ('menu_scan', dict(cursor=2, scanning=True, scan_ch=22)),
          ('receivers', dict(page=2)), ('settings', dict(page=3, cursor=2)),
          ('settings_aspect', dict(page=3, cursor=2, edit=True, aspect=2)),
+         ('settings_ultra', dict(page=3, cursor=2, aspect=2, gain_model=1)),
          ('signal', dict(page=4, cursor=0, aspect=2, klock=True)), ('live', dict(open=False, aspect=2)),
          ('live_channel', dict(open=False, channel=9, toast=True, aspect=2)),
          ('no_signal', dict(open=False, channel=9, toast=True, locked=False, aspect=2))]
@@ -59,10 +61,9 @@ def main():
     hq = '--hq' in sys.argv or tri
     shots, base = (TRI_SHOTS, TRI_BASE) if tri else (HQ_SHOTS, HQ_BASE) if hq else (SHOTS, BASE)
     pic = picture()
-    if not hdmi:
-        # The LCD follows source timing by trimming blanking. Give the OSD a
-        # known background at every row regardless of the acquisition phase.
-        pic = np.repeat(pic[[120], :], pic.shape[0], axis=0)
+    # A constant source row isolates the OSD renderer from the differing
+    # source/display epochs. Cadence tests exercise asynchronous video.
+    pic = np.repeat(pic[[120], :], pic.shape[0], axis=0)
     g, ps = G.seg_glyphs() if tri else G.glyphs_vh(), G.pages(h90=h90)
     out = HERE.parent / 'build'; out.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as t:

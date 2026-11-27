@@ -160,13 +160,9 @@
 
       <section class="project-info" id="bitstream" aria-labelledby="bitstreamTitle">
         <h2 id="bitstreamTitle">FPGA bitstream</h2>
-        <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer. Two bitstreams with the same receiver: three C5s fused (Triversity), colour, the full menu and the HQ DVR (every field as a 720-wide colour JPEG to the TF card, buffered in the Tang's SDRAM). <strong>triversity.fs</strong> drives the 800x480 RGB LCD, <strong>triversity_hdmi.fs</strong> the HDMI port (720x480p60 / 720x576p50). <strong>triversity_hdmi90.fs</strong> is HDMI at 90 Hz for screens that need it (720x480 / 720x576 at 90 Hz from a field buffer in the SDRAM; no DVR). The LCD and HDMI share pins: flash the one you use.</p>
-        <div class="flash-actions">
-          <a id="dlFs" class="action primary" href="#" download>Download triversity.fs (LCD)</a>
-          <a id="dlFsHdmi" class="action" href="#" download>Download triversity_hdmi.fs (HDMI)</a>
-          <a id="dlFsHdmi90" class="action" href="#" download>Download triversity_hdmi90.fs (HDMI 90 Hz)</a>
-        </div>
-        <pre class="terminal-output bitstream-cmd">openFPGALoader -b tangnano20k -f triversity.fs</pre>
+        <p>The Tang Nano 20K is programmed over its own USB-C through the onboard BL616 debugger. Browsers cannot reach that debugger, so download the bitstream of the selected build and write it to the Tang's flash with openFPGALoader or the Gowin Programmer. Every build has the same receiver (three C5s fused, colour, the full menu). <strong>LCD</strong>: the 800x480 RGB LCD, buffered ~3 ms. <strong>LCD-DVR</strong>: the LCD line by line, with the HQ DVR (every field as a colour JPEG to the TF card) and a compact OSD (channel and recording on the buttons). <strong>HDMI</strong> and <strong>HDMI-DVR</strong>: the HDMI port (720x480p60 / 720x576p50), without and with the DVR. <strong>HDMI90</strong>: HDMI at 90 Hz for screens that need it. <strong>-DEBUG</strong>: LCD / HDMI with a live status on the Tang's USB serial. The LCD and HDMI share pins: flash the one you use.</p>
+        <div class="flash-actions" id="fsButtons"></div>
+        <pre class="terminal-output bitstream-cmd">openFPGALoader -b tangnano20k -f triversity_lcd.fs</pre>
         <p class="hint">Without <code>-f</code> openFPGALoader loads it until the next power-up only. Recordings: <code>python tools/hqdvr_to_mp4.py TRIDVR.BIN rec.mp4</code>.</p>
       </section>
 
