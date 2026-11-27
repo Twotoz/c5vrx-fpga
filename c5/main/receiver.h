@@ -199,6 +199,7 @@ bool receiver_dc_peek_row(uint8_t gain, uint32_t neg[2], uint32_t *samples);
  * sustained DC finding the servo cannot fix recommends CALIBRATE; buf gets
  * "FAULT" or "BASEMAP". */
 unsigned calibration_dc_needed(char *buf, size_t size);
+bool calibration_dc_unmeasured(void);   /* this channel's DC rows mostly template: Calibrate runs the full pass */
 void calibration_print(void);
 void dco_post_gain(uint8_t gain);
 /* Chain state for the diagnostics (no side effects). */

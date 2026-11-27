@@ -813,6 +813,13 @@ unsigned calibration_dc_needed(char *buf, size_t size)
     return bad || fault;
 }
 
+/* This channel's DC table is mostly template / base-map rows (no row of
+ * this board measured yet): the menu's Calibrate runs the full optimisation. */
+bool calibration_dc_unmeasured(void)
+{
+    return s_dco.freq == rf_frequency_mhz() && 2u * dco_template_rows() > dco_valid_rows();
+}
+
 static void dc_health_print(void)
 {
     printf("CAL_HEALTH state=%s qualified=%u rejected=%u dc_mcells=%d/%d reason=%u "
@@ -1226,6 +1233,37 @@ static void servo_low_rows(void)
     }
 }
 
+/* A row whose trim sits at the edge of its window (dc_trim_max) while the
+ * servo still asks for more in that direction: the codes it needs lie
+ * outside the window. That is a fresh board on template or base-map codes
+ * (board 2026-11-27, a new C5: Q 3.7 cells off, the trim at its limit,
+ * DC_FAULT trim_limit for good, the IQ off centre in every row). The
+ * trimmed codes become the row's base, the trim starts again from zero and
+ * the walk goes on; the row stays unmeasured (template), so only a real
+ * calibration or the adoption at a near-zero DC marks it as measured. Was:
+ * the trim stopped at the edge and the row never recovered. */
+static uint32_t s_dco_rebased;
+static void dco_rebase(uint8_t g, const int dc[2], const int step[2])
+{
+    if (mrow(g) >= DC_MODEL_ROWS) return;
+    const int lim = dc_trim_max(g);
+    bool edge = false;
+    for (int a = 0; a < 2; ++a) {
+        const int off = dco_offset(g, (unsigned)a);
+        if (abs(dc[a]) > DC_FAULT_DC_MCELLS && ((off >= lim && step[a] > 0) || (off <= -lim && step[a] < 0))) edge = true;
+    }
+    if (!edge) return;
+    for (int a = 0; a < 2; ++a) {
+        s_dco.e[g].code[a] = (int16_t)dco_trimmed(g, (unsigned)a);
+        s_dco.e[g].residual_mcells[a] = (int16_t)(dc[a] > 30000 ? 30000 : dc[a] < -30000 ? -30000 : dc[a]);
+    }
+    dc_model_adopt(&s_dc_model, mrow(g), dco_mask_get(s_dco_templ, g));
+    s_dco_dirty = true;
+    ++s_dco_rebased;
+    printf("DCO row=%u rebased freq=%u codes=%d/%d dc_mcells=%d/%d (trim at its limit, live servo)\n", g, s_dco.freq,
+           s_dco.e[g].code[0], s_dco.e[g].code[1], dc[0], dc[1]);
+}
+
 void servo_service(void)
 {
     if (!s_servo_ready) { dc_servo_init(&s_servo); s_servo_ready = true; }
@@ -1283,9 +1321,12 @@ void servo_service(void)
         ++s_servo_estimates;
         if (g == s_current_gain) {
             s_servo_dc[0] = dc[0]; s_servo_dc[1] = dc[1]; s_servo_dc_us = esp_timer_get_time();
-            const int lim = dc_trim_max(g);
-            for (int a = 0; a < 2; ++a)
-                if (abs(dc[a]) > DC_FAULT_DC_MCELLS && abs(dco_offset(g, (unsigned)a)) >= lim) dc_fault_mark(2u, g);
+            /* A trim at its window edge is rebased below (dco_rebase); only a
+             * code at the DAC's own rail can go no further. */
+            for (int a = 0; a < 2; ++a) {
+                const int t = dco_trimmed(g, (unsigned)a);
+                if (abs(dc[a]) > DC_FAULT_DC_MCELLS && (t <= 0 || t >= 511)) dc_fault_mark(2u, g);
+            }
         }
         if (s_dco.e[g].valid != DCO_ROW_OK || s_dco_banned[g]) {
             ++s_servo_skip[1];
@@ -1321,6 +1362,7 @@ void servo_service(void)
                                           pneg[1] < DC_SERVO_PNEG_LO || pneg[1] > DC_SERVO_PNEG_HI);
         int step[2];
         dc_servo_decide_sign(&s_servo, sr, dc, pneg, step);
+        dco_rebase(g, dc, step);
         const int base[2] = {dco_offset(g, 0), dco_offset(g, 1)};
         for (int a = 0; a < 2; ++a) {
             const int lim = dc_trim_max(g);
@@ -1635,13 +1677,13 @@ void cal_dc_print(rf_filter_t f)
            dco_mask_count(s_dco_preset, s_dco.lo, s_dco.hi), (unsigned long)s_dco_preset_holds);
     printf("DC_SERVO dc_mcells=%d/%d slope_mcells_per_code=%d/%d known=%u/%u pol_votes=%d/%d offset=%d/%d own_trim=%u "
            "steps=%lu writes=%lu estimates=%lu learned=%lu relearned=%lu sign_rejects=%lu turns=%lu forgotten=%lu "
-           "adopted=%lu urgent_wakes=%lu fast=%lu brackets=%lu skip=%lu/%lu/%lu/%lu/%lu fault=%u\n", s_servo_dc[0], s_servo_dc[1],
+           "adopted=%lu rebased=%lu urgent_wakes=%lu fast=%lu brackets=%lu skip=%lu/%lu/%lu/%lu/%lu fault=%u\n", s_servo_dc[0], s_servo_dc[1],
            s_servo.slope[0], s_servo.slope[1], s_servo.known[0], s_servo.known[1], s_servo.pol_votes[0],
            s_servo.pol_votes[1], dco_offset(s_current_gain, 0), dco_offset(s_current_gain, 1),
            mrow(s_current_gain) < DC_MODEL_ROWS ? (unsigned)s_dc_model.own[mrow(s_current_gain)] : 0u,
            (unsigned long)s_servo.steps, (unsigned long)s_servo_writes, (unsigned long)s_servo_estimates,
            (unsigned long)s_servo.learned, (unsigned long)s_servo.relearned, (unsigned long)s_servo.sign_rejects,
-           (unsigned long)s_servo.turns, (unsigned long)s_servo.forgotten, (unsigned long)s_dco_adopted,
+           (unsigned long)s_servo.turns, (unsigned long)s_servo.forgotten, (unsigned long)s_dco_adopted, (unsigned long)s_dco_rebased,
            (unsigned long)s_dc_urgent_wakes, (unsigned long)s_servo_fast, (unsigned long)s_servo.brackets,
            (unsigned long)s_servo_skip[0], (unsigned long)s_servo_skip[1],
            (unsigned long)s_servo_skip[2], (unsigned long)s_servo_skip[3], (unsigned long)s_servo_skip[4], s_dc_fault);
