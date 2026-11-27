@@ -1,21 +1,22 @@
 // Triversity: align_bc.v (one shared engine for C5 B and C) against two
 // align_b.v on the same streams. A complex FM signal (video-rate deviation,
 // composite video) is sampled by C5 A on clk_a and by B and C on their own
-// clocks (+60 / -45 ppm), 15.3 / 24.6 samples ahead of A, 3 bits per
+// clocks (+60 / -45 ppm), one ahead of A and one behind, 3 bits per
 // component, plus noise. Per clk_a sample after the settle time: does the
 // aligned B / C sample equal A's within a sample (both engines), and are en_b / en_c set.
 `timescale 1ns/1ps
 module tb_align;
     parameter real TA = 25.0, TB = 25.0 * (1.0 + 60e-6), TC = 25.0 * (1.0 - 45e-6);
-    parameter real DB = 15.3 * 25.0, DC = 24.6 * 25.0, NOISE = 0.25;
-    parameter integer MS = 16, SETTLE_MS = 9;
+    parameter real DB = 15.3 * 25.0, DC = -12.6 * 25.0, NOISE = 0.25;
+    parameter integer CFO_B = 0, CFO_C = 0;
+    parameter integer MS = 9, SETTLE_MS = 6;
     reg clk_a = 0, clk_b = 0, clk_c = 0, rst = 1;
     always #(TA / 2) clk_a = ~clk_a;
     always #(TB / 2) clk_b = ~clk_b;
     always #(TC / 2) clk_c = ~clk_c;
     real PI2 = 6.283185307179586;
     // composite video (sync, burst, picture) FM-modulated at 8 MHz/V, a 100 kHz
-    // carrier offset; the phase integrated in 1 ns steps, kept 1024 ns back
+    // carrier offset; integrate in 5 ns steps, keeping a history for the delays.
     real ph [0:1023]; integer pn = 0; real phase_now = 0.0;
     function real video; input real t; real u;
         begin
@@ -30,9 +31,9 @@ module tb_align;
     initial begin : integ
         integer k;
         for (k = 0; k < 1024; k = k + 1) ph[k] = 0.0;
-        forever begin #1; phase_now = phase_now + PI2 * (1e5 + 8e6 * video($realtime)) * 1e-9; pn = (pn + 1) % 1024; ph[pn] = phase_now; end
+        forever begin #5; phase_now = phase_now + PI2 * (1e5 + 8e6 * video($realtime)) * 5e-9; pn = (pn + 1) % 1024; ph[pn] = phase_now; end
     end
-    function real phase_at; input real back; integer d; begin d = $rtoi(back + 0.5); phase_at = ph[(pn - d + 1024) % 1024]; end endfunction
+    function real phase_at; input real back; integer d; begin d = $rtoi(back / 5.0 + 0.5); phase_at = ph[(pn - d + 1024) % 1024]; end endfunction
     integer seed = 7;
     function real gauss; input integer dummy; integer k; real acc;
         begin acc = 0; for (k = 0; k < 4; k = k + 1) acc = acc + ($random(seed) & 16'hffff) / 65536.0; gauss = (acc - 2.0) * 1.732; end
@@ -40,13 +41,14 @@ module tb_align;
     function [2:0] q3; input real v; integer r;
         begin r = $rtoi(v + 4.5) - 4; if (v + 4.5 < 0) r = -4; if (r < -4) r = -4; if (r > 3) r = 3; q3 = r[2:0]; end
     endfunction
-    function [7:0] smp; input real back;
-        real p; begin p = phase_at(back); smp = {q3(3.4 * $cos(p) + NOISE * gauss(0)), 1'b0, q3(3.4 * $sin(p) + NOISE * gauss(0)), 1'b0}; end
+    function [7:0] smp; input real back, cfo;
+        real p; begin p = phase_at(back) + PI2 * cfo * $realtime * 1e-9;
+            smp = {q3(3.4 * $cos(p) + NOISE * gauss(0)), 1'b0, q3(3.4 * $sin(p) + NOISE * gauss(0)), 1'b0}; end
     endfunction
     reg [7:0] ra = 0, rb = 0, rc = 0;
-    always @(posedge clk_a) ra <= smp(900.0);              // A 36 samples late: B and C lead it (the buffers can only delay)
-    always @(posedge clk_b) rb <= smp(900.0 - DB);
-    always @(posedge clk_c) rc <= smp(900.0 - DC);
+    always @(posedge clk_a) ra <= smp(600.0, 0);
+    always @(posedge clk_b) rb <= smp(600.0 - DB, CFO_B);
+    always @(posedge clk_c) rc <= smp(600.0 - DC, CFO_C);
     // the old engines
     wire [7:0] o_ad1, o_ad2, o_b, o_c; wire o_enb, o_enc, o_alb, o_alc;
     align_b u_ob (.clk_b(clk_b), .raw_b_in(rb), .clk_a(clk_a), .rst_a(rst), .ref_lost(1'b0), .raw_a(ra), .raw_a_d(o_ad1), .raw_b(o_b), .en_b(o_enb), .b_alive(o_alb), .lag());

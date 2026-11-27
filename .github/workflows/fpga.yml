@@ -43,7 +43,7 @@ jobs:
         env: { C5VRX_RESEARCH: "${{ github.workspace }}/C5VRX/research" }
       - name: Asymmetric RF failover
         run: python fpga/sim/run_fade_failover_tb.py
-      - name: B / C alignment (shared engine against two separate ones)
+      - name: B / C alignment with independent timing and carrier offsets
         run: python fpga/sim/run_align_tb.py
       - name: Markers
         run: python fpga/sim/run_marker_tb.py

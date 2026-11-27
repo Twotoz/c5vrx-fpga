@@ -24,14 +24,16 @@ import mrc3_model  # noqa: E402
 WARMUP = 256
 
 
-def stimulus(seed, cn, fd, n):
+def stimulus(seed, cn, fd, n, offsets=(0, 0, 0)):
     rng = np.random.default_rng(seed)
     E = eval3.E
     ire, _ = E.sim.raster('NTSC', seed, 1)
     src = sg.lfilter(sg.firwin(81, 6e6, fs=80e6), 1, np.repeat(ire[:n + 400], 2))
     z80 = sg.sosfilt(E.sim.CHAN, np.exp(2j * np.pi * np.cumsum(E.sim.PORCH_HZ + 0.7 * src / 140 * E.sim.DEV_PP) / 80e6))
     z80 /= np.sqrt(np.mean(abs(z80) ** 2))
-    return [mrc3_model.to_raw3(eval3.branch_y(z80, cn, rng, fd)[0])[:n] for _ in range(3)]
+    t = np.arange(n) / 40e6
+    return [mrc3_model.to_raw3(eval3.branch_y(z80, cn, rng, fd)[0][:n] * np.exp(2j * np.pi * hz * t))
+            for hz in offsets]
 
 
 def markers(raws, seed, n, count=6):
@@ -70,6 +72,7 @@ def main():
                  (8, 6, 300, (1, 1, 0)), (9, 6, 300, (1, 0, 1)), (10, 4, 0, (1, 0, 0)), (11, None, 0, (1, 1, 1))]
         cases.append((12, 'deadC', 0, (1, 1, 1)))   # C5 C without signal
         cases += [(13, -2, 0, (1, 1, 1)), (14, 3, 300, (1, 0, 0))]   # weak signals
+        cases.append((15, 18, 0, (1, 1, 1)))  # independent carrier offsets
         for seed, cn, fd, en in cases:
             n = 6000
             if cn == 'deadC':   # C5 C without signal: random words on C only
@@ -78,7 +81,8 @@ def main():
             elif cn is None:   # random raw words, extremes included
                 raws = [np.random.default_rng(seed + b).integers(0, 64, n) for b in range(3)]
             else:
-                raws = stimulus(seed, cn, fd, n)
+                offsets = (0, 180_000, -265_000) if seed == 15 else (0, 0, 0)
+                raws = stimulus(seed, cn, fd, n, offsets)
             raws, valid = markers(raws, seed, n, 0 if seed == 6 else 6)
             hw = run(raws, en, work, valid)
             # the Rescue PLL is the only demodulator (mrc3_core.v): the model's rescue 2
