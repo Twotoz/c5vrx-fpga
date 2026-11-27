@@ -208,7 +208,15 @@ static void command(int c)
     } else if (c == CMD_AGC_OWNER || c == CMD_AGC_OWNER + 1) {
         rf_request_agc(c == CMD_AGC_OWNER + 1);
     } else if (c == CMD_CAL_QUICK) {
-        filter_request();
+        /* The menu's Calibrate. A C5 whose DC this channel cannot hold (a DC
+         * fault, the health watch's notice) or whose DC rows are still the
+         * template of another board gets the full optimisation (console B):
+         * the quick pass keeps the rows it has and leaves such a C5 off centre
+         * (board 2026-11-27: a new C5 stayed on DC! through Calibrate). */
+        if (calibration_dc_needed(NULL, 0) || calibration_dc_unmeasured()) {
+            printf("CAL menu: DC %s, full optimisation\n", calibration_dc_needed(NULL, 0) ? "needed" : "rows not measured");
+            filter_request_full();
+        } else filter_request();
     } else if (c == CMD_CAL_FULL) {
         filter_request_full();
     }
