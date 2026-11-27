@@ -80,8 +80,9 @@ does not fit next to it, so the DVR builds have the compact OSD (`hq_ui.v`,
 off, SELECT held Triversity -> Diversity -> Single; Keep lock, Adaptive sync
 and Noise filter on, Direct Gain and AFC as the C5s keep them. Aspect (4:3 / 16:9 / Stretch / Auto) on the LCD builds; on HDMI the screen
 scales. The LCD buffer and the DVR both use the SDRAM, so LCD-DVR is not
-buffered. CI builds all seven on every pull request; every release carries
-them (`release.yml`).
+buffered. Pull-request CI builds all seven variants. Automatic releases carry
+the six variants other than HDMI90. To include HDMI90, manually run the Release
+workflow with `include_hdmi90` enabled.
 
 The HQ DVR buffers the fields in the Tang's built-in 8 MB SDRAM (block order,
 up to four fields), so recording never takes block RAM or time from the
@@ -91,8 +92,9 @@ at ~85 % (the DVR builds) not every one does. `PLACEMENT=3:0.8 fpga/build.sh` bu
 exactly one placement; every build writes `fpga/build/placement.txt` (commit,
 placement, Yosys and nextpnr versions). CI and releases use the same pinned OSS
 CAD Suite (2026-11-24, `.github/actions/build-fpga`), so a placement that routed
-locally can be given to the Release (or FPGA) workflow's manual run and gives the
-same bitstream; each release carries a `.placement.txt` per bitstream.
+locally can be given to the FPGA workflow's manual run. The Release workflow
+also takes an exact `hdmi90_placement` when HDMI90 is enabled. Each release
+carries a `.placement.txt` per bitstream.
 
 ## Experimental hardware — flight safety warning
 
