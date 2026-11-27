@@ -179,11 +179,10 @@ it, the mode drops to Diversity (A and B work) or Single when C5s are missing.
   **90 Hz** in place of brightness: Free (the output runs on the crystal, the
   newest complete field; the default), Camera (the frames are locked to the
   fields, 3 to 2 NTSC / 9 to 5 PAL, and a field is shown while it is still
-  coming in once the display cannot overtake it: ~12 ms less delay in NTSC),
-  Smooth (Camera, and each frame is shifted to where the scene is at that
-  moment: whole-picture motion per field, horizontal in four bands and
-  vertical, `rtl/video/motion.v`; a 4 px a field pan moves 2 / 3 / 3 px a
-  frame instead of 0 / 4 / 4). `sim/run_hdmi90_tb.py --mode=1 / 2 --motion`.
+  coming in once the display cannot overtake it: ~12 ms less delay in NTSC).
+  `sim/run_hdmi90_tb.py --mode=1`. (Smooth, a motion-compensated Camera,
+  `rtl/video/motion.v`, is left out of the build: with it HDMI90 no longer
+  placed; `fbuf` keeps it behind `SMOOTH`, `run_hdmi90_tb.py --mode=2 --motion`.)
 - **Aspect**: 4:3 (the picture in the middle 640 columns, black bars), 16:9
   (full width, for 16:9 cameras), Stretch (a 4:3 picture over the full width:
   true geometry in the middle, the edges stretched), Auto (16:9 when the camera
