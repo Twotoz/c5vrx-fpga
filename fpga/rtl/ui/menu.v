@@ -176,7 +176,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
     reg [2:0]  page;                      // 1 menu, 2 receivers, 3 settings, 4 signal (while open)
     reg [2:0]  cursor;
     reg [2:0]  bright;
-    reg [1:0]  hz90_r;                    // 90 Hz HDMI build: 0 Free, 1 Camera, 2 Smooth
+    reg [1:0]  hz90_r;                    // 90 Hz HDMI build: 0 Free, 1 Camera (2 Smooth: fbuf SMOOTH, not built)
     assign hz90 = hz90_r;
     reg [1:0]  aspect;                    // 0 4:3, 1 16:9, 2 Stretch, 3 Auto
     reg        logo;                      // small logo in the live view
@@ -243,7 +243,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                 if (mk_pl_a[11]) begin
                     klock <= mk_pl_a[0]; async_on <= mk_pl_a[1]; nfilt <= mk_pl_a[2]; logo <= mk_pl_a[3];
                     aspect <= mk_pl_a[5:4]; mode <= mk_pl_a[7:6] == 2'd3 ? 2'd2 : mk_pl_a[7:6];
-                    if (H90) hz90_r <= mk_pl_a[9:8] == 2'd3 ? 2'd0 : mk_pl_a[9:8]; else bright <= mk_pl_a[10:8];
+                    if (H90) hz90_r <= {1'b0, mk_pl_a[8]}; else bright <= mk_pl_a[10:8];
                 end
                 s_set <= 1'b1;
             end
@@ -318,7 +318,7 @@ module menu #(parameter CLK_HZ = 33750000, parameter HAS_DVR = 1) (
                     default: case (cursor)
                         3'd0: if (!native_value) edit <= 1'b1;
                         3'd2: edit <= 1'b1;
-                        3'd4: if (H90) hz90_r <= hz90_r == 2'd2 ? 2'd0 : hz90_r + 2'd1;   // Free -> Camera -> Smooth
+                        3'd4: if (H90) hz90_r <= {1'b0, ~hz90_r[0]};   // Free <-> Camera (Smooth is not in the build)
                               else edit <= 1'b1;
                         3'd1: begin afc <= ~afc; a_set <= 1'b1; end
                         3'd3: logo <= ~logo;

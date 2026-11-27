@@ -7,6 +7,6 @@ lcd           default
 lcd-dvr       default
 hdmi          3:0.8
 hdmi-dvr      3:0.8
-hdmi90        default
+hdmi90        3:0.8
 lcd-debug     default
 hdmi-debug    3:0.8
