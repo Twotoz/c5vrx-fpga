@@ -234,7 +234,8 @@ module tri_top (
     fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(a_gclk),
                .mode_p(2'd1),                                      // Camera: frames locked to the fields
 `else
-    fbuf u_fb (.clk(a_gclk), .mode_p(hz90),
+    // HDMI90: Free / Camera; Smooth (motion.v) is left out, the build did not place (LUT4 85 %)
+    fbuf #(.SMOOTH(0)) u_fb (.clk(a_gclk), .mode_p(hz90),
 `endif
                .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .locked(locked),
                .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
