@@ -8,6 +8,14 @@ on:
     branches: [main]
     paths: ["c5/**", "fpga/rtl/**", "fpga/boards/**", "fpga/build.sh", "fpga/placements.txt", ".github/workflows/release.yml", ".github/actions/**"]
   workflow_dispatch:
+    inputs:
+      include_hdmi90:
+        description: Include the 90 Hz HDMI bitstream in this release
+        type: boolean
+        default: false
+      hdmi90_placement:
+        description: Exact HDMI90 placement (e.g. 5:0.8), empty for automatic
+        type: string
 
 concurrency:
   group: release
@@ -31,7 +39,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: c5, path: out/ }
 
-  # The standard builds (README "Bitstreams"), one job each: the placement in
+  # Publish the six standard variants automatically. HDMI90 is opt-in while
+  # it regularly fails to place within the job budget. For each build, try
   # fpga/placements.txt first (the one that routed last), the build script's
   # list after it only if that one no longer routes. The toolchain is pinned
   # in .github/actions/build-fpga: the same commit and placement give the same
@@ -42,12 +51,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [lcd, lcd-dvr, hdmi, hdmi-dvr, hdmi90, lcd-debug, hdmi-debug]
+        variant: ${{ fromJSON(inputs.include_hdmi90 && '["lcd", "lcd-dvr", "hdmi", "hdmi-dvr", "lcd-debug", "hdmi-debug", "hdmi90"]' || '["lcd", "lcd-dvr", "hdmi", "hdmi-dvr", "lcd-debug", "hdmi-debug"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-fpga
         with:
           variant: ${{ matrix.variant }}
+          placement: ${{ matrix.variant == 'hdmi90' && inputs.hdmi90_placement || '' }}
           artifact: fpga-${{ matrix.variant }}
 
   publish:
@@ -72,8 +82,12 @@ jobs:
         run: |
           cd out
           sha256sum * > SHA256SUMS
+          hdmi90_note=""
+          if [[ -f triversity_hdmi90.fs ]]; then
+            hdmi90_note=" Also includes triversity_hdmi90.fs (HDMI at 90 Hz)."
+          fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Triversity $TAG" \
-            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams: triversity_lcd.fs (LCD, buffered ~3 ms), triversity_lcd_dvr.fs (LCD with the HQ DVR), triversity_hdmi.fs (HDMI), triversity_hdmi_dvr.fs (HDMI with the HQ DVR), triversity_hdmi90.fs (HDMI at 90 Hz), *_debug.fs (live status on the Tang's USB serial). Built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
+            --notes "C5 firmware (all three C5s) and the Tang Nano 20K bitstreams: triversity_lcd.fs (LCD, buffered ~3 ms), triversity_lcd_dvr.fs (LCD with the HQ DVR), triversity_hdmi.fs (HDMI), triversity_hdmi_dvr.fs (HDMI with the HQ DVR), *_debug.fs (live status on the Tang's USB serial).${hdmi90_note} Built from ${GITHUB_SHA} (seed and toolchain of each in its .placement.txt). Flash with the web flasher." \
             *
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
