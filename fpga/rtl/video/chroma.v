@@ -20,6 +20,7 @@ module chroma (
     input  wire [5:0]        code,
     input  wire [11:0]       hc,
     input  wire              pal,
+    input  wire              line_sync,
     output reg  [9:0]        y8u,        // luma, sum-of-8-codes units (vid_sync's y)
     output reg  signed [9:0] ug,         // U, V in gray units (255 = 100 IRE), V sign-corrected
     output reg  signed [9:0] vg
@@ -52,6 +53,7 @@ module chroma (
     reg  signed [20:0] bi, bq;
     reg  signed [15:0] xq, yq;
     reg  [15:0] amp, acc_a;
+    reg         valid_burst, valid_previous, previous_pal;
     reg         kill = 1'b1, sw = 1'b0;      // sw: V inverted on this line (PAL)
     // burst angles: a sequential vectoring CORDIC, bit-exact with rtl/rx/cordic_angle.v
     // (mrc_model.cordic_angle), run twice a line: this burst (pre-rotation at
@@ -60,6 +62,7 @@ module chroma (
 `include "tables.vh"
     reg signed [17:0] cx, cy; reg [15:0] ang, t_cur; reg [3:0] cn; reg crun;
     reg signed [15:0] xp, yp, xa, ya;
+    wire burst_ok;
     wire        c_go = hc == BE + 12'd1 || hc == BE + 12'd12;
     wire signed [15:0] cxi = hc == BE + 12'd1 ? xq : xa, cyi = hc == BE + 12'd1 ? yq : ya;
     // the CORDIC's sums on ADDSUB carry chains (rtl/rx/addsub.v): pre-rotation 0 -/+ v,
@@ -72,10 +75,16 @@ module chroma (
     addsub #(18) u_cyn (.a(cy), .b(cx >>> cn), .sub(cpos), .y(cyn));
     addsub #(16) u_ang (.a(ang), .b(atan_lut(cn)), .sub(~cpos), .y(angn));
     always @(posedge clk) begin
-        if (hc == BE + 12'd1) begin
+        if (rst) begin
+            xp <= 0; yp <= 0;
+            valid_burst <= 0; valid_previous <= 0; previous_pal <= 0;
+        end else if (hc == BE + 12'd1) begin
             xa <= ($signed({xq[15], xq}) + $signed({xp[15], xp})) >>> 1;
             ya <= ($signed({yq[15], yq}) + $signed({yp[15], yp})) >>> 1;
-            xp <= xq; yp <= yq;
+            if (burst_ok) begin xp <= xq; yp <= yq; end
+            valid_burst <= burst_ok && (!pal || (valid_previous && previous_pal == pal));
+            valid_previous <= burst_ok;
+            previous_pal <= pal;
         end
         if (hc == BE + 12'd12) t_cur <= ang;
         if (c_go) begin
@@ -94,6 +103,8 @@ module chroma (
     wire [15:0] ax, ay;
     addsub #(16) u_ax (.a(16'd0), .b(xq), .sub(xq[15]), .y(ax));
     addsub #(16) u_ay (.a(16'd0), .b(yq), .sub(yq[15]), .y(ay));
+    wire [15:0] burst_amp = (ax > ay ? ax : ay) + ((ax > ay ? ay : ax) >> 1);
+    assign burst_ok = line_sync && burst_amp >= KILL;
     // NTSC: the error is this burst's angle; PAL: the two-burst mean's, and the
     // V switch is this burst against the mean
     wire signed [15:0] t = pal ? ang : t_cur;
@@ -101,11 +112,13 @@ module chroma (
     wire [15:0] dcm = t_cur - ang;
     wire        swp = dcm != 16'd0 && !dcm[15];          // 0 < d < 32768
     wire        ev = hc == BE + 12'd24;
+    wire        track = ev && valid_burst;
     wire signed [21:0] fsum = {fadj[20], fadj} - {{5{err[16]}}, err};
-    wire signed [20:0] fadj_n = !ev ? fadj : fsum > 22'sd1048575 ? 21'sd1048575 : fsum < -22'sd1048576 ? -21'sd1048576 : fsum[20:0];
-    wire [31:0] corr = ev ? -({{15{err[16]}}, err} << 14) : 32'd0;
-    wire signed [16:0] adiff = {1'b0, amp} - {1'b0, acc_a};
+    wire signed [20:0] fadj_n = !track ? fadj : fsum > 22'sd1048575 ? 21'sd1048575 : fsum < -22'sd1048576 ? -21'sd1048576 : fsum[20:0];
+    wire [31:0] corr = track ? -({{15{err[16]}}, err} << 14) : 32'd0;
+    wire signed [16:0] adiff = (valid_burst ? {1'b0, amp} : 17'd0) - {1'b0, acc_a};
     wire [15:0] a_n = acc_a + {{3{adiff[16]}}, adiff[15:3]};
+    wire colour_on = valid_burst && a_n >= KILL;
     // divider G = K / A
     reg  [19:0] dv_k; reg [15:0] dv_a; reg [20:0] dv_r; reg [10:0] dv_q; reg [4:0] dv_n; reg dv_run;
     reg  [10:0] gk;
@@ -119,12 +132,12 @@ module chroma (
             if (hc == BE) begin
                 xq <= sat16(nbq >>> 2); yq <= sat16(bi >>> 2);
             end
-            if (hc == BE + 12'd1) amp <= (ax > ay ? ax : ay) + ((ax > ay ? ay : ax) >> 1);
+            if (hc == BE + 12'd1) amp <= burst_amp;
             if (ev) begin
-                sw <= pal && !swp;
-                acc_a <= a_n; kill <= a_n < KILL;
-                dv_k <= pal ? K_P : K_N; dv_a <= a_n; dv_r <= 21'd0; dv_q <= 11'd0; dv_n <= 5'd20; dv_run <= a_n >= KILL;
-                if (a_n < KILL) gk <= 11'd0;
+                if (valid_burst) sw <= pal && !swp;
+                acc_a <= a_n; kill <= !colour_on;
+                dv_k <= pal ? K_P : K_N; dv_a <= a_n; dv_r <= 21'd0; dv_q <= 11'd0; dv_n <= 5'd20; dv_run <= colour_on;
+                if (!colour_on) gk <= 11'd0;
             end else if (dv_run) begin                 // restoring division, one bit a clock
                 if ({dv_r[19:0], dv_k[19]} >= {5'd0, dv_a}) begin dv_r <= {dv_r[19:0], dv_k[19]} - {5'd0, dv_a}; dv_q <= {dv_q[9:0], 1'b1}; end
                 else begin dv_r <= {dv_r[19:0], dv_k[19]}; dv_q <= {dv_q[9:0], 1'b0}; end

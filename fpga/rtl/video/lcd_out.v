@@ -50,6 +50,9 @@ module lcd_out (
     output reg         frame_tog,      // to fbuf.v: a frame starts (latch the newest field)
     output reg         fetch_tog,      // to fbuf.v: fetch source line fetch_line
     output reg  [8:0]  fetch_line
+`ifdef TRI_LCDBUF
+    , input wire       fetch_done_a
+`endif
 `endif
 );
     // ---- clock-domain crossing ------------------------------------------------
@@ -187,6 +190,32 @@ module lcd_out (
 `ifdef TRI_LCDBUF
     wire [17:0] rsl5 = {9'd0, row[9:1]} * 18'd205;
     wire [8:0]  rsl = pal_out ? row[9:1] + rsl5[17:10] : row[9:1];   // the source line of this row
+    // The panel clock keeps running even if the IQ clock or SDRAM reader
+    // stops. Age the displayed field at frame boundaries in that clock.
+    reg [2:0] fetched;
+    reg saw_field, saw_fetch;
+    reg [1:0] missed;
+    reg [15:0] noise;
+    wire fetch_ev = fetched[2] ^ fetched[1];
+    wire video_stale = &missed;
+    wire [4:0] snow = noise[4:0];
+    wire [15:0] stale_pixel = {snow, snow, snow[4], snow};
+    always @(posedge clk) begin
+        if (rst) begin
+            fetched <= 0; saw_field <= 0; saw_fetch <= 0; missed <= 3; noise <= 16'hace1;
+        end else begin
+            fetched <= {fetched[1:0], fetch_done_a};
+            if (hc == HHALF - 1'b1 && lv >= VT - 1'b1) begin
+                if ((saw_field || field_ev) && (saw_fetch || fetch_ev)) missed <= 0;
+                else if (!video_stale) missed <= missed + 1'b1;
+                saw_field <= 0; saw_fetch <= 0;
+            end else begin
+                if (field_ev) saw_field <= 1'b1;
+                if (fetch_ev) saw_fetch <= 1'b1;
+            end
+            if (video_stale) noise <= {noise[14:0], ^{noise[15], noise[13], noise[12], noise[10]}};
+        end
+    end
 `endif
 `elsif TRI_HDMI
     // Fixed CEA raster. Take the newest completed source line at the
@@ -458,6 +487,8 @@ module lcd_out (
 `else
         v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
 `endif
+`elsif TRI_LCDBUF
+        v3 <= boot ? lg2 : hv2 ? (video_stale ? stale_pixel : lb_data) : 16'd0;
 `else
         v3 <= boot ? lg2 : hv2 ? lb_data : 16'd0;
 `endif
