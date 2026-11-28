@@ -243,7 +243,7 @@ def sat(x, bits):
     return max(lo, min(hi, x))
 
 
-def hw_decode(codes, hc, pal):
+def hw_decode(codes, hc, pal, line_sync=None):
     """Per clock: Y8u (8-code-sum units, offset like vid_sync's y), Ug, Vg (gray
     units, V sign-corrected), kill; arrays over all clocks."""
     N = len(codes)
@@ -254,6 +254,7 @@ def hw_decode(codes, hc, pal):
     A = 0; G = 0; sw = 1; kill = True
     BI = BQ = 0
     xq = yq = 0; amp = 0; theta_at = -1; theta = 0; xp = yp = 0; theta_avg = 0
+    valid_burst = valid_previous = previous_pal = False
     # streaming filter state
     hist_pu = [0] * 24; hist_pv = [0] * 24; hist_u1 = [0] * 24; hist_v1 = [0] * 24
     u1 = v1 = u2 = v2 = 0
@@ -274,6 +275,7 @@ def hw_decode(codes, hc, pal):
         ck = int(c[k])
         pu, pv = ck * s, ck * co
         h = int(hc[k])
+        threshold = KILL_P if p else KILL_N
         # burst
         if h == 0:
             BI = BQ = 0
@@ -286,21 +288,25 @@ def hw_decode(codes, hc, pal):
             theta = m2.cordic_angle(xq, yq, ATAN); theta_at = k + CORDIC_LAT
             # PAL: the mean of this burst and the one before points along -U
             theta_avg = m2.cordic_angle(asr(xq + xp, 1), asr(yq + yp, 1), ATAN)
-            xp, yp = xq, yq
+            burst_ok = amp >= threshold and (line_sync is None or line_sync[min(k + 1, N - 1)])
+            valid_burst = burst_ok and (not p or (valid_previous and previous_pal == p))
+            if burst_ok:
+                xp, yp = xq, yq
+            valid_previous, previous_pal = burst_ok, p
         corr = 0
         if h == be + EV and theta_at <= k:
-            t = theta - 65536 if theta >= 32768 else theta
-            if p:                  # PLL on the two-burst mean; V switch: this burst against it
-                ta = theta_avg - 65536 if theta_avg >= 32768 else theta_avg
-                d = (theta - theta_avg) & 0xFFFF
-                sw = 1 if 0 < d < 32768 else -1
-                err = ta
-            else:
-                sw, err = 1, t
-            corr = -(err << 14)
-            fadj = sat(fadj - err, 21)
-            A = A + asr(amp - A, 3)
-            kill = A < (KILL_P if p else KILL_N)
+            if valid_burst:
+                if p:             # PLL on the two-burst mean; V switch: this burst against it
+                    err = theta_avg - 65536 if theta_avg >= 32768 else theta_avg
+                    d = (theta - theta_avg) & 0xFFFF
+                    sw = 1 if 0 < d < 32768 else -1
+                else:
+                    sw = 1
+                    err = theta - 65536 if theta >= 32768 else theta
+                corr = -(err << 14)
+                fadj = sat(fadj - err, 21)
+            A += asr((amp if valid_burst else 0) - A, 3)
+            kill = not valid_burst or A < threshold
             G = 0 if kill else (K_P if p else K_N) // A
         # chroma filters (boxcar n, twice)
         hist_pu = [pu] + hist_pu[:23]; hist_pv = [pv] + hist_pv[:23]

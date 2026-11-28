@@ -15,14 +15,13 @@ Per sample n, per branch k:
   every 128 samples: w_k = max(1, (G[rq - 256] * ISQ[m2acc >> 6]) >> 8),
   rq = clamp((m4acc << 14) // m2acc^2, 256, 511), applied one period later
 For each branch k = B, C (relative to A):
-  x_k   += cA * conj(c_k) - (x_k >> 7)
-  theta_k = CORDIC angle of x_k >> 4 (2^-8 turn), after every 16th sample,
-            used from the end of the next block
+  A 16-sample cross-product gives phase; consecutive phases give frequency.
+  Predict the phase at the sample being rotated, including the CORDIC latency.
   c_k'   = c_k * (C + jS)[theta_k]
 Combine and demodulate:
   z    = wA cA 64 + wB cB' + wC cC'      (absent branches: weight 0)
 A C5 sending a marker (fpga_link.h) is invalid for those samples: weight 0,
-its moments hold, and a tracker holds while its branch or C5 A is invalid.
+its moments hold, and the tracker predicts phase without a new measurement.
   phi  = CORDIC angle of z >> 6 (10 steps); dphi = phi - phi[n-1] (wrap)
   code = clamp((dphi * 168 + 1651507 + 32768) >> 16, 0, 63)
 """
@@ -31,8 +30,8 @@ from numba import njit
 
 import mrc_model as m2model
 
-M_SHIFT, X_SHIFT, W_PERIOD, W_APPLY, TH_BLOCK = 6, 7, 128, 127, 16
-Z_SHIFT, X_SHIFT_TH = 6, 4
+M_SHIFT, W_PERIOD, W_APPLY, TH_BLOCK = 6, 128, 127, 16
+Z_SHIFT = 6
 G, ISQ, COS, SIN, ATAN = m2model.G, m2model.ISQ, m2model.COS, m2model.SIN, m2model.ATAN
 cordic_angle = m2model.cordic_angle
 
@@ -54,8 +53,15 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
     have_pend = False
     xr = np.zeros(3, np.int64)
     xi = np.zeros(3, np.int64)
-    th_cur = np.zeros(3, np.int64)
-    th_pend = np.zeros(3, np.int64)
+    phase = np.zeros(3, np.int64)
+    rate = np.zeros(3, np.int64)
+    angle = np.zeros(3, np.int64)
+    pending_angle = np.zeros(3, np.int64)
+    pending = np.zeros(3, np.bool_)
+    previous = np.zeros(3, np.bool_)
+    have_rate = np.zeros(3, np.bool_)
+    started = np.zeros(3, np.bool_)
+    interrupted = np.zeros(3, np.bool_)
     phi_prev = 0
     ci = np.zeros(3, np.int64)
     cq = np.zeros(3, np.int64)
@@ -68,8 +74,9 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
         zi = wa * ci[0] * 64
         zq = wa * cq[0] * 64
         for b in range(1, 3):
-            c = COS[th_cur[b]]
-            s = SIN[th_cur[b]]
+            idx = ((phase[b] + 2048) >> 12) & 255
+            c = COS[idx]
+            s = SIN[idx]
             ri = ci[b] * c - cq[b] * s
             rq_ = ci[b] * s + cq[b] * c
             wb = w[b] if (en[b] and valid[b, k]) else 0
@@ -92,15 +99,30 @@ def _run(raw, en, valid, G, ISQ, COS, SIN, ATAN, out, phis):
             m4[b] += p * p - (m4[b] >> M_SHIFT)
         for b in range(1, 3):
             if not (valid[0, k] and valid[b, k]):
-                continue   # no reference or no branch: the tracker holds
-            pr = ci[0] * ci[b] + cq[0] * cq[b]
-            pq = cq[0] * ci[b] - ci[0] * cq[b]
-            xr[b] += pr - (xr[b] >> X_SHIFT)
-            xi[b] += pq - (xi[b] >> X_SHIFT)
-        if (k & (TH_BLOCK - 1)) == TH_BLOCK - 1:
-            for b in range(1, 3):
-                th_cur[b] = th_pend[b]
-                th_pend[b] = (cordic_angle(xr[b] >> X_SHIFT_TH, xi[b] >> X_SHIFT_TH, ATAN) + 128) >> 8 & 255
+                interrupted[b] = True
+            else:
+                xr[b] += ci[0] * ci[b] + cq[0] * cq[b]
+                xi[b] += cq[0] * ci[b] - ci[0] * cq[b]
+            advance = phase[b] + rate[b]
+            if (k & (TH_BLOCK - 1)) == TH_BLOCK - 1:
+                if pending[b]:
+                    new_angle = pending_angle[b]
+                    if previous[b]:
+                        slope = ((new_angle - angle[b] + 32768) & 65535) - 32768
+                        rate[b] = rate[b] + ((slope - rate[b]) >> 3) if have_rate[b] else slope
+                        have_rate[b] = True
+                    angle[b] = new_angle
+                    target = (new_angle << 4) + 24 * rate[b] + (rate[b] >> 1)
+                    error = ((target - advance + 524288) & 1048575) - 524288
+                    advance = advance + (error >> 2) if started[b] else target
+                    started[b] = True
+                previous[b] = pending[b]
+                pending[b] = not interrupted[b] and (xr[b] != 0 or xi[b] != 0)
+                if pending[b]:
+                    pending_angle[b] = cordic_angle(xr[b], xi[b], ATAN)
+                xr[b] = xi[b] = 0
+                interrupted[b] = False
+            phase[b] = advance & 1048575
         if (k & (W_PERIOD - 1)) == W_APPLY and have_pend:
             for b in range(3):
                 w[b] = pend[b]

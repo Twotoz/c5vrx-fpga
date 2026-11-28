@@ -1,13 +1,13 @@
 // C5VRX by Twotoz and the C5VRX contributors: three-branch ("Tripleversity")
 // combiner and demodulator. Pre-detection maximal-ratio combining of C5 A
 // with up to two more C5s (3-bit I/Q each: the top three bits of their 4-bit
-// lane), a cross-product phase tracker per extra branch, then the CORDIC angle
+// lane), a cross-product phase and frequency tracker per extra branch, then the CORDIC angle
 // and the Rescue PLL, the only demodulator. The arithmetic and pipeline of
 // mrc_core.v, generalised; bit-exact with fpga/model/mrc3_model.py
 // run(..., disc=True, valid=..., rescue=2)
-// (fpga/sim/run_tb3.py). raw_b / raw_c must be aligned to raw_a (align_b.v).
+// (fpga/sim/run_tb3.py). raw_b / raw_c must be aligned to raw_a (align_bc.v).
 // va/vb/vc: the sample of that C5 is IQ (0 while it sends a marker): weight 0,
-// its moments hold, a tracker holds while its branch or C5 A is invalid.
+// its moments hold, and the tracker predicts phase without a new measurement.
 // The PLL's code comes from the D32-R2 table (1024 sectors, 0.7 of a step
 // outside the video window), one code per sample.
 `default_nettype none
@@ -36,45 +36,83 @@ module mrc3_trk (
         pi2 <= $signed(p_qi[10:0]) - $signed(p_iq[10:0]);
         ck_i2 <= ck_i1; ck_q2 <= ck_q1;
     end
-    reg signed [19:0] xr, xi;
-    wire signed [19:0] xr_n = xr + pr2 - (xr >>> 7), xi_n = xi + pi2 - (xi >>> 7);
-    reg               th_go;
-    reg signed [19:0] th_x, th_y;
+    // A short cross-product sum gives the phase at the centre of each
+    // 16-sample block. The slope of consecutive angles gives the relative
+    // frequency. Keep advancing the oscillator through invalid marker blocks.
+    wire boundary = run2 && idx2[3:0] == 4'd15;
+    reg signed [15:0] xr, xi;
+    wire signed [15:0] xr_n = xr + pr2, xi_n = xi + pi2;
+    reg interrupted;
+    reg th_go;
+    reg signed [15:0] th_x, th_y;
     wire [15:0] th_ang;
-    wire        th_done;
-    cordic_iter #(.W(20), .N(10)) u_th (.clk(clk), .start(th_go), .x_in(th_x), .y_in(th_y), .ang(th_ang), .done(th_done));
-    reg  [7:0]        th_pend;
-    reg  signed [7:0] cos_pend, sin_pend, cos_r, sin_r;
+    wire th_done;
+    cordic_iter #(.W(16), .N(10)) u_th (.clk(clk), .start(th_go), .x_in(th_x), .y_in(th_y), .ang(th_ang), .done(th_done));
+    always @(posedge clk) begin
+        th_go <= 1'b0;
+        if (rst || boundary) begin
+            xr <= 0; xi <= 0; interrupted <= 1'b0;
+            if (!rst && upd2 && !interrupted && (xr_n != 0 || xi_n != 0)) begin
+                th_x <= xr_n; th_y <= xi_n; th_go <= 1'b1;
+            end
+        end else if (run2) begin
+            if (upd2) begin xr <= xr_n; xi <= xi_n; end
+            else interrupted <= 1'b1;
+        end
+    end
+
+    // Phase is in turns with 16 integer phase bits and four fractional bits.
+    // One step in this representation equals one measured block-phase slope.
+    reg [15:0] angle;
+    reg measured, previous, have_rate, started;
+    reg signed [15:0] rate, step;
+    wire signed [15:0] slope = th_ang - angle;
+    wire signed [16:0] slope_error = $signed({slope[15], slope}) - $signed({rate[15], rate});
+    always @(posedge clk) begin
+        if (rst) begin
+            angle <= 0; measured <= 0; previous <= 0; rate <= 0; have_rate <= 0;
+        end else begin
+            if (boundary) begin previous <= measured; measured <= 0; end
+            if (th_done) begin
+                if (previous) begin
+                    rate <= have_rate ? rate + (slope_error >>> 3) : slope;
+                    have_rate <= 1'b1;
+                end
+                angle <= th_ang;
+                measured <= 1'b1;
+            end
+        end
+    end
+    reg [19:0] phase;
+    wire signed [19:0] r = {{4{rate[15]}}, rate};
+    wire signed [19:0] half_rate = r >>> 1;
+    wire [19:0] advance = phase + {{4{step[15]}}, step};
+    // At the next block the measurement is 24.5 samples old.
+    wire [19:0] target = {angle, 4'b0} + (r <<< 4) + (r <<< 3) + half_rate;
+    wire signed [19:0] error = target - advance;
+    wire update = boundary && measured;
+    wire [19:0] phase_n = !update ? advance : !started ? target : advance + $unsigned(error >>> 2);
+    wire [19:0] rounded = phase_n + 20'd2048;
+    reg [15:0] cs_r;
+    wire signed [7:0] cos_r = $signed(cs_r[15:8]), sin_r = $signed(cs_r[7:0]);
+    always @(posedge clk) begin
+        if (rst) begin
+            phase <= 0; step <= 0; started <= 0;
+            cs_r <= {8'sd63, 8'sd0};
+        end else if (run2) begin
+            phase <= phase_n;
+            if (update) begin step <= rate; started <= 1'b1; end
+            cs_r <= cs_rom[rounded[19:12]];
+        end
+    end
     wire [17:0] r_ic, r_qs, r_is, r_qc;
     mul9 u_ic (.a({{4{ck_i2[4]}}, ck_i2}), .b({cos_r[7], cos_r}), .y(r_ic));
     mul9 u_qs (.a({{4{ck_q2[4]}}, ck_q2}), .b({sin_r[7], sin_r}), .y(r_qs));
     mul9 u_is (.a({{4{ck_i2[4]}}, ck_i2}), .b({sin_r[7], sin_r}), .y(r_is));
     mul9 u_qc (.a({{4{ck_q2[4]}}, ck_q2}), .b({cos_r[7], cos_r}), .y(r_qc));
     always @(posedge clk) begin
-        th_go <= 1'b0;
-        if (rst) begin
-            xr <= 0; xi <= 0; cos_r <= 8'sd63; sin_r <= 8'sd0;
-        end else if (run2) begin
-            if (upd2) begin xr <= xr_n; xi <= xi_n; end
-            if (idx2[3:0] == 4'd15) begin
-                cos_r <= cos_pend; sin_r <= sin_pend;
-                th_x <= (upd2 ? xr_n : xr) >>> 4; th_y <= (upd2 ? xi_n : xi) >>> 4; th_go <= 1'b1;
-            end
-        end
         rk_i3 <= $signed(r_ic[12:0]) - $signed(r_qs[12:0]);
         rk_q3 <= $signed(r_is[12:0]) + $signed(r_qc[12:0]);
-    end
-    reg [15:0] cs_q;
-    always @(posedge clk) cs_q <= cs_rom[th_pend];
-    reg th_lut, th_lut2;
-    always @(posedge clk) begin
-        if (rst) begin
-            th_pend <= 8'd0; cos_pend <= 8'sd63; sin_pend <= 8'sd0; th_lut <= 1'b0; th_lut2 <= 1'b0;
-        end else begin
-            th_lut <= th_done; th_lut2 <= th_lut;
-            if (th_done) th_pend <= (th_ang + 16'd128) >> 8;
-            if (th_lut2) begin cos_pend <= cs_q[15:8]; sin_pend <= cs_q[7:0]; end
-        end
     end
 endmodule
 
@@ -305,8 +343,26 @@ module mrc3_core #(parameter HAS_C = 1, parameter FAILOVER = 0) (   // HAS_C 0: 
     wire signed [4:0] raw_i = select_b ? backup_i3 : c_i3_raw;
     wire signed [4:0] raw_q = select_b ? backup_q3 : c_q3_raw;
     wire [7:0] wa_eff = v3[0] ? w_use[0] : 8'd0;
-    assign wts = {w_use[2], w_use[1], w_use[0]};
-    wire [7:0] wb_eff = en_b && v3[1] ? w_use[1] : 8'd0, wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
+    wire [7:0] wb_eff, wc_eff;
+    generate if (FAILOVER) begin : mix
+        reg [7:0] w_b, w_c;
+        wire [7:0] target_b = en_b ? w_use[1] : 8'd0;
+        wire [7:0] target_c = en_c ? w_use[2] : 8'd0;
+        always @(posedge clk) begin
+            if (rst || !avail_b || poor_a) w_b <= 0;
+            else if (run3 && idx3[2:0] == 0 && w_b != target_b)
+                w_b <= w_b < target_b ? w_b + 1'b1 : w_b - 1'b1;
+            if (rst || !avail_c || poor_a) w_c <= 0;
+            else if (run3 && idx3[2:0] == 0 && w_c != target_c)
+                w_c <= w_c < target_c ? w_c + 1'b1 : w_c - 1'b1;
+        end
+        assign wb_eff = avail_b && v3[1] ? w_b : 8'd0;
+        assign wc_eff = avail_c && v3[2] ? w_c : 8'd0;
+    end else begin : no_mix
+        assign wb_eff = en_b && v3[1] ? w_use[1] : 8'd0;
+        assign wc_eff = en_c && v3[2] ? w_use[2] : 8'd0;
+    end endgenerate
+    assign wts = {wc_eff, wb_eff, wa_eff};
     wire [17:0] a_i, a_q;
     wire [35:0] b_i, b_q, c_i, c_q;
     mul9  u_ai (.a({1'b0, wa_eff}), .b({{4{ca_i3[4]}}, ca_i3}), .y(a_i));

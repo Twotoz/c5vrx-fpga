@@ -37,6 +37,8 @@ fi
 # DEBUG=1: the live status on the Tang Nano's USB serial (rtl/io/log_uart.v), for bench and test
 # flights; not in the normal builds, which are full (the LCD live build no longer placed with it)
 [ "${DEBUG:-0}" = 1 ] && [ "${HDMI90:-0}" != 1 ] && DEF="$DEF -DTRI_DEBUG"
+# IQTRACE=1: simultaneous combiner inputs over the USB UART at 1 Mbaud.
+[ "${IQTRACE:-0}" = 1 ] && DEF="$DEF -DTRI_IQTRACE"
 # the start-up screen shows the build's git commit
 VER="$(git -C "$HERE" rev-parse --short=7 HEAD 2>/dev/null || echo 0000000)"; DEF="$DEF -DTRI_VERSION=28'h$VER"
 CST="$HERE/boards/tang_nano_20k.cst"; [ "${HDMI:-0}" = 1 ] && CST="$HERE/boards/tang_nano_20k_hdmi.cst"

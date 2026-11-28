@@ -42,6 +42,7 @@ module fbuf #(
     input  wire        frame_tog_p,    // display domain: a frame starts
     input  wire        fetch_tog_p,    // display domain: fetch source line fetch_line_p
     input  wire [8:0]  fetch_line_p,
+    output reg         fetch_done,    // toggles after a complete visible SDRAM read
     input  wire        rclk,
     input  wire [10:0] raddr,          // {line[0], x}
     output wire [15:0] rdata,
@@ -129,6 +130,7 @@ module fbuf #(
             s_gen[0] <= 8'd0; s_gen[1] <= 8'd0; s_gen[2] <= 8'd0;
             wslot <= 2'd0; latest <= 2'd0; rslot <= 2'd0; lat_ok <= 1'b0; rvalid <= 1'b0; lcnt <= 10'd0; pfl <= 10'd262; age <= 10'd0; wrow <= 9'd0; wp <= 2'b00; rp <= 1'b0;
             lt_p <= line_tog; ft_p <= field_tog; est <= E_IDLE; wact <= 1'b0;
+            fetch_done <= 1'b0;
         end else begin
             // ---- write side ----
             lt_p <= line_tog; ft_p <= field_tog;
@@ -188,7 +190,10 @@ module fbuf #(
                 E_RREQ: if (s_ack) begin
                     if (rc == LASTB) est <= E_RWAIT; else rc <= rc + 5'd1;
                 end
-                E_RWAIT: if (rcnt == WPL[8:0]) est <= E_IDLE;
+                E_RWAIT: if (rcnt == WPL[8:0]) begin
+                    est <= E_IDLE;
+                    if (rj_valid) fetch_done <= ~fetch_done;
+                end
                 default: est <= E_IDLE;
             endcase
             if (s_rv) begin

@@ -62,13 +62,13 @@ module tb;
         end
     end
     // ---- DUT ----
-    wire fb_frame, fb_fetch; wire [8:0] fb_line; wire [10:0] ra; wire [15:0] rd;
+    wire fb_frame, fb_fetch, fb_done; wire [8:0] fb_line; wire [10:0] ra; wire [15:0] rd;
     wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
     wire sdclk, sdcke, sdcs, sdras, sdcas, sdwe; wire [10:0] sda; wire [1:0] sdba; wire [3:0] sddqm; wire [31:0] sddq;
     fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(aclk), .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr),
                .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .locked(locked),
                .field_tog(field_tog), .pal(1'b0), .mode_p(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
-               .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+               .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line), .fetch_done(fb_done),
                .rclk(pclk), .raddr(ra), .rdata(rd),
                .O_sdram_clk(sdclk), .O_sdram_cke(sdcke), .O_sdram_cs_n(sdcs), .O_sdram_ras_n(sdras), .O_sdram_cas_n(sdcas),
                .O_sdram_wen_n(sdwe), .O_sdram_addr(sda), .O_sdram_ba(sdba), .O_sdram_dqm(sddqm), .IO_sdram_dq(sddq));
@@ -79,7 +79,7 @@ module tb;
                    .hmode(2'd0), .boot(1'b0), .lb_addr(ra), .lb_data(rd), .osd_addr(oa), .osd_cell(12'd0),
                    .lcd_de(de), .lcd_hs(hs), .lcd_vs(vs), .lcd_r(r5), .lcd_g(g6), .lcd_b(b5), .px_r(pr), .px_g(pg), .px_b(pb),
                    .hz90(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v),
-                   .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line));
+                 .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line), .fetch_done_a(fb_done));
     // ---- capture: HS periods, frames, and per row the code in the middle of the line ----
     integer cyc = 0, last_hs = 0, nfr = 0, row = 0, npx = 0, lines = 0;
     reg vs_p = 1, de_p = 0, hs_p = 1;

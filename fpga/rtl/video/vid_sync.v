@@ -59,6 +59,9 @@ module vid_sync (
     output reg  [7:0]  d_y, d_cb, d_cr,
     output reg         d_fstart,      // a field begins (one clock)
     output reg         d_parity       // the field's parity (vertical sync mid-line)
+`ifdef TRI_IQTRACE
+    , output wire [31:0] field_trace
+`endif
 );
     // ---- luma -------------------------------------------------------------
     reg [5:0] c [0:7];
@@ -124,14 +127,19 @@ module vid_sync (
     // Track the accepted field grid independently of vline, which is also
     // used to generate pictures during holdover. Periods are at 40 MS/s.
     localparam [19:0] NTSC_PERIOD = 20'd667333, PAL_PERIOD = 20'd800000;
-    localparam [19:0] V_WINDOW = 20'd6000;  // +/- 150 us
+    localparam [19:0] V_FORMAT_WINDOW = 20'd6000;  // allow wider uncertainty during format detection
+    localparam [19:0] V_TRACK_WINDOW = 20'd384;    // narrower than the spacing of the vertical serrations
     reg [19:0] field_age, raw_age;
+    reg signed [8:0] field_rate;           // measured correction to the nominal field period
     reg [25:0] fps_tim; reg [6:0] fps_rc, fps_pc;      // the one-second window and its counts
     reg [11:0] broad_gap;
     reg [4:0] missed_fields;
     reg [1:0] other_count;
     reg field_armed, field_parity;
     wire [19:0] period = pal ? PAL_PERIOD : NTSC_PERIOD;
+    wire [19:0] tracked_period = period + {{11{field_rate[8]}}, field_rate};
+    wire signed [9:0] field_error = field_age[9:0] - tracked_period[9:0];
+    wire signed [9:0] next_rate = $signed({field_rate[8], field_rate}) + (field_error >>> 3);
     wire [19:0] other_period = pal ? NTSC_PERIOD : PAL_PERIOD;
     wire [11:0] half_ht = HT >> 1;
     wire half_edge = hc_cross >= half_ht - 12'd128 && hc_cross <= half_ht + 12'd128;
@@ -142,16 +150,35 @@ module vid_sync (
     // pulses at half-line spacing identify a serrated vertical train.
     wire serrated = broad && broad_gap >= 12'd1100 && broad_gap <= 12'd1440;
     wire raw_start = serrated && raw_age >= 20'd500000;
-    wire other_interval = raw_start && raw_age >= other_period - V_WINDOW && raw_age <= other_period + V_WINDOW;
+    wire other_interval = raw_start && raw_age >= other_period - V_FORMAT_WINDOW &&
+                          raw_age <= other_period + V_FORMAT_WINDOW;
     wire standard_change = other_interval && other_count == 2'd2;
-    wire in_field = field_age >= period - V_WINDOW && field_age <= period + V_WINDOW;
+    wire in_field = field_age >= tracked_period - V_TRACK_WINDOW && field_age <= tracked_period + V_TRACK_WINDOW;
     // An off-grid candidate can establish a fresh anchor after a long loss
     // without itself changing the video standard.
-    wire same_interval = raw_age >= period - V_WINDOW && raw_age <= period + V_WINDOW;
-    wire field_accept = (field_armed && in_field && (v_candidate || raw_start)) || standard_change ||
-                        (raw_start && (!field_armed || (missed_fields == 5'd31 && same_interval)));
-    wire field_coast = field_age >= period + V_WINDOW && !field_accept;
+    wire same_interval = raw_age >= period - V_FORMAT_WINDOW && raw_age <= period + V_FORMAT_WINDOW;
+    wire reanchor = standard_change || (raw_start && (!field_armed || (missed_fields == 5'd31 && same_interval)));
+    wire field_accept = (field_armed && in_field && (v_candidate || raw_start)) || reanchor;
+    // If the expected serration is lost, keep the same picture origin. The
+    // following serrations must not move the top of the displayed field.
+    wire field_coast = field_age >= tracked_period + V_TRACK_WINDOW && !field_accept;
     wire field_event = field_accept || field_coast;
+`ifdef TRI_IQTRACE
+    reg [7:0] trace_real, trace_predicted;
+    reg [3:0] trace_anchors;
+    reg [9:0] trace_error;
+    assign field_trace = {trace_real, trace_predicted, trace_anchors, locked, pal, trace_error};
+    always @(posedge clk) begin
+        if (rst) begin
+            trace_real <= 0; trace_predicted <= 0; trace_anchors <= 0; trace_error <= 0;
+        end else if (field_event) begin
+            if (field_accept) trace_real <= trace_real + 1'b1;
+            else trace_predicted <= trace_predicted + 1'b1;
+            if (reanchor) trace_anchors <= trace_anchors + 1'b1;
+            trace_error <= reanchor ? 10'd0 : field_error;
+        end
+    end
+`endif
     // fields per second, real (accepted vertical sync) and predicted (flywheel):
     // only the DEBUG=1 builds' live status (log_uart.v) shows them
 `ifdef TRI_DEBUG
@@ -173,7 +200,7 @@ module vid_sync (
     always @(posedge clk) begin
         if (rst) begin
             field_age <= 0; raw_age <= 20'hfffff; broad_gap <= 12'hfff; missed_fields <= 0;
-            other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0;
+            other_count <= 0; field_armed <= 0; field_parity <= 0; pal <= 0; field_rate <= 0;
         end else begin
             if (broad) broad_gap <= 0;
             else if (!(&broad_gap)) broad_gap <= broad_gap + 1'b1;
@@ -183,8 +210,11 @@ module vid_sync (
             if (standard_change) pal <= ~pal;
             if (field_accept) begin
                 field_age <= 0; field_armed <= 1'b1; missed_fields <= 0; field_parity <= half_edge;
+                if (reanchor) field_rate <= 0;
+                else if (missed_fields == 0)
+                    field_rate <= next_rate > 10'sd255 ? 9'sd255 : next_rate < -10'sd256 ? 9'sh100 : next_rate[8:0];
             end else if (field_coast) begin
-                field_age <= V_WINDOW + 1'b1;
+                field_age <= V_TRACK_WINDOW + 1'b1;
                 if (!(&missed_fields)) missed_fields <= missed_fields + 1'b1;
                 field_parity <= ~field_parity;
             end else field_age <= field_age + 1'b1;
@@ -269,7 +299,8 @@ module vid_sync (
     wire        lev_line_ok = lev_shape_ok && (lev_deep || lev_miss == 7'd96);
     // ---- colour (chroma.v) and the pixel stage ----
     wire [9:0] cy8u; wire signed [9:0] cug, cvg;
-    chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(cy8u), .ug(cug), .vg(cvg));
+    chroma u_chroma (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal),
+                     .line_sync(seen && lock >= 4'd8), .y8u(cy8u), .ug(cug), .vg(cvg));
     // ---- adaptive noise suppression (menu Signal: Noise filter) ----
     // noise: the sum of |Y - Y four clocks before| over hc 320..367 (the flat
     // back porch) of 64 lines; level 0..3 from it (one step per 64 lines);

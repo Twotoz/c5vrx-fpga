@@ -182,9 +182,16 @@ module tri_top (
     wire        wr_en, line_tog, field_tog, pal, locked;
     wire [10:0] wr_addr; wire [15:0] wr_data; wire [7:0] wr_gray; wire [8:0] line_info; wire line_skip; wire [15:0] sync_q; wire wide, fields_real; wire [6:0] fps_real, fps_pred; wire [15:0] gain_k8;
     wire        d_valid, d_fstart, d_parity; wire [9:0] d_x; wire [8:0] d_line; wire [7:0] d_y, d_cb, d_cr;
+`ifdef TRI_IQTRACE
+    wire [31:0] field_trace;
+`endif
     vid_sync u_vs (.clk(a_gclk), .rst(rst), .code(code), .keep_lock(sg_a[0]), .adapt(sg_a[2]), .ans(sg_a[5]), .ans_lev(ans_lev), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .wr_gray(wr_gray),
                    .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .field_tog(field_tog), .pal(pal), .locked(locked), .sync_q(sync_q), .wide(wide), .fields_real(fields_real), .fps_real(fps_real), .fps_pred(fps_pred), .gain_k8(gain_k8),
-                   .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity));
+                   .d_valid(d_valid), .d_x(d_x), .d_line(d_line), .d_y(d_y), .d_cb(d_cb), .d_cr(d_cr), .d_fstart(d_fstart), .d_parity(d_parity)
+`ifdef TRI_IQTRACE
+                   , .field_trace(field_trace)
+`endif
+                   );
     // ---- DVR: every second field to TRIDVR.BIN on the TF card (MODE DVR) ----
     wire [1:0] dvr_state;
 `ifdef TRI_HQDVR
@@ -229,7 +236,7 @@ module tri_top (
 `ifdef TRI_FBUF
     // 90 Hz HDMI / buffered LCD: every field into the SDRAM, the display reads the newest one or
     // races the one coming in (fbuf.v)
-    wire fb_frame, fb_fetch; wire [8:0] fb_line; wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
+    wire fb_frame, fb_fetch, fb_done; wire [8:0] fb_line; wire signed [7:0] sh_h, sh_r; wire signed [5:0] sh_v;
 `ifdef TRI_LCDBUF
     fbuf #(.WPL(400), .RACE_N(24), .RACE_P(24), .SMOOTH(0)) u_fb (.clk(a_gclk),
                .mode_p(2'd1),                                      // Camera: frames locked to the fields
@@ -238,7 +245,7 @@ module tri_top (
     fbuf #(.SMOOTH(0)) u_fb (.clk(a_gclk), .mode_p(hz90),
 `endif
                .rst(rst), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data), .line_tog(line_tog), .line_info(line_info), .line_skip(line_skip), .locked(locked),
-               .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line),
+               .field_tog(field_tog), .pal(pal), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog_p(fb_frame), .fetch_tog_p(fb_fetch), .fetch_line_p(fb_line), .fetch_done(fb_done),
                .rclk(clk_lcd), .raddr(lb_raddr), .rdata(lb_rdata),
                .O_sdram_clk(O_sdram_clk), .O_sdram_cke(O_sdram_cke), .O_sdram_cs_n(O_sdram_cs_n), .O_sdram_ras_n(O_sdram_ras_n),
                .O_sdram_cas_n(O_sdram_cas_n), .O_sdram_wen_n(O_sdram_wen_n), .O_sdram_addr(O_sdram_addr), .O_sdram_ba(O_sdram_ba),
@@ -267,12 +274,25 @@ module tri_top (
                  .bl_pwm(bl_pwm));
     link_tx #(.CLK_HZ(UI_HZ)) u_link (.clk(clk_lcd), .rst(rst_l), .on(link_on), .channel(channel), .g_set(g_set), .gain_model(gain_model),
                     .a_set(a_set), .afc(afc), .f_seq(f_seq), .s_set(s_set), .menu_s(menu_s), .menu_t(menu_t), .tx(link_tx));
-`ifndef TRI_DEBUG
-    assign log_tx = 1'b1;                    // only DEBUG=1 builds (fpga/build.sh) carry the live status
-`else
+`ifdef TRI_IQTRACE
+    wire [2:0] trace_flags = {ref_lost, en_c & c_alive & use_c, en_b & b_alive & use_b};
+    reg [2:0] trace_previous;
+    always @(posedge a_gclk) trace_previous <= rst ? 3'd0 : trace_flags;
+    iq_trace u_iq_trace (
+        .clk(a_gclk), .rst(rst),
+        .field_status(field_trace),
+        .fusion_status({3'd0, trace_flags, mode_s[3:2], lg_w}),
+        .trigger(trace_flags != trace_previous),
+        .samples({ref_lost, vc, c_m, en_c & c_alive & use_c, vb, b_m,
+                  en_b & b_alive & use_b, va, a_m}),
+        .tx(log_tx)
+    );
+`elsif TRI_DEBUG
     log_uart #(.CLK_HZ(UI_HZ)) u_log (.clk(clk_lcd), .rst(rst_l), .mk_tog_a(mk_tog), .mk_src_a(mk_src), .mk_pl_a(mk_pl),
                     .locked_a(locked), .pal_a(pal), .fps_real_a(fps_real), .fps_pred_a(fps_pred), .k8_a(gain_k8),
                     .sync_q_a(sync_q), .tx(log_tx));
+`else
+    assign log_tx = 1'b1;
 `endif
     // ---- LCD ----
     lcd_out u_lcd (.clk(clk_lcd), .rst(rst_l), .line_tog_a(line_tog), .line_info_a(line_info), .field_tog_a(field_tog),
@@ -281,7 +301,7 @@ module tri_top (
                    .lcd_de(o_de), .lcd_hs(o_hs), .lcd_vs(o_vs), .lcd_r(o_r), .lcd_g(o_g), .lcd_b(o_b),
                    .px_r(px_r), .px_g(px_g), .px_b(px_b)
 `ifdef TRI_LCDBUF
-                   , .hz90(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
+                   , .hz90(2'd1), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line), .fetch_done_a(fb_done)
 `elsif TRI_HDMI90
                    , .hz90(hz90), .sh_h(sh_h), .sh_r(sh_r), .sh_v(sh_v), .frame_tog(fb_frame), .fetch_tog(fb_fetch), .fetch_line(fb_line)
 `endif

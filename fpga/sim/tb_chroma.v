@@ -8,7 +8,7 @@ module tb_chroma;
     reg [12:0] hp [0:6000000];
     reg [5:0]  code = 0; reg [11:0] hc = 12'd1; reg pal = 0;
     wire [9:0] y8u; wire signed [9:0] ug, vg;
-    chroma u_c (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .y8u(y8u), .ug(ug), .vg(vg));
+    chroma u_c (.clk(clk), .rst(rst), .code(code), .hc(hc), .pal(pal), .line_sync(1'b1), .y8u(y8u), .ug(ug), .vg(vg));
     integer n, k0, k1, f, cyc = 0;
     initial begin
         if (!$value$plusargs("n=%d", n)) n = 1000;
